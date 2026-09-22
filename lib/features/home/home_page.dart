@@ -196,7 +196,12 @@ class _HomePageState extends ConsumerState<HomePage> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           setState(() {
-            _mode = defaults.defaultAudioOnly
+            // If there are no downloadable video streams (e.g. no ffmpeg
+            // to merge split streams), land on the Audio tab instead of
+            // an empty Quality section.
+            _mode = defaults.defaultAudioOnly ||
+                    (video.videoFormats.isEmpty &&
+                        video.audioFormats.isNotEmpty)
                 ? FormatKind.audio
                 : FormatKind.video;
             _selectedVideo ??= _defaultFormat(
@@ -502,18 +507,24 @@ class _FormatSelector extends StatelessWidget {
               Text('Quality',
                   style: Theme.of(context).textTheme.labelMedium),
               const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final f in video.videoFormats)
-                    ChoiceChip(
-                      label: Text(f.label),
-                      selected: selectedVideo?.selector == f.selector,
-                      onSelected: (_) => onVideoSelected(f),
-                    ),
-                ],
-              ),
+              if (video.videoFormats.isEmpty)
+                Text(
+                    'No downloadable video streams (needs ffmpeg to merge). Try the Audio tab.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant))
+              else
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final f in video.videoFormats)
+                      ChoiceChip(
+                        label: Text(f.label),
+                        selected: selectedVideo?.selector == f.selector,
+                        onSelected: (_) => onVideoSelected(f),
+                      ),
+                  ],
+                ),
             ] else ...[
               Text('Audio',
                   style: Theme.of(context).textTheme.labelMedium),

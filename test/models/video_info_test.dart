@@ -54,11 +54,13 @@ void main() {
       expect(info.uploadDate, DateTime(2024, 1, 15));
       expect(info.webUrl, 'https://www.youtube.com/watch?v=abc123');
 
-      // One row per distinct combined resolution strictly below the best one
-      // (Best quality already covers the top resolution).
+      // One row per distinct video-bearing resolution strictly below the
+      // best one (Best quality already covers the top resolution,
+      // including video-only streams merged with audio).
       final rows = info.videoFormats;
       expect(rows.map((f) => f.label).toList(), [
-        'Best quality · 25.0 MB',
+        'Best quality',
+        '720p · MP4 · 25.0 MB',
         '480p · MP4',
         '360p · MP4',
       ]);
@@ -66,9 +68,9 @@ void main() {
       expect(rows.any((f) => f.label.startsWith('2160p')), isFalse);
       expect(rows.any((f) => f.label.startsWith('1440p')), isFalse);
 
-      // Best row picks the source's best combined stream and merges audio.
-      expect(rows.first.tier, 720);
-      expect(rows.first.selector, 'bv*[height<=720]+ba/b[height<=720]/b');
+      // Best row picks the source's best video stream and merges audio.
+      expect(rows.first.tier, 1080);
+      expect(rows.first.selector, 'bv*[height<=1080]+ba/b[height<=1080]/b');
 
       final audio = info.audioFormats.single;
       expect(audio.kind, FormatKind.audio);
@@ -117,6 +119,43 @@ void main() {
       );
       expect(info.videoFormats, isEmpty);
       expect(info.audioFormats, isEmpty);
+    });
+
+    test('builds merge rows from split streams (no combined formats)', () {
+      // Modern YouTube: video-only + audio-only, zero combined.
+      final info = VideoInfo.fromYtdlpJson(
+        _ytJson([
+          _fmt('137', vcodec: 'avc1', acodec: 'none', height: 1080,
+              filesize: 50 * 1024 * 1024),
+          _fmt('136', vcodec: 'avc1', acodec: 'none', height: 720,
+              filesize: 25 * 1024 * 1024),
+          _fmt('140', vcodec: 'none', acodec: 'mp4a', ext: 'm4a', tbr: 128),
+        ]),
+        hasFfmpeg: true,
+      );
+
+      final rows = info.videoFormats;
+      expect(rows.map((f) => f.label).toList(), [
+        'Best quality · 50.0 MB',
+        '720p · MP4 · 25.0 MB',
+      ]);
+      expect(rows.first.tier, 1080);
+      expect(rows.first.selector,
+          'bv*[height<=1080]+ba/b[height<=1080]/b');
+      expect(info.audioFormats.single.selector, 'ba[ext=m4a]/ba');
+    });
+
+    test('no video rows without ffmpeg when only split streams exist', () {
+      final info = VideoInfo.fromYtdlpJson(
+        _ytJson([
+          _fmt('137', vcodec: 'avc1', acodec: 'none', height: 1080),
+          _fmt('140', vcodec: 'none', acodec: 'mp4a', ext: 'm4a', tbr: 128),
+        ]),
+        hasFfmpeg: false,
+      );
+      // Merging is impossible — no single-file stream, no video options.
+      expect(info.videoFormats, isEmpty);
+      expect(info.audioFormats, hasLength(1));
     });
   });
 }

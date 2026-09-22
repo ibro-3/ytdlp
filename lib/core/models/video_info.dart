@@ -75,12 +75,23 @@ class VideoInfo {
     return v != null && v != 'none' && a != null && a != 'none';
   }
 
+  static bool _hasVideo(Map<String, dynamic> f) {
+    final v = f['vcodec'] as String?;
+    return v != null && v != 'none';
+  }
+
   static List<Format> _buildVideoFormats(
       List<Map<String, dynamic>> formats, bool hasFfmpeg) {
-    final combined = formats.where(_isCombined).toList();
-    if (combined.isEmpty) return [];
+    // YouTube (and others) mostly serve split streams now: video-only +
+    // audio-only with zero combined formats. With ffmpeg we merge, so every
+    // video-bearing stream is a candidate. Without ffmpeg only single-file
+    // combined streams are playable.
+    final pool = hasFfmpeg
+        ? formats.where(_hasVideo).toList()
+        : formats.where(_isCombined).toList();
+    if (pool.isEmpty) return [];
 
-    final heights = combined
+    final heights = pool
         .map((f) => (f['height'] as num?)?.toInt() ?? 0)
         .where((h) => h > 0)
         .toSet()
@@ -89,7 +100,7 @@ class VideoInfo {
     final best = heights.isEmpty ? null : heights.first;
 
     final result = <Format>[
-      _videoFormat(combined, null, hasFfmpeg, labelBase: 'Best quality'),
+      _videoFormat(pool, null, hasFfmpeg, labelBase: 'Best quality'),
     ];
     // One row per distinct source resolution below the best one, so labels
     // always match what the selector will actually pick (no fake "2160p"
@@ -97,15 +108,15 @@ class VideoInfo {
     for (final h in heights) {
       if (result.length >= 7) break;
       if (best != null && h >= best) continue;
-      result.add(_videoFormat(combined, h, hasFfmpeg, labelBase: '${h}p · MP4'));
+      result.add(_videoFormat(pool, h, hasFfmpeg, labelBase: '${h}p · MP4'));
     }
     return result;
   }
 
-  static Format _videoFormat(List<Map<String, dynamic>> combined, int? maxHeight,
-      bool hasFfmpeg,
+  static Format _videoFormat(List<Map<String, dynamic>> candidates,
+      int? maxHeight, bool hasFfmpeg,
       {required String labelBase}) {
-    var pool = combined;
+    var pool = candidates;
     if (maxHeight != null) {
       pool = pool
           .where((f) => ((f['height'] as num?)?.toInt() ?? 0) <= maxHeight)
