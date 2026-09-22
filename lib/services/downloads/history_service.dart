@@ -11,10 +11,14 @@ class HistoryService extends ChangeNotifier {
   List<DownloadRecord> get records => List.unmodifiable(_records);
 
   void init() {
-    _records = _box.values
-        .map((e) => DownloadRecord.fromMap(Map<String, dynamic>.from(e as Map)))
-        .toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    _records =
+        _box.values
+            .map(
+              (e) =>
+                  DownloadRecord.fromMap(Map<String, dynamic>.from(e as Map)),
+            )
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
   Future<void> add(DownloadRecord record) async {

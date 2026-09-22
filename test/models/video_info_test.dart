@@ -9,27 +9,26 @@ Map<String, dynamic> _fmt(
   int? height,
   int? filesize,
   double? tbr,
-}) =>
-    {
-      'format_id': id,
-      'ext': ext,
-      'vcodec': vcodec,
-      'acodec': acodec,
-      'height': ?height,
-      'filesize': ?filesize,
-      'tbr': ?tbr,
-    };
+}) => {
+  'format_id': id,
+  'ext': ext,
+  'vcodec': vcodec,
+  'acodec': acodec,
+  'height': ?height,
+  'filesize': ?filesize,
+  'tbr': ?tbr,
+};
 
 Map<String, dynamic> _ytJson(List<Map<String, dynamic>> formats) => {
-      'id': 'abc123',
-      'title': 'Sample video',
-      'uploader': 'Test Channel',
-      'duration': 132,
-      'upload_date': '20240115',
-      'thumbnail': 'https://example.com/thumb.jpg',
-      'webpage_url': 'https://www.youtube.com/watch?v=abc123',
-      'formats': formats,
-    };
+  'id': 'abc123',
+  'title': 'Sample video',
+  'uploader': 'Test Channel',
+  'duration': 132,
+  'upload_date': '20240115',
+  'thumbnail': 'https://example.com/thumb.jpg',
+  'webpage_url': 'https://www.youtube.com/watch?v=abc123',
+  'formats': formats,
+};
 
 void main() {
   group('VideoInfo.fromYtdlpJson', () {
@@ -37,12 +36,23 @@ void main() {
       final info = VideoInfo.fromYtdlpJson(
         _ytJson([
           _fmt('137', vcodec: 'avc1', acodec: 'none', height: 1080),
-          _fmt('136', vcodec: 'avc1', acodec: 'mp4a', height: 720,
-              filesize: 25 * 1024 * 1024),
+          _fmt(
+            '136',
+            vcodec: 'avc1',
+            acodec: 'mp4a',
+            height: 720,
+            filesize: 25 * 1024 * 1024,
+          ),
           _fmt('135', vcodec: 'avc1', acodec: 'mp4a', height: 480),
           _fmt('18', vcodec: 'avc1', acodec: 'mp4a', height: 360),
-          _fmt('140', vcodec: 'none', acodec: 'mp4a', ext: 'm4a',
-              tbr: 128, filesize: 8 * 1024 * 1024),
+          _fmt(
+            '140',
+            vcodec: 'none',
+            acodec: 'mp4a',
+            ext: 'm4a',
+            tbr: 128,
+            filesize: 8 * 1024 * 1024,
+          ),
         ]),
         hasFfmpeg: true,
       );
@@ -90,21 +100,25 @@ void main() {
       final best = info.videoFormats.first;
       expect(best.selector, 'b[height<=720][ext=mp4]/b[height<=720]/b');
 
-      final h360 = info.videoFormats.firstWhere((f) => f.label.startsWith('360p'));
+      final h360 = info.videoFormats.firstWhere(
+        (f) => f.label.startsWith('360p'),
+      );
       expect(h360.selector, 'b[height<=360][ext=mp4]/b[height<=360]/b');
     });
 
-    test('falls back to width-unconstrained selector when heights are missing',
-        () {
-      final info = VideoInfo.fromYtdlpJson(
-        _ytJson([_fmt('18', vcodec: 'avc1', acodec: 'mp4a')]),
-        hasFfmpeg: true,
-      );
-      final rows = info.videoFormats;
-      expect(rows, hasLength(1));
-      expect(rows.single.tier, isNull);
-      expect(rows.single.selector, 'bv*+ba/b');
-    });
+    test(
+      'falls back to width-unconstrained selector when heights are missing',
+      () {
+        final info = VideoInfo.fromYtdlpJson(
+          _ytJson([_fmt('18', vcodec: 'avc1', acodec: 'mp4a')]),
+          hasFfmpeg: true,
+        );
+        final rows = info.videoFormats;
+        expect(rows, hasLength(1));
+        expect(rows.single.tier, isNull);
+        expect(rows.single.selector, 'bv*+ba/b');
+      },
+    );
 
     test('handles empty formats', () {
       final info = VideoInfo.fromYtdlpJson(_ytJson([]), hasFfmpeg: false);
@@ -125,10 +139,20 @@ void main() {
       // Modern YouTube: video-only + audio-only, zero combined.
       final info = VideoInfo.fromYtdlpJson(
         _ytJson([
-          _fmt('137', vcodec: 'avc1', acodec: 'none', height: 1080,
-              filesize: 50 * 1024 * 1024),
-          _fmt('136', vcodec: 'avc1', acodec: 'none', height: 720,
-              filesize: 25 * 1024 * 1024),
+          _fmt(
+            '137',
+            vcodec: 'avc1',
+            acodec: 'none',
+            height: 1080,
+            filesize: 50 * 1024 * 1024,
+          ),
+          _fmt(
+            '136',
+            vcodec: 'avc1',
+            acodec: 'none',
+            height: 720,
+            filesize: 25 * 1024 * 1024,
+          ),
           _fmt('140', vcodec: 'none', acodec: 'mp4a', ext: 'm4a', tbr: 128),
         ]),
         hasFfmpeg: true,
@@ -140,8 +164,7 @@ void main() {
         '720p · MP4 · 25.0 MB',
       ]);
       expect(rows.first.tier, 1080);
-      expect(rows.first.selector,
-          'bv*[height<=1080]+ba/b[height<=1080]/b');
+      expect(rows.first.selector, 'bv*[height<=1080]+ba/b[height<=1080]/b');
       expect(info.audioFormats.single.selector, 'ba[ext=m4a]/ba');
     });
 

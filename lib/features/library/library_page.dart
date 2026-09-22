@@ -29,14 +29,17 @@ class LibraryPage extends ConsumerWidget {
                   builder: (context) => AlertDialog(
                     title: const Text('Clear history?'),
                     content: const Text(
-                        'This removes all entries from the library list. Files on disk are not deleted.'),
+                      'This removes all entries from the library list. Files on disk are not deleted.',
+                    ),
                     actions: [
                       TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Cancel')),
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Cancel'),
+                      ),
                       FilledButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Clear')),
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Clear'),
+                      ),
                     ],
                   ),
                 );
@@ -58,18 +61,23 @@ class LibraryPage extends ConsumerWidget {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.video_library_outlined,
-                        size: 56,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    Icon(
+                      Icons.video_library_outlined,
+                      size: 56,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                     const SizedBox(height: 12),
-                    Text('No downloads yet',
-                        style: Theme.of(context).textTheme.titleSmall),
+                    Text(
+                      'No downloads yet',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
                     const SizedBox(height: 6),
-                    Text('Completed downloads will appear here.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant)),
+                    Text(
+                      'Completed downloads will appear here.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -96,8 +104,10 @@ class LibraryPage extends ConsumerWidget {
                                 color: Theme.of(context)
                                     .colorScheme
                                     .surfaceContainerHighest,
-                                child: const Icon(Icons.movie_outlined,
-                                    size: 24),
+                                child: const Icon(
+                                  Icons.movie_outlined,
+                                  size: 24,
+                                ),
                               )
                             : CachedNetworkImage(
                                 imageUrl: r.thumbnail!,
@@ -110,7 +120,9 @@ class LibraryPage extends ConsumerWidget {
                                   color: Theme.of(context)
                                       .colorScheme
                                       .surfaceContainerHighest,
-                                  child: const Icon(Icons.broken_image_outlined),
+                                  child: const Icon(
+                                    Icons.broken_image_outlined,
+                                  ),
                                 ),
                               ),
                       ),
@@ -119,11 +131,12 @@ class LibraryPage extends ConsumerWidget {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(r.title,
-                                style:
-                                    Theme.of(context).textTheme.titleSmall,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis),
+                            Text(
+                              r.title,
+                              style: Theme.of(context).textTheme.titleSmall,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             const SizedBox(height: 2),
                             Text(
                               [
@@ -132,13 +145,12 @@ class LibraryPage extends ConsumerWidget {
                                 if (r.size > 0) formatBytes(r.size),
                                 if (!exists) 'file missing',
                               ].join(' · '),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
+                              style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .onSurfaceVariant,
+                                  ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
@@ -153,10 +165,12 @@ class LibraryPage extends ConsumerWidget {
                               await OpenFilex.open(r.filePath);
                               break;
                             case 'share':
-                              await SharePlus.instance.share(ShareParams(
-                                title: r.title,
-                                files: [XFile(r.filePath)],
-                              ));
+                              await SharePlus.instance.share(
+                                ShareParams(
+                                  title: r.title,
+                                  files: [XFile(r.filePath)],
+                                ),
+                              );
                               break;
                             case 'delete':
                               final ok = await showDialog<bool>(
@@ -164,16 +178,19 @@ class LibraryPage extends ConsumerWidget {
                                 builder: (context) => AlertDialog(
                                   title: const Text('Delete?'),
                                   content: Text(
-                                      'Remove "${r.title}" from history and delete the file if it exists?'),
+                                    'Remove "${r.title}" from history and delete the file if it exists?',
+                                  ),
                                   actions: [
                                     TextButton(
-                                        onPressed: () =>
-                                            Navigator.pop(context, false),
-                                        child: const Text('Cancel')),
+                                      onPressed: () =>
+                                          Navigator.pop(context, false),
+                                      child: const Text('Cancel'),
+                                    ),
                                     FilledButton(
-                                        onPressed: () =>
-                                            Navigator.pop(context, true),
-                                        child: const Text('Delete')),
+                                      onPressed: () =>
+                                          Navigator.pop(context, true),
+                                      child: const Text('Delete'),
+                                    ),
                                   ],
                                 ),
                               );
@@ -189,11 +206,17 @@ class LibraryPage extends ConsumerWidget {
                         },
                         itemBuilder: (context) => [
                           const PopupMenuItem(
-                              value: 'open', child: Text('Open')),
+                            value: 'open',
+                            child: Text('Open'),
+                          ),
                           const PopupMenuItem(
-                              value: 'share', child: Text('Share')),
+                            value: 'share',
+                            child: Text('Share'),
+                          ),
                           const PopupMenuItem(
-                              value: 'delete', child: Text('Delete')),
+                            value: 'delete',
+                            child: Text('Delete'),
+                          ),
                         ],
                       ),
                     ],

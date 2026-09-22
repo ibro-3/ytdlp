@@ -27,13 +27,16 @@ class NotificationService {
     if (Platform.isAndroid) {
       await _plugin
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
-          ?.createNotificationChannel(const AndroidNotificationChannel(
-            _channelId,
-            _channelName,
-            description: _channelDesc,
-            importance: Importance.low,
-          ));
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.createNotificationChannel(
+            const AndroidNotificationChannel(
+              _channelId,
+              _channelName,
+              description: _channelDesc,
+              importance: Importance.low,
+            ),
+          );
     }
     _ready = true;
   }
@@ -41,8 +44,10 @@ class NotificationService {
   /// Android 13+ requires an explicit runtime grant.
   Future<bool> requestPermission() async {
     if (!Platform.isAndroid) return true;
-    final android = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final android = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     if (android == null) return false;
     final granted = await android.requestNotificationsPermission();
     return granted ?? false;
@@ -57,10 +62,7 @@ class NotificationService {
   }) async {
     if (!_ready) return;
     final pct = (progress * 100).round().clamp(0, 100);
-    final sub = [
-      ?speed,
-      if (eta != null) 'ETA $eta',
-    ].join(' · ');
+    final sub = [?speed, if (eta != null) 'ETA $eta'].join(' · ');
     await _plugin.show(
       id: taskId.hashCode,
       title: 'Downloading… $pct%',

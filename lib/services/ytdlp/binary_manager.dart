@@ -134,8 +134,7 @@ class BinaryManager {
         await _ensureAndroidFfmpeg();
         final preArgs = <String>['$usr/bin/yt-dlp'];
         if (_ffmpegPath != null) {
-          preArgs.addAll(
-              ['--ffmpeg-location', File(_ffmpegPath!).parent.path]);
+          preArgs.addAll(['--ffmpeg-location', File(_ffmpegPath!).parent.path]);
         }
         return ProcessRunner(
           executable: '$usr/bin/python3.14',
@@ -163,7 +162,8 @@ class BinaryManager {
     final root = Directory('${support.path}/pyrt-$abi');
     final marker = File('${root.path}/.ready-$_runtimeVersion');
     final pythonBin = File(
-        '${root.path}/data/data/com.termux/files/usr/bin/python3.14');
+      '${root.path}/data/data/com.termux/files/usr/bin/python3.14',
+    );
     if (await marker.exists() && await pythonBin.exists()) {
       await _ensureExecutable(pythonBin.path);
       return root;
@@ -176,8 +176,10 @@ class BinaryManager {
       return null;
     }
     try {
-      final tarBytes =
-          GZipDecoder().decodeBytes(data.buffer.asUint8List(), verify: true);
+      final tarBytes = GZipDecoder().decodeBytes(
+        data.buffer.asUint8List(),
+        verify: true,
+      );
       final archive = TarDecoder().decodeBytes(tarBytes);
       if (await root.exists()) await root.delete(recursive: true);
       await root.create(recursive: true);
@@ -200,8 +202,9 @@ class BinaryManager {
           await out.writeAsBytes(entry.content as List<int>, flush: true);
         }
       }
-      final script =
-          File('${root.path}/data/data/com.termux/files/usr/bin/yt-dlp');
+      final script = File(
+        '${root.path}/data/data/com.termux/files/usr/bin/yt-dlp',
+      );
       if (!await pythonBin.exists() || !await script.exists()) return null;
       await _chmodX(pythonBin.path);
       await marker.writeAsString(_runtimeVersion, flush: true);
@@ -234,8 +237,11 @@ class BinaryManager {
   Future<String> ytdlpVersion() async {
     final r = await ensureRunner();
     try {
-      final res = await Process.run(r.executable, r.args(['--version']),
-          environment: r.env);
+      final res = await Process.run(
+        r.executable,
+        r.args(['--version']),
+        environment: r.env,
+      );
       if (res.exitCode != 0) {
         throw YtdlpException('yt-dlp --version failed (exit ${res.exitCode})');
       }
@@ -258,28 +264,34 @@ class BinaryManager {
       final res = await Process.run(_ytdlpPath!, ['-U']);
       final out = '${res.stdout}${res.stderr}'.trim();
       if (res.exitCode != 0) {
-        throw YtdlpException(out.isEmpty
-            ? 'yt-dlp -U failed (exit ${res.exitCode})'
-            : out.split('\n').last.trim());
+        throw YtdlpException(
+          out.isEmpty
+              ? 'yt-dlp -U failed (exit ${res.exitCode})'
+              : out.split('\n').last.trim(),
+        );
       }
       return ytdlpVersion();
     }
     if (_usingRuntime) {
       throw YtdlpException(
-          'The bundled Android runtime updates with app releases.\n'
-          'Current version is shown above; to refresh it, update the app.');
+        'The bundled Android runtime updates with app releases.\n'
+        'Current version is shown above; to refresh it, update the app.',
+      );
     }
     final custom = androidUrl?.trim();
     String url;
     if (!Platform.isAndroid) {
-      url = _managedUrl ??
+      url =
+          _managedUrl ??
           'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
     } else if (custom != null && custom.isNotEmpty) {
       url = custom;
     } else {
-      throw YtdlpException('Set an Android yt-dlp build URL in Settings first.\n'
-          'There is no official Android build — point it at a bionic '
-          'binary for your ABI.');
+      throw YtdlpException(
+        'Set an Android yt-dlp build URL in Settings first.\n'
+        'There is no official Android build — point it at a bionic '
+        'binary for your ABI.',
+      );
     }
     final replaced = await _downloadFromUrl(url, force: true);
     if (replaced == null) {
@@ -348,8 +360,9 @@ class BinaryManager {
       } catch (_) {}
     }
     throw YtdlpException(
-        'Could not make the yt-dlp runtime executable ($path).\n'
-        'The app may lack permission to execute its own files on this device.');
+      'Could not make the yt-dlp runtime executable ($path).\n'
+      'The app may lack permission to execute its own files on this device.',
+    );
   }
 
   /// Copies a bundled binary from assets into the app support dir and

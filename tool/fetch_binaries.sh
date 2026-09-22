@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # Fetches official yt-dlp desktop binaries into assets/bin/.
 #
-# Android: there is NO official standalone Android build (the GitHub Linux
-# binary links glibc and will not run on Android/bionic). Cross-build
-# yt-dlp against the NDK in CI and drop it in per-ABI folders, e.g.:
-#   assets/bin/android/arm64-v8a/yt-dlp   (physical devices)
-#   assets/bin/android/x86_64/yt-dlp      (Android Studio emulators)
+# Desktop only: the official GitHub Linux binary links glibc and will not run
+# on Android/bionic, so Android uses a bundled CPython runtime instead:
+#   tool/fetch_android_runtime.sh   (terminux-style runtime + yt-dlp per ABI)
+#   tool/fetch_ffmpeg_android.sh    (minimal static ffmpeg for DASH merges)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$ROOT/assets/bin"/{linux,macos,windows,android}

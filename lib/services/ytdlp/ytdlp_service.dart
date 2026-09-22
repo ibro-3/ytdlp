@@ -17,10 +17,12 @@ class YtdlpProcess {
   final Process _process;
 
   Stream<String> get lines {
-    final out =
-        _process.stdout.transform(utf8.decoder).transform(const LineSplitter());
-    final err =
-        _process.stderr.transform(utf8.decoder).transform(const LineSplitter());
+    final out = _process.stdout
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
+    final err = _process.stderr
+        .transform(utf8.decoder)
+        .transform(const LineSplitter());
     // Merge without extra dependency
     final controller = StreamController<String>();
     var doneOut = false;
@@ -29,18 +31,22 @@ class YtdlpProcess {
       if (doneOut && doneErr && !controller.isClosed) controller.close();
     }
 
-    out.listen(controller.add,
-        onDone: () {
-          doneOut = true;
-          checkDone();
-        },
-        onError: controller.addError);
-    err.listen(controller.add,
-        onDone: () {
-          doneErr = true;
-          checkDone();
-        },
-        onError: controller.addError);
+    out.listen(
+      controller.add,
+      onDone: () {
+        doneOut = true;
+        checkDone();
+      },
+      onError: controller.addError,
+    );
+    err.listen(
+      controller.add,
+      onDone: () {
+        doneErr = true;
+        checkDone();
+      },
+      onError: controller.addError,
+    );
     return controller.stream;
   }
 
@@ -63,14 +69,18 @@ class YtdlpService {
     final ProcessResult result;
     try {
       result = await Process.run(
-          r.executable, r.args(['-J', '--no-warnings', '--no-playlist', url]),
-          environment: r.env);
+        r.executable,
+        r.args(['-J', '--no-warnings', '--no-playlist', url]),
+        environment: r.env,
+      );
     } catch (e) {
       throw YtdlpException(_spawnHint(e));
     }
     if (result.exitCode != 0) {
       throw YtdlpException(
-          _extractError(result.stderr) ?? 'yt-dlp exited with code ${result.exitCode}');
+        _extractError(result.stderr) ??
+            'yt-dlp exited with code ${result.exitCode}',
+      );
     }
     final decoded = jsonDecode(result.stdout as String) as Map<String, dynamic>;
     return VideoInfo.fromYtdlpJson(decoded, hasFfmpeg: hasFfmpeg);
@@ -96,7 +106,12 @@ class YtdlpService {
     final YtdlpProcess process;
     try {
       process = YtdlpProcess(
-          await Process.start(bin.executable, bin.args(args), environment: bin.env));
+        await Process.start(
+          bin.executable,
+          bin.args(args),
+          environment: bin.env,
+        ),
+      );
     } catch (e) {
       throw YtdlpException(_spawnHint(e));
     }

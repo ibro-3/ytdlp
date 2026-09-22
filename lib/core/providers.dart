@@ -41,8 +41,9 @@ Future<Directory> defaultDownloadsDir() async {
   return getApplicationDocumentsDirectory();
 }
 
-final downloadsDirProvider =
-    Provider<Future<Directory> Function()>((ref) => defaultDownloadsDir);
+final downloadsDirProvider = Provider<Future<Directory> Function()>(
+  (ref) => defaultDownloadsDir,
+);
 
 final settingsServiceProvider = Provider<SettingsService>((ref) {
   final box = ref.watch(settingsBoxProvider);
@@ -65,8 +66,9 @@ class SettingsController extends Notifier<AppSettings> {
 final settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
 
-final notificationServiceProvider =
-    Provider<NotificationService>((ref) => NotificationService());
+final notificationServiceProvider = Provider<NotificationService>(
+  (ref) => NotificationService(),
+);
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
   return DownloadManager(

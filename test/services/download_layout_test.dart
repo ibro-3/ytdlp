@@ -23,18 +23,22 @@ void main() {
 
     test('playlist video groups by playlist inside the Video area', () {
       final l = resolveDownloadLayout(
-          root: root, kind: FormatKind.video, isPlaylist: true);
+        root: root,
+        kind: FormatKind.video,
+        isPlaylist: true,
+      );
       expect(l.directory, p.join(root, 'Video'));
-      expect(l.template,
-          '%(playlist_title)s/%(title)s [%(id)s].%(ext)s');
+      expect(l.template, '%(playlist_title)s/%(title)s [%(id)s].%(ext)s');
     });
 
     test('playlist audio groups by playlist inside the Audio area', () {
       final l = resolveDownloadLayout(
-          root: root, kind: FormatKind.audio, isPlaylist: true);
+        root: root,
+        kind: FormatKind.audio,
+        isPlaylist: true,
+      );
       expect(l.directory, p.join(root, 'Audio'));
-      expect(l.template,
-          '%(playlist_title)s/%(title)s [%(id)s].%(ext)s');
+      expect(l.template, '%(playlist_title)s/%(title)s [%(id)s].%(ext)s');
     });
   });
 }

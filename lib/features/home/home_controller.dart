@@ -41,5 +41,6 @@ class HomeController extends Notifier<HomeState> {
   void reset() => state = const HomeState();
 }
 
-final homeControllerProvider =
-    NotifierProvider<HomeController, HomeState>(HomeController.new);
+final homeControllerProvider = NotifierProvider<HomeController, HomeState>(
+  HomeController.new,
+);

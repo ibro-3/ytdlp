@@ -41,9 +41,12 @@ class VideoInfo {
   final List<Format> videoFormats;
   final List<Format> audioFormats;
 
-  factory VideoInfo.fromYtdlpJson(Map<String, dynamic> j,
-      {required bool hasFfmpeg}) {
-    final rawFormats = (j['formats'] as List?)
+  factory VideoInfo.fromYtdlpJson(
+    Map<String, dynamic> j, {
+    required bool hasFfmpeg,
+  }) {
+    final rawFormats =
+        (j['formats'] as List?)
             ?.map((e) => e as Map<String, dynamic>)
             .toList() ??
         const <Map<String, dynamic>>[];
@@ -81,7 +84,9 @@ class VideoInfo {
   }
 
   static List<Format> _buildVideoFormats(
-      List<Map<String, dynamic>> formats, bool hasFfmpeg) {
+    List<Map<String, dynamic>> formats,
+    bool hasFfmpeg,
+  ) {
     // YouTube (and others) mostly serve split streams now: video-only +
     // audio-only with zero combined formats. With ffmpeg we merge, so every
     // video-bearing stream is a candidate. Without ffmpeg only single-file
@@ -91,12 +96,13 @@ class VideoInfo {
         : formats.where(_isCombined).toList();
     if (pool.isEmpty) return [];
 
-    final heights = pool
-        .map((f) => (f['height'] as num?)?.toInt() ?? 0)
-        .where((h) => h > 0)
-        .toSet()
-        .toList()
-      ..sort((a, b) => b.compareTo(a));
+    final heights =
+        pool
+            .map((f) => (f['height'] as num?)?.toInt() ?? 0)
+            .where((h) => h > 0)
+            .toSet()
+            .toList()
+          ..sort((a, b) => b.compareTo(a));
     final best = heights.isEmpty ? null : heights.first;
 
     final result = <Format>[
@@ -113,9 +119,12 @@ class VideoInfo {
     return result;
   }
 
-  static Format _videoFormat(List<Map<String, dynamic>> candidates,
-      int? maxHeight, bool hasFfmpeg,
-      {required String labelBase}) {
+  static Format _videoFormat(
+    List<Map<String, dynamic>> candidates,
+    int? maxHeight,
+    bool hasFfmpeg, {
+    required String labelBase,
+  }) {
     var pool = candidates;
     if (maxHeight != null) {
       pool = pool
@@ -124,8 +133,9 @@ class VideoInfo {
     }
     pool = List.of(pool)
       ..sort((a, b) {
-        final c = ((b['height'] as num?)?.toInt() ?? 0)
-            .compareTo((a['height'] as num?)?.toInt() ?? 0);
+        final c = ((b['height'] as num?)?.toInt() ?? 0).compareTo(
+          (a['height'] as num?)?.toInt() ?? 0,
+        );
         if (c != 0) return c;
         final aIsMp4 = (a['ext'] == 'mp4') ? 0 : 1;
         final bIsMp4 = (b['ext'] == 'mp4') ? 0 : 1;
@@ -137,15 +147,14 @@ class VideoInfo {
     final filesize = best?['filesize'] ?? best?['filesize_approx'];
 
     final selector = hasFfmpeg
-        ? (h == null
-            ? 'bv*+ba/b'
-            : 'bv*[height<=$h]+ba/b[height<=$h]/b')
+        ? (h == null ? 'bv*+ba/b' : 'bv*[height<=$h]+ba/b[height<=$h]/b')
         : (h == null
-            ? 'b[ext=mp4]/b'
-            : 'b[height<=$h][ext=mp4]/b[height<=$h]/b');
+              ? 'b[ext=mp4]/b'
+              : 'b[height<=$h][ext=mp4]/b[height<=$h]/b');
 
-    final sizeLabel =
-        filesize == null ? '' : ' · ${formatBytes(filesize as num)}';
+    final sizeLabel = filesize == null
+        ? ''
+        : ' · ${formatBytes(filesize as num)}';
 
     return Format(
       kind: FormatKind.video,
@@ -156,21 +165,21 @@ class VideoInfo {
     );
   }
 
-  static List<Format> _buildAudioFormats(
-      List<Map<String, dynamic>> formats) {
-    final audio = formats.where((f) {
-      final v = f['vcodec'] as String?;
-      final a = f['acodec'] as String?;
-      return (v == null || v == 'none') && a != null && a != 'none';
-    }).toList()
-      ..sort((a, b) {
-        final c = ((b['tbr'] as num?)?.toDouble() ?? 0)
-            .compareTo((a['tbr'] as num?)?.toDouble() ?? 0);
-        if (c != 0) return c;
-        final aIsM4a = (a['ext'] == 'm4a') ? 0 : 1;
-        final bIsM4a = (b['ext'] == 'm4a') ? 0 : 1;
-        return aIsM4a.compareTo(bIsM4a);
-      });
+  static List<Format> _buildAudioFormats(List<Map<String, dynamic>> formats) {
+    final audio =
+        formats.where((f) {
+          final v = f['vcodec'] as String?;
+          final a = f['acodec'] as String?;
+          return (v == null || v == 'none') && a != null && a != 'none';
+        }).toList()..sort((a, b) {
+          final c = ((b['tbr'] as num?)?.toDouble() ?? 0).compareTo(
+            (a['tbr'] as num?)?.toDouble() ?? 0,
+          );
+          if (c != 0) return c;
+          final aIsM4a = (a['ext'] == 'm4a') ? 0 : 1;
+          final bIsM4a = (b['ext'] == 'm4a') ? 0 : 1;
+          return aIsM4a.compareTo(bIsM4a);
+        });
 
     Map<String, dynamic>? bestM4a;
     for (final f in audio) {

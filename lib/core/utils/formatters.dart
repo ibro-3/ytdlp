@@ -33,7 +33,7 @@ String formatDate(DateTime d) {
     'Sep',
     'Oct',
     'Nov',
-    'Dec'
+    'Dec',
   ];
   return '${months[d.month - 1]} ${d.day}, ${d.year}';
 }
@@ -42,7 +42,8 @@ DateTime? parseUploadDate(String? s) {
   if (s == null || s.length < 8) return null;
   try {
     return DateTime.parse(
-        '${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}');
+      '${s.substring(0, 4)}-${s.substring(4, 6)}-${s.substring(6, 8)}',
+    );
   } catch (_) {
     return null;
   }

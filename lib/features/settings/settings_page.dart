@@ -26,7 +26,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   void initState() {
     super.initState();
     _androidUrlController = TextEditingController(
-        text: ref.read(settingsControllerProvider).androidYtdlpUrl);
+      text: ref.read(settingsControllerProvider).androidYtdlpUrl,
+    );
     _loadVersion();
   }
 
@@ -87,7 +88,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     String? picked;
     try {
       picked = await FilePicker.getDirectoryPath(
-          dialogTitle: 'Choose download folder');
+        dialogTitle: 'Choose download folder',
+      );
     } catch (_) {
       picked = null; // Picker unavailable (e.g. no platform tooling).
     }
@@ -100,11 +102,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       return;
     }
     await _patch(
-        ref.read(settingsControllerProvider).copyWith(downloadRoot: picked));
+      ref.read(settingsControllerProvider).copyWith(downloadRoot: picked),
+    );
   }
 
-  void _resetDownloadFolder() => _patch(
-      ref.read(settingsControllerProvider).copyWith(downloadRoot: ''));
+  void _resetDownloadFolder() =>
+      _patch(ref.read(settingsControllerProvider).copyWith(downloadRoot: ''));
 
   /// A picked folder must be a real, writable filesystem path — yt-dlp runs
   /// as a child process and can only write by path (not via SAF `content://`).
@@ -113,7 +116,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       return 'That location can\'t be used — pick a folder on this device.';
     }
     final probe = File(
-        p.join(path, '.ytdlp-write-test-${DateTime.now().microsecondsSinceEpoch}'));
+      p.join(
+        path,
+        '.ytdlp-write-test-${DateTime.now().microsecondsSinceEpoch}',
+      ),
+    );
     try {
       await probe.writeAsString('ok');
       try {
@@ -146,25 +153,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       SegmentedButton<ThemeMode>(
                         segments: const [
                           ButtonSegment(
-                              value: ThemeMode.system,
-                              label: Text('System'),
-                              icon: Icon(Icons.settings_suggest_outlined)),
+                            value: ThemeMode.system,
+                            label: Text('System'),
+                            icon: Icon(Icons.settings_suggest_outlined),
+                          ),
                           ButtonSegment(
-                              value: ThemeMode.light,
-                              label: Text('Light'),
-                              icon: Icon(Icons.light_mode_outlined)),
+                            value: ThemeMode.light,
+                            label: Text('Light'),
+                            icon: Icon(Icons.light_mode_outlined),
+                          ),
                           ButtonSegment(
-                              value: ThemeMode.dark,
-                              label: Text('Dark'),
-                              icon: Icon(Icons.dark_mode_outlined)),
+                            value: ThemeMode.dark,
+                            label: Text('Dark'),
+                            icon: Icon(Icons.dark_mode_outlined),
+                          ),
                         ],
                         selected: {settings.themeMode},
                         onSelectionChanged: (s) =>
                             _patch(settings.copyWith(themeMode: s.first)),
                       ),
                       const SizedBox(height: 16),
-                      Text('Theme color',
-                          style: Theme.of(context).textTheme.labelMedium),
+                      Text(
+                        'Theme color',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 12,
@@ -175,8 +187,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               name: name,
                               color: Color(value),
                               selected: settings.seedColor == value,
-                              onTap: () => _patch(
-                                  settings.copyWith(seedColor: value)),
+                              onTap: () =>
+                                  _patch(settings.copyWith(seedColor: value)),
                             ),
                         ],
                       ),
@@ -225,13 +237,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         'Audio/ subfolders. Playlist entries later group into '
                         'one folder per playlist inside the matching one.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(height: 12),
-                      Text('Default video quality',
-                          style: Theme.of(context).textTheme.labelMedium),
+                      Text(
+                        'Default video quality',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
                       const SizedBox(height: 8),
                       Wrap(
                         spacing: 8,
@@ -239,11 +252,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         children: [
                           for (final t in AppSettings.videoTierOptions)
                             ChoiceChip(
-                              label: Text(
-                                  t == null ? 'Best quality' : '${t}p'),
+                              label: Text(t == null ? 'Best quality' : '${t}p'),
                               selected: settings.defaultVideoTier == t,
-                              onSelected: (_) => _patch(settings.copyWith(
-                                  defaultVideoTier: () => t)),
+                              onSelected: (_) => _patch(
+                                settings.copyWith(defaultVideoTier: () => t),
+                              ),
                             ),
                         ],
                       ),
@@ -251,19 +264,21 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Audio only by default'),
                         subtitle: const Text(
-                            'Download M4A audio instead of video'),
+                          'Download M4A audio instead of video',
+                        ),
                         value: settings.defaultAudioOnly,
-                        onChanged: (v) => _patch(
-                            settings.copyWith(defaultAudioOnly: v)),
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(defaultAudioOnly: v)),
                       ),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Ask quality each time'),
                         subtitle: const Text(
-                            'Show a quality picker before every download'),
+                          'Show a quality picker before every download',
+                        ),
                         value: settings.askQualityEachTime,
-                        onChanged: (v) => _patch(
-                            settings.copyWith(askQualityEachTime: v)),
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(askQualityEachTime: v)),
                       ),
                     ],
                   ),
@@ -278,16 +293,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.terminal_outlined),
                         title: const Text('yt-dlp'),
-                        subtitle: Text(_versionLoading
-                            ? 'Checking…'
-                            : _version == null
-                                ? 'Not installed'
-                                : 'v$_version'),
+                        subtitle: Text(
+                          _versionLoading
+                              ? 'Checking…'
+                              : _version == null
+                              ? 'Not installed'
+                              : 'v$_version',
+                        ),
                         trailing: IconButton(
                           icon: const Icon(Icons.refresh),
                           tooltip: 'Check version',
-                          onPressed:
-                              _versionLoading ? null : _loadVersion,
+                          onPressed: _versionLoading ? null : _loadVersion,
                         ),
                       ),
                       const SizedBox(height: 8),
@@ -304,9 +320,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       Text(
                         'Android has no official build — updates need a bionic binary URL. Leave blank to keep the bundled copy.',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context)
-                                .colorScheme
-                                .onSurfaceVariant),
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
                       ),
                       const SizedBox(height: 12),
                       FilledButton.icon(
@@ -316,15 +331,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                 width: 18,
                                 height: 18,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2))
+                                  strokeWidth: 2,
+                                ),
+                              )
                             : const Icon(Icons.system_update_outlined),
-                        label: Text(
-                            _updating ? 'Updating…' : 'Update yt-dlp'),
+                        label: Text(_updating ? 'Updating…' : 'Update yt-dlp'),
                       ),
                       if (_engineMessage != null) ...[
                         const SizedBox(height: 8),
-                        SelectableText(_engineMessage!,
-                            style: Theme.of(context).textTheme.bodySmall),
+                        SelectableText(
+                          _engineMessage!,
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ],
                     ],
                   ),
@@ -338,7 +356,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Download notifications'),
                         subtitle: const Text(
-                            'Progress and completion alerts (Android 13+ asks for permission)'),
+                          'Progress and completion alerts (Android 13+ asks for permission)',
+                        ),
                         value: settings.notificationsEnabled,
                         onChanged: (v) async {
                           if (v) {
@@ -346,8 +365,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                 .read(notificationServiceProvider)
                                 .requestPermission();
                           }
-                          await _patch(settings.copyWith(
-                              notificationsEnabled: v));
+                          await _patch(
+                            settings.copyWith(notificationsEnabled: v),
+                          );
                         },
                       ),
                       Align(
@@ -361,14 +381,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                       'test-${DateTime.now().millisecondsSinceEpoch}',
                                   title: 'Notifications work',
                                   success: true,
-                                  detail:
-                                      'You will see progress here during downloads.',
+                                  detail: 'You will see progress here during downloads.',
                                 );
                             ScaffoldMessenger.of(context)
                               ..hideCurrentSnackBar()
-                              ..showSnackBar(const SnackBar(
-                                  content:
-                                      Text('Test notification sent')));
+                              ..showSnackBar(
+                                const SnackBar(
+                                  content: Text('Test notification sent'),
+                                ),
+                              );
                           },
                           icon: const Icon(Icons.notifications_outlined),
                           label: const Text('Send test notification'),
@@ -437,7 +458,8 @@ class _SeedSwatch extends StatelessWidget {
               border: selected
                   ? Border.all(
                       color: Theme.of(context).colorScheme.onSurface,
-                      width: 3)
+                      width: 3,
+                    )
                   : null,
             ),
             child: selected

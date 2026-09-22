@@ -57,27 +57,27 @@ class AppSettings {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
       seedColor: seedColor ?? this.seedColor,
-      defaultVideoTier:
-          defaultVideoTier != null ? defaultVideoTier() : this.defaultVideoTier,
+      defaultVideoTier: defaultVideoTier != null
+          ? defaultVideoTier()
+          : this.defaultVideoTier,
       defaultAudioOnly: defaultAudioOnly ?? this.defaultAudioOnly,
       askQualityEachTime: askQualityEachTime ?? this.askQualityEachTime,
-      notificationsEnabled:
-          notificationsEnabled ?? this.notificationsEnabled,
+      notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       androidYtdlpUrl: androidYtdlpUrl ?? this.androidYtdlpUrl,
       downloadRoot: downloadRoot ?? this.downloadRoot,
     );
   }
 
   Map<String, dynamic> toMap() => {
-        'themeMode': themeMode.name,
-        'seedColor': seedColor,
-        'defaultVideoTier': defaultVideoTier,
-        'defaultAudioOnly': defaultAudioOnly,
-        'askQualityEachTime': askQualityEachTime,
-        'notificationsEnabled': notificationsEnabled,
-        'androidYtdlpUrl': androidYtdlpUrl,
-        'downloadRoot': downloadRoot,
-      };
+    'themeMode': themeMode.name,
+    'seedColor': seedColor,
+    'defaultVideoTier': defaultVideoTier,
+    'defaultAudioOnly': defaultAudioOnly,
+    'askQualityEachTime': askQualityEachTime,
+    'notificationsEnabled': notificationsEnabled,
+    'androidYtdlpUrl': androidYtdlpUrl,
+    'downloadRoot': downloadRoot,
+  };
 
   factory AppSettings.fromMap(Map<String, dynamic> m) {
     ThemeMode mode = ThemeMode.system;

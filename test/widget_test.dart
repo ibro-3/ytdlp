@@ -32,7 +32,9 @@ void main() {
   });
 
   testWidgets('trivial widget pumps', (tester) async {
-    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Text('hello'))));
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: Text('hello'))),
+    );
     expect(find.text('hello'), findsOneWidget);
   });
 }

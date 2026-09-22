@@ -44,17 +44,22 @@ class _EmptyQueue extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.download_done_outlined,
-                size: 56, color: scheme.onSurfaceVariant),
+            Icon(
+              Icons.download_done_outlined,
+              size: 56,
+              color: scheme.onSurfaceVariant,
+            ),
             const SizedBox(height: 12),
-            Text('Nothing downloading',
-                style: Theme.of(context).textTheme.titleSmall),
+            Text(
+              'Nothing downloading',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
             const SizedBox(height: 6),
-            Text('Add a video from the Download tab.',
-                style: Theme.of(context)
-                    .textTheme
-                    .bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant)),
+            Text(
+              'Add a video from the Download tab.',
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
           ],
         ),
       ),
@@ -72,7 +77,8 @@ class _TaskCard extends ConsumerWidget {
     final scheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
 
-    final isDownloading = task.status == DownloadStatus.downloading ||
+    final isDownloading =
+        task.status == DownloadStatus.downloading ||
         task.status == DownloadStatus.queued;
     final isDone = task.status == DownloadStatus.completed;
     final isFailed = task.status == DownloadStatus.failed;
@@ -105,18 +111,26 @@ class _TaskCard extends ConsumerWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(task.video.title,
-                          style: theme.textTheme.titleSmall,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis),
+                      Text(
+                        task.video.title,
+                        style: theme.textTheme.titleSmall,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                       const SizedBox(height: 2),
-                      Text(task.format.label,
-                          style: theme.textTheme.bodySmall
-                              ?.copyWith(color: scheme.onSurfaceVariant)),
+                      Text(
+                        task.format.label,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
                       if (task.video.duration > 0)
-                        Text(formatDuration(task.video.duration),
-                            style: theme.textTheme.labelSmall
-                                ?.copyWith(color: scheme.onSurfaceVariant)),
+                        Text(
+                          formatDuration(task.video.duration),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -125,22 +139,31 @@ class _TaskCard extends ConsumerWidget {
             const SizedBox(height: 12),
             if (isDownloading) ...[
               LinearProgressIndicator(
-                  value: task.progress == 0 ? null : task.progress),
+                value: task.progress == 0 ? null : task.progress,
+              ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  Text('${(task.progress * 100).toStringAsFixed(1)}%',
-                      style: theme.textTheme.labelMedium),
+                  Text(
+                    '${(task.progress * 100).toStringAsFixed(1)}%',
+                    style: theme.textTheme.labelMedium,
+                  ),
                   const SizedBox(width: 12),
                   if (task.speed != null)
-                    Text(task.speed!,
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: scheme.onSurfaceVariant)),
+                    Text(
+                      task.speed!,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
                   const Spacer(),
                   if (task.eta != null)
-                    Text('ETA ${task.eta}',
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: scheme.onSurfaceVariant)),
+                    Text(
+                      'ETA ${task.eta}',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
                 ],
               ),
             ] else if (isDone) ...[
@@ -148,17 +171,23 @@ class _TaskCard extends ConsumerWidget {
                 children: [
                   Icon(Icons.check_circle, size: 16, color: scheme.primary),
                   const SizedBox(width: 6),
-                  Text('Completed',
-                      style: theme.textTheme.labelMedium
-                          ?.copyWith(color: scheme.primary)),
+                  Text(
+                    'Completed',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      color: scheme.primary,
+                    ),
+                  ),
                   const Spacer(),
                   if (task.filePath != null)
                     Flexible(
-                      child: Text(task.filePath!.split('/').last,
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: scheme.onSurfaceVariant),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis),
+                      child: Text(
+                        task.filePath!.split('/').last,
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                 ],
               ),
@@ -168,18 +197,24 @@ class _TaskCard extends ConsumerWidget {
                   Icon(Icons.error_outline, size: 16, color: scheme.error),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: Text(task.error ?? 'Failed',
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: scheme.error),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      task.error ?? 'Failed',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.error,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ],
               ),
             ] else if (task.status == DownloadStatus.canceled) ...[
-              Text('Canceled',
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: scheme.onSurfaceVariant)),
+              Text(
+                'Canceled',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
             ],
             const SizedBox(height: 10),
             Wrap(

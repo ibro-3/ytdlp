@@ -14,14 +14,19 @@ class AppTheme {
     required Brightness brightness,
     required Color seedColor,
     ColorScheme? scheme,
-  }) =>
-      _build(brightness, scheme, seedColor);
+  }) => _build(brightness, scheme, seedColor);
 
-  static ThemeData _build(Brightness brightness,
-      [ColorScheme? scheme, Color? seedColor]) {
-    final cs = scheme ??
+  static ThemeData _build(
+    Brightness brightness, [
+    ColorScheme? scheme,
+    Color? seedColor,
+  ]) {
+    final cs =
+        scheme ??
         ColorScheme.fromSeed(
-            seedColor: seedColor ?? seed, brightness: brightness);
+          seedColor: seedColor ?? seed,
+          brightness: brightness,
+        );
     final base = ThemeData(
       colorScheme: cs,
       brightness: brightness,
@@ -30,7 +35,10 @@ class AppTheme {
     );
     return base.copyWith(
       scaffoldBackgroundColor: cs.surface,
-      appBarTheme: const AppBarTheme(scrolledUnderElevation: 0, centerTitle: false),
+      appBarTheme: const AppBarTheme(
+        scrolledUnderElevation: 0,
+        centerTitle: false,
+      ),
       cardTheme: CardThemeData(
         elevation: 0,
         color: cs.surfaceContainerLow,
@@ -49,12 +57,15 @@ class AppTheme {
         backgroundColor: WidgetStatePropertyAll(cs.surfaceContainerHigh),
         side: WidgetStatePropertyAll(BorderSide(color: cs.outlineVariant)),
         shape: WidgetStatePropertyAll(
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(28))),
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+        ),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
           minimumSize: const Size(64, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
           textStyle: const TextStyle(fontWeight: FontWeight.w600),
         ),
       ),

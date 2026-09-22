@@ -35,7 +35,10 @@ class DownloadManager extends ChangeNotifier {
 
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
 
-  Future<void> enqueue({required VideoInfo video, required Format format}) async {
+  Future<void> enqueue({
+    required VideoInfo video,
+    required Format format,
+  }) async {
     final task = DownloadTask(
       id: '${DateTime.now().microsecondsSinceEpoch}',
       video: video,
@@ -50,8 +53,7 @@ class DownloadManager extends ChangeNotifier {
   Future<void> _run(DownloadTask task) async {
     try {
       final root = await _downloadRoot();
-      final layout = resolveDownloadLayout(
-          root: root, kind: task.format.kind);
+      final layout = resolveDownloadLayout(root: root, kind: task.format.kind);
       final dir = Directory(layout.directory);
       await dir.create(recursive: true);
       task.status = DownloadStatus.downloading;
@@ -112,19 +114,22 @@ class DownloadManager extends ChangeNotifier {
           task.status = DownloadStatus.completed;
           _notifyDone(task, success: true);
           final size = await File(path).length();
-          await history.add(DownloadRecord(
-            id: task.id,
-            videoId: task.video.id,
-            title: task.video.title,
-            author: task.video.author,
-            thumbnail: task.video.thumbnail,
-            filePath: path,
-            size: size,
-            createdAt: task.createdAt,
-          ));
+          await history.add(
+            DownloadRecord(
+              id: task.id,
+              videoId: task.video.id,
+              title: task.video.title,
+              author: task.video.author,
+              thumbnail: task.video.thumbnail,
+              filePath: path,
+              size: size,
+              createdAt: task.createdAt,
+            ),
+          );
         } else {
           task.status = DownloadStatus.failed;
-          task.error ??= 'Download finished but the output file could not be found.';
+          task.error ??=
+              'Download finished but the output file could not be found.';
           _notifyDone(task, success: false);
         }
       } else if (task.status != DownloadStatus.canceled) {
@@ -151,8 +156,7 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  bool get _notificationsOn =>
-      settings?.settings.notificationsEnabled ?? true;
+  bool get _notificationsOn => settings?.settings.notificationsEnabled ?? true;
 
   /// Root folder for downloads: the user-configured one when set, otherwise
   /// the platform default.
@@ -166,25 +170,29 @@ class DownloadManager extends ChangeNotifier {
     if (!_notificationsOn) return;
     final n = notifications;
     if (n == null) return;
-    unawaited(n.showProgress(
-      taskId: task.id,
-      title: task.video.title,
-      progress: task.progress,
-      speed: task.speed,
-      eta: task.eta,
-    ));
+    unawaited(
+      n.showProgress(
+        taskId: task.id,
+        title: task.video.title,
+        progress: task.progress,
+        speed: task.speed,
+        eta: task.eta,
+      ),
+    );
   }
 
   void _notifyDone(DownloadTask task, {required bool success}) {
     if (!_notificationsOn) return;
     final n = notifications;
     if (n == null) return;
-    unawaited(n.showDone(
-      taskId: task.id,
-      title: task.video.title,
-      success: success,
-      detail: success ? null : task.error,
-    ));
+    unawaited(
+      n.showDone(
+        taskId: task.id,
+        title: task.video.title,
+        success: success,
+        detail: success ? null : task.error,
+      ),
+    );
   }
 
   Future<void> _cancelNotification(String id) async {
@@ -202,7 +210,8 @@ class DownloadManager extends ChangeNotifier {
       }
       if (candidates.isEmpty) return null;
       candidates.sort(
-          (a, b) => b.statSync().modified.compareTo(a.statSync().modified));
+        (a, b) => b.statSync().modified.compareTo(a.statSync().modified),
+      );
       return (candidates.first as File).path;
     } catch (_) {
       return null;
@@ -252,10 +261,9 @@ class DownloadManager extends ChangeNotifier {
   Future<void> shareTask(DownloadTask task) async {
     final path = task.filePath;
     if (path == null) return;
-    await SharePlus.instance.share(ShareParams(
-      title: task.video.title,
-      files: [XFile(path)],
-    ));
+    await SharePlus.instance.share(
+      ShareParams(title: task.video.title, files: [XFile(path)]),
+    );
   }
 
   Future<void> deleteTask(DownloadTask task) async {

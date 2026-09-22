@@ -13,10 +13,12 @@ class YtdlpProgressParser {
     r'(?: ETA ([\d:]+|Unknown))?',
   );
 
-  static final RegExp _destinationRe =
-      RegExp(r'^\[download\] Destination: (.+)$');
-  static final RegExp _mergerRe =
-      RegExp(r'^\[Merger\] Merging formats into "(.+)"$');
+  static final RegExp _destinationRe = RegExp(
+    r'^\[download\] Destination: (.+)$',
+  );
+  static final RegExp _mergerRe = RegExp(
+    r'^\[Merger\] Merging formats into "(.+)"$',
+  );
   static final RegExp _errorRe = RegExp(r'^ERROR:\s*(.+)$');
 
   static YtdlpProgressData? parseProgress(String line) {
