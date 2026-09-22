@@ -16,7 +16,7 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 - **Routing:** `go_router` 18 (`StatefulShellRoute.indexedStack`)
 - **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
 - **Storage:** `hive` + `path_provider` (downloads dir: `getDownloadsDirectory()` desktop, external app dir on Android)
-- **Engine:** `BinaryManager` copies `assets/bin/<platform>/yt-dlp` → app support dir + `chmod 755`, prefers system `yt-dlp`/`ffmpeg` on PATH. Without `ffmpeg`, requests combined formats only (`b[ext=mp4]/b`).
+- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4]/b`).
 
 ## Project structure
 
@@ -47,7 +47,7 @@ flutter test
 flutter run -d linux   # or android
 ```
 
-System `yt-dlp` + `ffmpeg` are used if on PATH (checked with `which`/`where`). No bundled binary needed on desktop for dev.
+System `yt-dlp` + `ffmpeg` are used if on PATH (checked with `which`/`where`). No bundled binary needed on desktop for dev — and if neither a system install nor a bundled asset exists, the app auto-downloads the official single-file `yt-dlp` build on first run (desktop only).
 
 ### Bundling binaries
 
@@ -55,7 +55,24 @@ System `yt-dlp` + `ffmpeg` are used if on PATH (checked with `which`/`where`). N
 ./tool/fetch_binaries.sh
 ```
 
-Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `assets/bin/`. Android needs a PyInstaller `yt-dlp` arm64-v8a build placed at `assets/bin/android/yt-dlp` (no official build; build in CI or see yt-dlp docs).
+Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `assets/bin/` and prints guidance for Android.
+
+**Android has no official standalone binary** — the GitHub Linux build links glibc and won't run on Android's bionic libc. You must cross-build `yt-dlp` (PyInstaller against the NDK) and place it per-ABI, matching what the device reports via `uname -m`:
+
+| ABI (device)                 | Asset path                          |
+| ---------------------------- | ----------------------------------- |
+| `arm64-v8a` (physical RK/MTK/SD) | `assets/bin/android/arm64-v8a/yt-dlp` |
+| `x86_64` (Studio emulators)  | `assets/bin/android/x86_64/yt-dlp`  |
+| `armeabi-v7a` (older 32-bit) | `assets/bin/android/armeabi-v7a/yt-dlp` |
+| `x86`                        | `assets/bin/android/x86/yt-dlp`     |
+
+Then register the asset(s) in `pubspec.yaml` and rebuild:
+
+```bash
+flutter clean && flutter run
+```
+
+If a per-ABI asset is missing, `assets/bin/android/yt-dlp` is tried as a fallback; otherwise the app shows an actionable error naming the expected path.
 
 APK per-ABI splits are recommended (binaries ~15 MB).
 

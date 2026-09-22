@@ -138,7 +138,7 @@ class BinaryManager {
       return null;
     }
     final dir = await getApplicationSupportDirectory();
-    final target = File('${dir.path}/bin/${_ytdlpName}');
+    final target = File('${dir.path}/bin/$_ytdlpName');
     if (await target.exists()) return target.path;
 
     final fileName = Platform.isWindows

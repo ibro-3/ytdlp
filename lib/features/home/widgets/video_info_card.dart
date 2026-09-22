@@ -28,12 +28,12 @@ class VideoInfoCard extends StatelessWidget {
                 : CachedNetworkImage(
                     imageUrl: video.thumbnail!,
                     fit: BoxFit.cover,
-                    placeholder: (_, __) => ColoredBox(
+                    placeholder: (_, _) => ColoredBox(
                       color: scheme.surfaceContainerHighest,
                       child: const Center(
                           child: CircularProgressIndicator(strokeWidth: 2)),
                     ),
-                    errorWidget: (_, __, ___) => ColoredBox(
+                    errorWidget: (_, _, _) => ColoredBox(
                       color: scheme.surfaceContainerHighest,
                       child: Icon(Icons.broken_image_outlined,
                           color: scheme.onSurfaceVariant),

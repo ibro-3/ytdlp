@@ -14,16 +14,14 @@ import 'history_service.dart';
 
 class DownloadManager extends ChangeNotifier {
   DownloadManager({
-    required YtdlpService ytdlp,
-    required HistoryService history,
-    required Future<Directory> Function() downloadsDir,
-  })  : _ytdlp = ytdlp,
-        _history = history,
-        _downloadsDir = downloadsDir;
+    required this.ytdlp,
+    required this.history,
+    required this.downloadsDir,
+  });
 
-  final YtdlpService _ytdlp;
-  final HistoryService _history;
-  final Future<Directory> Function() _downloadsDir;
+  final YtdlpService ytdlp;
+  final HistoryService history;
+  final Future<Directory> Function() downloadsDir;
 
   final List<DownloadTask> _tasks = [];
   final Map<String, YtdlpProcess> _processes = {};
@@ -44,12 +42,12 @@ class DownloadManager extends ChangeNotifier {
 
   Future<void> _run(DownloadTask task) async {
     try {
-      final dir = await _downloadsDir();
+      final dir = await downloadsDir();
       await dir.create(recursive: true);
       task.status = DownloadStatus.downloading;
       notifyListeners();
 
-      final dl = await _ytdlp.startDownload(
+      final dl = await ytdlp.startDownload(
         url: task.video.webUrl,
         format: task.format,
         outputDir: dir.path,
@@ -92,7 +90,7 @@ class DownloadManager extends ChangeNotifier {
           task.eta = null;
           task.status = DownloadStatus.completed;
           final size = await File(path).length();
-          await _history.add(DownloadRecord(
+          await history.add(DownloadRecord(
             id: task.id,
             videoId: task.video.id,
             title: task.video.title,
@@ -194,7 +192,7 @@ class DownloadManager extends ChangeNotifier {
       final f = File(task.filePath ?? '');
       if (f.existsSync()) f.deleteSync();
     } catch (_) {}
-    await _history.remove(task.id);
+    await history.remove(task.id);
     _tasks.removeWhere((t) => t.id == task.id);
     notifyListeners();
   }

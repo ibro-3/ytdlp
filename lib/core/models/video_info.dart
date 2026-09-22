@@ -16,8 +16,6 @@ class Format {
   final String selector;
   final int? tier;
   final int? filesize;
-
-  bool get isBest => tier == null;
 }
 
 class VideoInfo {
@@ -81,25 +79,25 @@ class VideoInfo {
       List<Map<String, dynamic>> formats, bool hasFfmpeg) {
     final combined = formats.where(_isCombined).toList();
     if (combined.isEmpty) return [];
-    const tiers = [2160, 1440, 1080, 720, 480, 360, 240];
-    final result = <Format>[];
 
-    // Best first
-    result.add(_videoFormat(combined, null, hasFfmpeg, labelBase: 'Best quality'));
+    final heights = combined
+        .map((f) => (f['height'] as num?)?.toInt() ?? 0)
+        .where((h) => h > 0)
+        .toSet()
+        .toList()
+      ..sort((a, b) => b.compareTo(a));
+    final best = heights.isEmpty ? null : heights.first;
 
-    for (final t in tiers) {
-      final anyAtOrBelow = combined.any(
-          (f) => ((f['height'] as num?)?.toInt() ?? 0) <= t);
-      if (!anyAtOrBelow) continue;
-      // avoid duplicates: if the best height already equals t, skip Best duplicate
-      final bestHeight = combined
-          .map((f) => (f['height'] as num?)?.toInt() ?? 0)
-          .fold<int>(0, (a, b) => a > b ? a : b);
-      if (bestHeight == t && result.length == 1) continue;
-      final labelBase = t >= 1400 ? '${t}p · MP4' : '${t}p · MP4';
-      // For 2160 show 2160p (or 4K label). Keep consistent: 2160p.
-      result.add(_videoFormat(combined, t, hasFfmpeg, labelBase: labelBase));
+    final result = <Format>[
+      _videoFormat(combined, null, hasFfmpeg, labelBase: 'Best quality'),
+    ];
+    // One row per distinct source resolution below the best one, so labels
+    // always match what the selector will actually pick (no fake "2160p"
+    // rows above the video's real max resolution).
+    for (final h in heights) {
       if (result.length >= 7) break;
+      if (best != null && h >= best) continue;
+      result.add(_videoFormat(combined, h, hasFfmpeg, labelBase: '${h}p · MP4'));
     }
     return result;
   }
@@ -170,8 +168,11 @@ class VideoInfo {
         break;
       }
     }
-    bestM4a ??= audio.isEmpty ? null : audio.first;
-    final fs = bestM4a?['filesize'] ?? bestM4a?['filesize_approx'];
+    if (bestM4a == null) {
+      if (audio.isEmpty) return const [];
+      bestM4a = audio.first;
+    }
+    final fs = bestM4a['filesize'] ?? bestM4a['filesize_approx'];
     final sizeLabel = fs == null ? '' : ' · ${formatBytes(fs as num)}';
     return [
       Format(
