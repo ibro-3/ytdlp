@@ -44,9 +44,12 @@ dependencies:
   share_plus: ^13.3.0
   dynamic_color: ^2.1.0
   flutter_local_notifications: ^22.3.1
+  archive: ^4.3.0
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
 
   # The "flutter_lints" package below contains a set of recommended lints to
@@ -69,9 +72,10 @@ flutter:
   assets:
     # Bundled yt-dlp binaries live under assets/bin/. On desktop the app
     # prefers the system binary and can auto-download the official single-file
-    # build, so these are optional. Android REQUIRES a bundled build, e.g.:
-    #   - assets/bin/android/x86_64/yt-dlp
-    #   - assets/bin/android/arm64-v8a/yt-dlp
+    # build, so these are optional. Android uses the self-contained
+    # CPython + yt-dlp runtime (built by tool/fetch_android_runtime.sh):
+    - assets/bin/android/x86_64/python.tar.gz
+    - assets/bin/android/arm64-v8a/python.tar.gz
     - assets/bin/.gitkeep
 
   # To add assets to your application, add an assets section, like this:

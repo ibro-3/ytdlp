@@ -25,6 +25,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   FormatKind _mode = FormatKind.video;
   Format? _selectedVideo;
   Format? _selectedAudio;
+  String? _autoPickedFor;
 
   @override
   void dispose() {
@@ -183,34 +184,42 @@ class _HomePageState extends ConsumerState<HomePage> {
     final video = state.video;
 
     // Reset picks when a different video arrives, then auto-pick defaults
+    // exactly once (one-shot: the gate below must not reschedule every
+    // frame once a selection is intentionally left empty).
     if (video != null && video.id != _lastVideoId) {
       _lastVideoId = video.id;
       _selectedVideo = null;
       _selectedAudio = null;
+      _autoPickedFor = null;
     }
-    if (video != null) {
+    if (video != null &&
+        _autoPickedFor != video.id &&
+        (video.videoFormats.isNotEmpty ||
+            video.audioFormats.isNotEmpty)) {
+      _autoPickedFor = video.id;
       final defaults = ref.watch(settingsControllerProvider);
-      if ((_selectedVideo == null || _selectedAudio == null) &&
-          (video.videoFormats.isNotEmpty ||
-              video.audioFormats.isNotEmpty)) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          setState(() {
-            // If there are no downloadable video streams (e.g. no ffmpeg
-            // to merge split streams), land on the Audio tab instead of
-            // an empty Quality section.
-            _mode = defaults.defaultAudioOnly ||
-                    (video.videoFormats.isEmpty &&
-                        video.audioFormats.isNotEmpty)
-                ? FormatKind.audio
-                : FormatKind.video;
-            _selectedVideo ??= _defaultFormat(
-                    video, defaults.copyWith(defaultAudioOnly: false)) ??
-                video.videoFormats.firstOrNull;
-            _selectedAudio ??= video.audioFormats.firstOrNull;
-          });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        // Video may have changed while the frame was pending.
+        final current = ref.read(homeControllerProvider).video;
+        if (current == null || current.id != video.id) return;
+        setState(() {
+          // If there are no downloadable video streams (e.g. no ffmpeg
+          // to merge split streams), land on the Audio tab instead of
+          // an empty Quality section.
+          _mode = defaults.defaultAudioOnly ||
+                  (video.videoFormats.isEmpty &&
+                      video.audioFormats.isNotEmpty)
+              ? FormatKind.audio
+              : FormatKind.video;
+          final vPick = _defaultFormat(
+              video, defaults.copyWith(defaultAudioOnly: false));
+          if (vPick?.kind == FormatKind.video) {
+            _selectedVideo ??= vPick;
+          }
+          _selectedAudio ??= video.audioFormats.firstOrNull;
         });
-      }
+      });
     }
 
     final selected =

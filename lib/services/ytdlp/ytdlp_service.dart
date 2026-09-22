@@ -58,10 +58,16 @@ class YtdlpService {
   final BinaryManager _binary;
 
   Future<VideoInfo> fetchVideoInfo(String url) async {
-    final bin = await _binary.ensureYtdlp();
+    final r = await _binary.ensureRunner();
     final hasFfmpeg = await _binary.hasFfmpeg();
-    final result =
-        await Process.run(bin, ['-J', '--no-warnings', '--no-playlist', url]);
+    final ProcessResult result;
+    try {
+      result = await Process.run(
+          r.executable, r.args(['-J', '--no-warnings', '--no-playlist', url]),
+          environment: r.env);
+    } catch (e) {
+      throw YtdlpException(_spawnHint(e));
+    }
     if (result.exitCode != 0) {
       throw YtdlpException(
           _extractError(result.stderr) ?? 'yt-dlp exited with code ${result.exitCode}');
@@ -76,7 +82,7 @@ class YtdlpService {
     required String outputDir,
     required String template,
   }) async {
-    final bin = await _binary.ensureYtdlp();
+    final bin = await _binary.ensureRunner();
     final args = [
       '--newline',
       '--no-playlist',
@@ -87,8 +93,29 @@ class YtdlpService {
       format.selector,
       url,
     ];
-    final process = await Process.start(bin, args);
-    return YtdlpProcess(process);
+    final YtdlpProcess process;
+    try {
+      process = YtdlpProcess(
+          await Process.start(bin.executable, bin.args(args), environment: bin.env));
+    } catch (e) {
+      throw YtdlpException(_spawnHint(e));
+    }
+    return process;
+  }
+
+  /// Turns a failed process spawn into an actionable message. On Android the
+  /// usual culprit is Android 14+ SELinux denying `execute` on the app's own
+  /// files (`avc: denied { execute_no_trans }`) when targetSdk >= 34.
+  static String _spawnHint(Object error) {
+    final detail = error is ProcessException && error.message.isNotEmpty
+        ? error.message
+        : error.toString();
+    if (!Platform.isAndroid) {
+      return 'Could not start yt-dlp ($detail).';
+    }
+    return 'Could not start the bundled yt-dlp runtime ($detail).\n'
+        'On Android this usually means SELinux is blocking execution of app '
+        'files — build with targetSdk 28 or lower (see README "Android notes").';
   }
 
   static String? _extractError(dynamic stderr) {

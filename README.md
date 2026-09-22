@@ -59,24 +59,25 @@ System `yt-dlp` + `ffmpeg` are used if on PATH (checked with `which`/`where`). N
 
 Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `assets/bin/` and prints guidance for Android.
 
-**Android has no official standalone binary** — the GitHub Linux build links glibc and won't run on Android's bionic libc. You must cross-build `yt-dlp` (PyInstaller against the NDK) and place it per-ABI, matching what the device reports via `uname -m`:
-
-| ABI (device)                 | Asset path                          |
-| ---------------------------- | ----------------------------------- |
-| `arm64-v8a` (physical RK/MTK/SD) | `assets/bin/android/arm64-v8a/yt-dlp` |
-| `x86_64` (Studio emulators)  | `assets/bin/android/x86_64/yt-dlp`  |
-| `armeabi-v7a` (older 32-bit) | `assets/bin/android/armeabi-v7a/yt-dlp` |
-| `x86`                        | `assets/bin/android/x86/yt-dlp`     |
-
-Then register the asset(s) in `pubspec.yaml` and rebuild:
+**Android has no official standalone binary** — the GitHub Linux build links glibc and won't run on Android's bionic libc. This repo bundles a self-contained CPython + yt-dlp runtime assembled from official Termux packages (same versions as Termux ships: currently CPython 3.14 + yt-dlp 2026.08.19):
 
 ```bash
-flutter clean && flutter run
+./tool/fetch_android_runtime.sh          # both ABIs
+./tool/fetch_android_runtime.sh x86_64   # emulator only
 ```
 
-If a per-ABI asset is missing, `assets/bin/android/yt-dlp` is tried as a fallback; otherwise the app shows an actionable error naming the expected path.
+This produces `assets/bin/android/<abi>/python.tar.gz` (~16 MB per ABI), already registered in `pubspec.yaml`. At first launch the app extracts it to its private files dir and runs `python3.14 bin/yt-dlp` with `LD_LIBRARY_PATH`/`PYTHONHOME`/`SSL_CERT_FILE` pointed at the tree — no root, no Termux app needed.
 
-APK per-ABI splits are recommended (binaries ~15 MB).
+| ABI (device)                     | Asset                              | Status               |
+| -------------------------------- | ---------------------------------- | -------------------- |
+| `x86_64` (Studio emulators)      | `assets/bin/android/x86_64/…`      | verified end-to-end on emulator (fetch + download) |
+| `arm64-v8a` (physical devices)   | `assets/bin/android/arm64-v8a/…`    | same recipe, untested here |
+
+If a per-ABI archive is missing, `assets/bin/android/yt-dlp` (a custom single-file bionic build) is tried as a fallback; otherwise the app shows an actionable error naming the expected path.
+
+> **Android 14+ SELinux note:** apps targeting recent SDKs (`untrusted_app_34`) are denied `execute` on their own data files (`avc: denied { execute_no_trans }`), which silently breaks any bundled-subprocess design. This project therefore sets `targetSdk = 28` in `android/app/build.gradle.kts` (same approach as Termux) so the bundled runtime can execute. Trade-off: sideload/F-Droid distribution only — the Play Store requires a recent target SDK (and forbids YouTube downloading anyway).
+
+APK per-ABI splits are recommended (each runtime adds ~16 MB).
 
 ## Android notes
 
