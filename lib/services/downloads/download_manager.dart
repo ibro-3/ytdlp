@@ -12,6 +12,7 @@ import '../notifications/notification_service.dart';
 import '../settings/settings_service.dart';
 import '../ytdlp/progress_parser.dart';
 import '../ytdlp/ytdlp_service.dart';
+import 'download_layout.dart';
 import 'history_service.dart';
 
 class DownloadManager extends ChangeNotifier {
@@ -48,7 +49,10 @@ class DownloadManager extends ChangeNotifier {
 
   Future<void> _run(DownloadTask task) async {
     try {
-      final dir = await downloadsDir();
+      final root = await _downloadRoot();
+      final layout = resolveDownloadLayout(
+          root: root, kind: task.format.kind);
+      final dir = Directory(layout.directory);
       await dir.create(recursive: true);
       task.status = DownloadStatus.downloading;
       notifyListeners();
@@ -57,8 +61,8 @@ class DownloadManager extends ChangeNotifier {
       final dl = await ytdlp.startDownload(
         url: task.video.webUrl,
         format: task.format,
-        outputDir: dir.path,
-        template: '%(title)s [%(id)s].%(ext)s',
+        outputDir: layout.directory,
+        template: layout.template,
       );
       _processes[task.id] = dl;
 
@@ -149,6 +153,14 @@ class DownloadManager extends ChangeNotifier {
 
   bool get _notificationsOn =>
       settings?.settings.notificationsEnabled ?? true;
+
+  /// Root folder for downloads: the user-configured one when set, otherwise
+  /// the platform default.
+  Future<String> _downloadRoot() async {
+    final configured = settings?.settings.downloadRoot.trim() ?? '';
+    if (configured.isNotEmpty) return configured;
+    return (await downloadsDir()).path;
+  }
 
   void _notifyProgress(DownloadTask task, {bool force = false}) {
     if (!_notificationsOn) return;

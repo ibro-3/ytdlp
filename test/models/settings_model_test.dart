@@ -13,6 +13,7 @@ void main() {
       expect(s.askQualityEachTime, isTrue);
       expect(s.notificationsEnabled, isTrue);
       expect(s.androidYtdlpUrl, isEmpty);
+      expect(s.downloadRoot, isEmpty);
       expect(s.tierLabel, '720p');
     });
 
@@ -25,6 +26,7 @@ void main() {
         askQualityEachTime: false,
         notificationsEnabled: false,
         androidYtdlpUrl: 'https://example.com/yt-dlp',
+        downloadRoot: '/data/media/0/ytdlp',
       );
       final back = AppSettings.fromMap(s.toMap());
       expect(back.themeMode, ThemeMode.dark);
@@ -35,6 +37,14 @@ void main() {
       expect(back.askQualityEachTime, isFalse);
       expect(back.notificationsEnabled, isFalse);
       expect(back.androidYtdlpUrl, 'https://example.com/yt-dlp');
+      expect(back.downloadRoot, '/data/media/0/ytdlp');
+    });
+
+    test('copyWith sets and clears downloadRoot', () {
+      const s = AppSettings();
+      final set = s.copyWith(downloadRoot: '/tmp/dl');
+      expect(set.downloadRoot, '/tmp/dl');
+      expect(set.copyWith(downloadRoot: '').downloadRoot, isEmpty);
     });
 
     test('copyWith can clear the tier to Best via thunk', () {

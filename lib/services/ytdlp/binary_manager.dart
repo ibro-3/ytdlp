@@ -39,6 +39,7 @@ class ProcessRunner {
 ///    (built by `tool/fetch_android_runtime.sh` from Termux packages)
 class BinaryManager {
   String? _ytdlpPath;
+  String? _ffmpegPath;
   bool? _hasFfmpeg;
   bool _isSystem = false;
   bool _usingRuntime = false;
@@ -46,11 +47,45 @@ class BinaryManager {
 
   Future<bool> hasFfmpeg() async {
     if (_hasFfmpeg != null) return _hasFfmpeg!;
+    if (Platform.isAndroid) {
+      final ffmpeg = await _ensureAndroidFfmpeg();
+      return _hasFfmpeg = ffmpeg != null;
+    }
     final onPath = await _findOnPath('ffmpeg');
     return _hasFfmpeg = onPath != null;
   }
 
   static const _runtimeVersion = 'v1';
+  static const _ffmpegVersion = 'v1';
+
+  /// Extracts the per-ABI minimal static ffmpeg asset (once per version).
+  /// Returns its path, or null when the asset is missing.
+  Future<String?> _ensureAndroidFfmpeg() async {
+    if (_ffmpegPath != null) return _ffmpegPath;
+    final support = await getApplicationSupportDirectory();
+    final target = File('${support.path}/bin/ffmpeg');
+    final marker = File('${support.path}/bin/.ffmpeg-v');
+    if (await target.exists()) {
+      try {
+        if ((await marker.readAsString()).trim() == _ffmpegVersion) {
+          await _ensureExecutable(target.path);
+          return _ffmpegPath = target.path;
+        }
+      } catch (_) {}
+      // Stale or unmarked copy from an older app install.
+      try {
+        await target.delete();
+      } catch (_) {}
+    }
+    final extracted = await _extractAsset('ffmpeg');
+    if (extracted != null) {
+      try {
+        await marker.writeAsString(_ffmpegVersion, flush: true);
+      } catch (_) {}
+      _ffmpegPath = extracted;
+    }
+    return _ffmpegPath;
+  }
 
   Future<ProcessRunner> ensureRunner() async {
     if (Platform.isAndroid) return _ensureAndroidRunner();
@@ -96,9 +131,15 @@ class BinaryManager {
         final usr = '${dir.path}/data/data/com.termux/files/usr';
         final support = await getApplicationSupportDirectory();
         final cache = await getTemporaryDirectory();
+        await _ensureAndroidFfmpeg();
+        final preArgs = <String>['$usr/bin/yt-dlp'];
+        if (_ffmpegPath != null) {
+          preArgs.addAll(
+              ['--ffmpeg-location', File(_ffmpegPath!).parent.path]);
+        }
         return ProcessRunner(
           executable: '$usr/bin/python3.14',
-          preArgs: ['$usr/bin/yt-dlp'],
+          preArgs: preArgs,
           env: {
             'LD_LIBRARY_PATH': '$usr/lib',
             'PYTHONHOME': usr,

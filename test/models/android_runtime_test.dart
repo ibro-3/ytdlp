@@ -42,6 +42,21 @@ void main() {
           expect(brotli, contains('aarch64'));
         }
       });
+
+      test('$abi bundles a minimal static ffmpeg (DASH merges)', () {
+        final bin = File('assets/bin/android/$abi/ffmpeg');
+        expect(bin.existsSync(), isTrue,
+            reason: 'run tool/fetch_ffmpeg_android.sh $abi');
+        // Must be small — that's the whole point vs. the Termux package.
+        expect(bin.lengthSync(), lessThan(5 * 1024 * 1024));
+        final head = bin.readAsBytesSync().take(20).toList();
+        expect(head.sublist(0, 4), [0x7f, 0x45, 0x4c, 0x46], // ELF
+            reason: 'ffmpeg must be a native executable');
+        // e_machine: x86-64 == 62, aarch64 == 183.
+        final machine = (head[18] | (head[19] << 8));
+        expect(machine, abi == 'x86_64' ? 62 : 183,
+            reason: 'ffmpeg must match the device ABI');
+      });
     }
   });
 }

@@ -45,6 +45,8 @@ dependencies:
   dynamic_color: ^2.1.0
   flutter_local_notifications: ^22.3.1
   archive: ^4.3.0
+  file_picker: ^13.1.0
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:
@@ -73,9 +75,12 @@ flutter:
     # Bundled yt-dlp binaries live under assets/bin/. On desktop the app
     # prefers the system binary and can auto-download the official single-file
     # build, so these are optional. Android uses the self-contained
-    # CPython + yt-dlp runtime (built by tool/fetch_android_runtime.sh):
+    # CPython + yt-dlp runtime (built by tool/fetch_android_runtime.sh) and a
+    # minimal static ffmpeg for merging DASH streams (tool/fetch_ffmpeg_android.sh):
     - assets/bin/android/x86_64/python.tar.gz
     - assets/bin/android/arm64-v8a/python.tar.gz
+    - assets/bin/android/x86_64/ffmpeg
+    - assets/bin/android/arm64-v8a/ffmpeg
     - assets/bin/.gitkeep
 
   # To add assets to your application, add an assets section, like this:

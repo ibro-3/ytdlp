@@ -11,6 +11,7 @@ class AppSettings {
     this.askQualityEachTime = true,
     this.notificationsEnabled = true,
     this.androidYtdlpUrl = '',
+    this.downloadRoot = '',
   });
 
   /// Null tier = Best quality.
@@ -33,6 +34,11 @@ class AppSettings {
   final bool notificationsEnabled;
   final String androidYtdlpUrl;
 
+  /// Root folder for downloads; empty means the platform default
+  /// (`downloadsDir` in providers.dart). Videos and audio go into a
+  /// `Video/` / `Audio/` subfolder of this root.
+  final String downloadRoot;
+
   Color get seed => Color(seedColor);
 
   String get tierLabel =>
@@ -46,6 +52,7 @@ class AppSettings {
     bool? askQualityEachTime,
     bool? notificationsEnabled,
     String? androidYtdlpUrl,
+    String? downloadRoot,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -57,6 +64,7 @@ class AppSettings {
       notificationsEnabled:
           notificationsEnabled ?? this.notificationsEnabled,
       androidYtdlpUrl: androidYtdlpUrl ?? this.androidYtdlpUrl,
+      downloadRoot: downloadRoot ?? this.downloadRoot,
     );
   }
 
@@ -68,6 +76,7 @@ class AppSettings {
         'askQualityEachTime': askQualityEachTime,
         'notificationsEnabled': notificationsEnabled,
         'androidYtdlpUrl': androidYtdlpUrl,
+        'downloadRoot': downloadRoot,
       };
 
   factory AppSettings.fromMap(Map<String, dynamic> m) {
@@ -83,6 +92,7 @@ class AppSettings {
       askQualityEachTime: (m['askQualityEachTime'] as bool?) ?? true,
       notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
       androidYtdlpUrl: (m['androidYtdlpUrl'] as String?) ?? '',
+      downloadRoot: (m['downloadRoot'] as String?) ?? '',
     );
   }
 }

@@ -1,5 +1,9 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../../core/models/settings_model.dart';
 import '../../core/providers.dart';
@@ -78,6 +82,50 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  Future<void> _pickDownloadFolder() async {
+    final messenger = ScaffoldMessenger.of(context);
+    String? picked;
+    try {
+      picked = await FilePicker.getDirectoryPath(
+          dialogTitle: 'Choose download folder');
+    } catch (_) {
+      picked = null; // Picker unavailable (e.g. no platform tooling).
+    }
+    if (picked == null || picked.isEmpty) return; // Cancelled or unsupported.
+    final problem = await _validateWritableFolder(picked);
+    if (problem != null) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(problem)));
+      return;
+    }
+    await _patch(
+        ref.read(settingsControllerProvider).copyWith(downloadRoot: picked));
+  }
+
+  void _resetDownloadFolder() => _patch(
+      ref.read(settingsControllerProvider).copyWith(downloadRoot: ''));
+
+  /// A picked folder must be a real, writable filesystem path — yt-dlp runs
+  /// as a child process and can only write by path (not via SAF `content://`).
+  static Future<String?> _validateWritableFolder(String path) async {
+    if (path.startsWith('content://')) {
+      return 'That location can\'t be used — pick a folder on this device.';
+    }
+    final probe = File(
+        p.join(path, '.ytdlp-write-test-${DateTime.now().microsecondsSinceEpoch}'));
+    try {
+      await probe.writeAsString('ok');
+      try {
+        await probe.delete();
+      } catch (_) {}
+      return null;
+    } catch (_) {
+      return 'The app can\'t write to that folder. Pick another one, '
+          'or reset to the default.';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsControllerProvider);
@@ -141,6 +189,47 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.folder_outlined),
+                        title: const Text('Download folder'),
+                        subtitle: Text(
+                          settings.downloadRoot.isEmpty
+                              ? 'Default (platform Downloads folder)'
+                              : settings.downloadRoot,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (settings.downloadRoot.isNotEmpty)
+                              IconButton(
+                                icon: const Icon(Icons.refresh),
+                                tooltip: 'Reset to default',
+                                onPressed: _resetDownloadFolder,
+                              ),
+                            IconButton(
+                              icon: const Icon(Icons.folder_open),
+                              tooltip: settings.downloadRoot.isEmpty
+                                  ? 'Choose folder'
+                                  : 'Change folder',
+                              onPressed: _pickDownloadFolder,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Videos and audio are saved in separate Video/ and '
+                        'Audio/ subfolders. Playlist entries later group into '
+                        'one folder per playlist inside the matching one.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant),
+                      ),
+                      const SizedBox(height: 12),
                       Text('Default video quality',
                           style: Theme.of(context).textTheme.labelMedium),
                       const SizedBox(height: 8),
