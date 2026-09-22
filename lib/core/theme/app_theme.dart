@@ -5,13 +5,23 @@ class AppTheme {
 
   static const Color seed = Color(0xFFD32F2F);
 
-  static ThemeData light([ColorScheme? scheme]) =>
-      _build(Brightness.light, scheme);
-  static ThemeData dark([ColorScheme? scheme]) =>
-      _build(Brightness.dark, scheme);
+  static ThemeData light([Color? seedColor]) =>
+      _build(Brightness.light, null, seedColor);
+  static ThemeData dark([Color? seedColor]) =>
+      _build(Brightness.dark, null, seedColor);
 
-  static ThemeData _build(Brightness brightness, [ColorScheme? scheme]) {
-    final cs = scheme ?? ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+  static ThemeData themed({
+    required Brightness brightness,
+    required Color seedColor,
+    ColorScheme? scheme,
+  }) =>
+      _build(brightness, scheme, seedColor);
+
+  static ThemeData _build(Brightness brightness,
+      [ColorScheme? scheme, Color? seedColor]) {
+    final cs = scheme ??
+        ColorScheme.fromSeed(
+            seedColor: seedColor ?? seed, brightness: brightness);
     final base = ThemeData(
       colorScheme: cs,
       brightness: brightness,

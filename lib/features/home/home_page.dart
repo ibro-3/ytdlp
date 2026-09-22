@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
@@ -19,6 +20,7 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   final TextEditingController _urlController = TextEditingController();
   String? _lastUrl;
+  String? _lastVideoId;
 
   FormatKind _mode = FormatKind.video;
   Format? _selectedVideo;
@@ -44,8 +46,41 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   void _download(VideoInfo video) {
-    final format = _mode == FormatKind.video ? _selectedVideo : _selectedAudio;
-    if (format == null) return;
+    final settings = ref.read(settingsControllerProvider);
+    if (settings.askQualityEachTime) {
+      _showQualitySheet(video, settings);
+      return;
+    }
+    final format = _defaultFormat(video, settings);
+    if (format == null) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(
+            content: Text('No matching format for this video')));
+      return;
+    }
+    _enqueue(video, format);
+  }
+
+  /// Picks the download format from saved defaults (tier + audio-only).
+  Format? _defaultFormat(VideoInfo video, AppSettings settings) {
+    if (settings.defaultAudioOnly) {
+      if (video.audioFormats.isNotEmpty) return video.audioFormats.first;
+    }
+    final tier = settings.defaultVideoTier;
+    if (tier == null) {
+      if (video.videoFormats.isNotEmpty) return video.videoFormats.first;
+    } else {
+      for (final f in video.videoFormats) {
+        if (f.tier == tier) return f;
+      }
+      // Requested tier above the source max → fall back to Best.
+      if (video.videoFormats.isNotEmpty) return video.videoFormats.first;
+    }
+    return video.audioFormats.firstOrNull;
+  }
+
+  void _enqueue(VideoInfo video, Format format) {
     ref.read(downloadManagerProvider).enqueue(video: video, format: format);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -56,25 +91,119 @@ class _HomePageState extends ConsumerState<HomePage> {
       ));
   }
 
+  /// Bottom-sheet quality picker shown when `askQualityEachTime` is on.
+  Future<void> _showQualitySheet(VideoInfo video, AppSettings settings) async {
+    var mode =
+        settings.defaultAudioOnly ? FormatKind.audio : FormatKind.video;
+    Format? videoSel = _defaultFormat(
+        video, settings.copyWith(defaultAudioOnly: false));
+    Format? audioSel =
+        video.audioFormats.isEmpty ? null : video.audioFormats.first;
+
+    final picked = await showModalBottomSheet<Format>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setSheet) {
+          final options =
+              mode == FormatKind.video ? video.videoFormats : video.audioFormats;
+          final selected = mode == FormatKind.video ? videoSel : audioSel;
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Choose quality',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 12),
+                  SegmentedButton<FormatKind>(
+                    segments: const [
+                      ButtonSegment(
+                          value: FormatKind.video,
+                          label: Text('Video'),
+                          icon: Icon(Icons.videocam_outlined)),
+                      ButtonSegment(
+                          value: FormatKind.audio,
+                          label: Text('Audio'),
+                          icon: Icon(Icons.audiotrack_outlined)),
+                    ],
+                    selected: {mode},
+                    onSelectionChanged: (s) =>
+                        setSheet(() => mode = s.first),
+                  ),
+                  const SizedBox(height: 12),
+                  if (options.isEmpty)
+                    const Text('No formats available for this type.')
+                  else
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final f in options)
+                          ChoiceChip(
+                            label: Text(f.label),
+                            selected: selected?.selector == f.selector,
+                            onSelected: (_) => setSheet(() {
+                              if (mode == FormatKind.video) {
+                                videoSel = f;
+                              } else {
+                                audioSel = f;
+                              }
+                            }),
+                          ),
+                      ],
+                    ),
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: selected == null
+                          ? null
+                          : () => Navigator.of(context).pop(selected),
+                      icon: const Icon(Icons.download),
+                      label: const Text('Download'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+    if (picked != null && mounted) _enqueue(video, picked);
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeControllerProvider);
     final video = state.video;
 
-    // Auto-pick first format when video arrives
+    // Reset picks when a different video arrives, then auto-pick defaults
+    if (video != null && video.id != _lastVideoId) {
+      _lastVideoId = video.id;
+      _selectedVideo = null;
+      _selectedAudio = null;
+    }
     if (video != null) {
-      if (_selectedVideo == null && video.videoFormats.isNotEmpty) {
+      final defaults = ref.watch(settingsControllerProvider);
+      if ((_selectedVideo == null || _selectedAudio == null) &&
+          (video.videoFormats.isNotEmpty ||
+              video.audioFormats.isNotEmpty)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _selectedVideo == null) {
-            setState(() => _selectedVideo = video.videoFormats.first);
-          }
-        });
-      }
-      if (_selectedAudio == null && video.audioFormats.isNotEmpty) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted && _selectedAudio == null) {
-            setState(() => _selectedAudio = video.audioFormats.first);
-          }
+          if (!mounted) return;
+          setState(() {
+            _mode = defaults.defaultAudioOnly
+                ? FormatKind.audio
+                : FormatKind.video;
+            _selectedVideo ??= _defaultFormat(
+                    video, defaults.copyWith(defaultAudioOnly: false)) ??
+                video.videoFormats.firstOrNull;
+            _selectedAudio ??= video.audioFormats.firstOrNull;
+          });
         });
       }
     }

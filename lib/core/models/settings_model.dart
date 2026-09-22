@@ -1,0 +1,88 @@
+import 'package:flutter/material.dart';
+
+/// Persisted user preferences. Stored as a plain map in the Hive
+/// `settings` box so no codegen is needed.
+class AppSettings {
+  const AppSettings({
+    this.themeMode = ThemeMode.system,
+    this.seedColor = 0xFFD32F2F,
+    this.defaultVideoTier = 720,
+    this.defaultAudioOnly = false,
+    this.askQualityEachTime = true,
+    this.notificationsEnabled = true,
+    this.androidYtdlpUrl = '',
+  });
+
+  /// Null tier = Best quality.
+  static const List<int?> videoTierOptions = [null, 1080, 720, 480, 360];
+
+  static const List<(String, int)> seedOptions = [
+    ('Red', 0xFFD32F2F),
+    ('Blue', 0xFF1565C0),
+    ('Green', 0xFF2E7D32),
+    ('Purple', 0xFF6A1B9A),
+    ('Orange', 0xFFEF6C00),
+    ('Teal', 0xFF00838F),
+  ];
+
+  final ThemeMode themeMode;
+  final int seedColor;
+  final int? defaultVideoTier;
+  final bool defaultAudioOnly;
+  final bool askQualityEachTime;
+  final bool notificationsEnabled;
+  final String androidYtdlpUrl;
+
+  Color get seed => Color(seedColor);
+
+  String get tierLabel =>
+      defaultVideoTier == null ? 'Best' : '${defaultVideoTier}p';
+
+  AppSettings copyWith({
+    ThemeMode? themeMode,
+    int? seedColor,
+    int? Function()? defaultVideoTier,
+    bool? defaultAudioOnly,
+    bool? askQualityEachTime,
+    bool? notificationsEnabled,
+    String? androidYtdlpUrl,
+  }) {
+    return AppSettings(
+      themeMode: themeMode ?? this.themeMode,
+      seedColor: seedColor ?? this.seedColor,
+      defaultVideoTier:
+          defaultVideoTier != null ? defaultVideoTier() : this.defaultVideoTier,
+      defaultAudioOnly: defaultAudioOnly ?? this.defaultAudioOnly,
+      askQualityEachTime: askQualityEachTime ?? this.askQualityEachTime,
+      notificationsEnabled:
+          notificationsEnabled ?? this.notificationsEnabled,
+      androidYtdlpUrl: androidYtdlpUrl ?? this.androidYtdlpUrl,
+    );
+  }
+
+  Map<String, dynamic> toMap() => {
+        'themeMode': themeMode.name,
+        'seedColor': seedColor,
+        'defaultVideoTier': defaultVideoTier,
+        'defaultAudioOnly': defaultAudioOnly,
+        'askQualityEachTime': askQualityEachTime,
+        'notificationsEnabled': notificationsEnabled,
+        'androidYtdlpUrl': androidYtdlpUrl,
+      };
+
+  factory AppSettings.fromMap(Map<String, dynamic> m) {
+    ThemeMode mode = ThemeMode.system;
+    try {
+      mode = ThemeMode.values.byName(m['themeMode'] as String? ?? 'system');
+    } catch (_) {}
+    return AppSettings(
+      themeMode: mode,
+      seedColor: (m['seedColor'] as num?)?.toInt() ?? 0xFFD32F2F,
+      defaultVideoTier: (m['defaultVideoTier'] as num?)?.toInt(),
+      defaultAudioOnly: (m['defaultAudioOnly'] as bool?) ?? false,
+      askQualityEachTime: (m['askQualityEachTime'] as bool?) ?? true,
+      notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
+      androidYtdlpUrl: (m['androidYtdlpUrl'] as String?) ?? '',
+    );
+  }
+}

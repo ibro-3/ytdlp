@@ -9,6 +9,7 @@ class AppShell extends StatelessWidget {
     (label: 'Download', icon: Icons.download_outlined, selected: Icons.download),
     (label: 'Queue', icon: Icons.queue_music_outlined, selected: Icons.queue_music),
     (label: 'Library', icon: Icons.video_library_outlined, selected: Icons.video_library),
+    (label: 'Settings', icon: Icons.settings_outlined, selected: Icons.settings),
   ];
 
   void _go(int index) {

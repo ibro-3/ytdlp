@@ -6,9 +6,10 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 
 ## Features
 
-- **Download tab** — M3 `SearchBar` URL input (paste/clear), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), format picker (`SegmentedButton` Video/Audio + `ChoiceChip` qualities), `FilledButton` download.
-- **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output.
+- **Download tab** — M3 `SearchBar` URL input (paste/clear), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), format picker (`SegmentedButton` Video/Audio + `ChoiceChip` qualities), `FilledButton` download. Honors Settings defaults; with "Ask quality each time" shows a bottom-sheet picker before every download.
+- **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. Posts Android progress/completion notifications (foreground-only in v1).
 - **Library tab** — Hive-backed history, file existence check, open (`open_filex`), share (`share_plus`), clear.
+- **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality / audio-only / ask-each-time, yt-dlp version + in-place update (system `yt-dlp -U`, or re-download of the app copy; Android needs a bionic build URL), notification toggle + test.
 
 ## Stack
 
@@ -16,7 +17,8 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 - **Routing:** `go_router` 18 (`StatefulShellRoute.indexedStack`)
 - **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
 - **Storage:** `hive` + `path_provider` (downloads dir: `getDownloadsDirectory()` desktop, external app dir on Android)
-- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4]/b`).
+- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`, app copies via re-download; Android requires a bionic build URL (no official build exists). Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4]/b`).
+- **Notifications:** `flutter_local_notifications`, `downloads` channel, `POST_NOTIFICATIONS` (Android 13+ runtime grant on toggle). Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle. Foreground-only in v1 — background downloads need a Foreground Service (follow-up).
 
 ## Project structure
 

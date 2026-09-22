@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/home/home_page.dart';
 import '../../features/library/library_page.dart';
 import '../../features/queue/queue_page.dart';
+import '../../features/settings/settings_page.dart';
 import '../../widgets/app_shell.dart';
 
 final appRouter = GoRouter(
@@ -33,6 +34,14 @@ final appRouter = GoRouter(
             GoRoute(
               path: '/library',
               builder: (context, state) => const LibraryPage(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/settings',
+              builder: (context, state) => const SettingsPage(),
             ),
           ],
         ),

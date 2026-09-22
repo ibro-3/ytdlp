@@ -15,18 +15,78 @@ import 'ytdlp_service.dart';
 class BinaryManager {
   String? _ytdlpPath;
   bool? _hasFfmpeg;
+  bool _isSystem = false;
+  String? _managedUrl;
 
   Future<String> ensureYtdlp() async {
     if (_ytdlpPath != null) return _ytdlpPath!;
     final onPath = await _findOnPath(_ytdlpName);
-    if (onPath != null) return _ytdlpPath = onPath;
+    if (onPath != null) {
+      _isSystem = true;
+      return _ytdlpPath = onPath;
+    }
     final bundled = await _extractAsset(_ytdlpName);
-    if (bundled != null) return _ytdlpPath = bundled;
+    if (bundled != null) {
+      _isSystem = false;
+      return _ytdlpPath = bundled;
+    }
     if (!Platform.isAndroid) {
       final downloaded = await _downloadFromGithub();
       if (downloaded != null) return _ytdlpPath = downloaded;
     }
     throw YtdlpException(_missingHint());
+  }
+
+  /// Installed yt-dlp version string, e.g. `2025.10.14`.
+  Future<String> ytdlpVersion() async {
+    final bin = await ensureYtdlp();
+    try {
+      final res = await Process.run(bin, ['--version']);
+      if (res.exitCode != 0) {
+        throw YtdlpException('yt-dlp --version failed (exit ${res.exitCode})');
+      }
+      return (res.stdout as String).trim().split('\n').first.trim();
+    } catch (e) {
+      if (e is YtdlpException) rethrow;
+      throw YtdlpException('Could not read yt-dlp version: $e');
+    }
+  }
+
+  /// Updates the binary in place and returns the new version.
+  ///
+  /// - System install: runs `yt-dlp -U`.
+  /// - App-managed copy: re-downloads (desktop uses the official release
+  ///   URL; Android requires [androidUrl] — there is no official build).
+  Future<String> updateYtdlp({String? androidUrl}) async {
+    await ensureYtdlp();
+    if (_isSystem && _ytdlpPath != null) {
+      final res = await Process.run(_ytdlpPath!, ['-U']);
+      final out = '${res.stdout}${res.stderr}'.trim();
+      if (res.exitCode != 0) {
+        throw YtdlpException(out.isEmpty
+            ? 'yt-dlp -U failed (exit ${res.exitCode})'
+            : out.split('\n').last.trim());
+      }
+      return ytdlpVersion();
+    }
+    final custom = androidUrl?.trim();
+    String url;
+    if (!Platform.isAndroid) {
+      url = _managedUrl ??
+          'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
+    } else if (custom != null && custom.isNotEmpty) {
+      url = custom;
+    } else {
+      throw YtdlpException('Set an Android yt-dlp build URL in Settings first.\n'
+          'There is no official Android build — point it at a bionic '
+          'binary for your ABI.');
+    }
+    final replaced = await _downloadFromUrl(url, force: true);
+    if (replaced == null) {
+      throw YtdlpException('Download failed — check the URL and connection.');
+    }
+    _managedUrl = url;
+    return ytdlpVersion();
   }
 
   Future<bool> hasFfmpeg() async {
@@ -36,6 +96,10 @@ class BinaryManager {
   }
 
   String get _ytdlpName => Platform.isWindows ? 'yt-dlp.exe' : 'yt-dlp';
+
+  String get _officialFileName => Platform.isWindows
+      ? 'yt-dlp.exe'
+      : (Platform.isMacOS ? 'yt-dlp_macos' : 'yt-dlp');
 
   String _missingHint() {
     if (Platform.isAndroid) {
@@ -137,15 +201,23 @@ class BinaryManager {
     if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
       return null;
     }
+    final url =
+        'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
+    final path = await _downloadFromUrl(url);
+    if (path != null) {
+      _isSystem = false;
+      _managedUrl = url;
+    }
+    return path;
+  }
+
+  /// Downloads [url] into the app support `bin/` dir. With [force],
+  /// replaces any existing copy (used by updates).
+  Future<String?> _downloadFromUrl(String url, {bool force = false}) async {
+    if (kIsWeb) return null;
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$_ytdlpName');
-    if (await target.exists()) return target.path;
-
-    final fileName = Platform.isWindows
-        ? 'yt-dlp.exe'
-        : (Platform.isMacOS ? 'yt-dlp_macos' : 'yt-dlp');
-    final url =
-        'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$fileName';
+    if (!force && await target.exists()) return target.path;
 
     HttpClient? client;
     try {
