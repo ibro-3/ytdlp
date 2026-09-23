@@ -6,14 +6,39 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/models/download_record.dart';
 import '../../core/providers.dart';
 import '../../core/utils/formatters.dart';
 
-class LibraryPage extends ConsumerWidget {
+class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LibraryPage> createState() => _LibraryPageState();
+}
+
+class _LibraryPageState extends ConsumerState<LibraryPage> {
+  /// Async existence cache so rows don't stat the filesystem in `build`.
+  final Map<String, bool> _exists = {};
+  final Set<String> _pending = {};
+
+  void _checkExists(String path) {
+    if (_pending.contains(path)) return;
+    _pending.add(path);
+    File(path)
+        .exists()
+        .then((ok) {
+          if (!mounted) return;
+          setState(() => _exists[path] = ok);
+        })
+        .catchError((_) {
+          if (!mounted) return;
+          setState(() => _exists[path] = false);
+        });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final history = ref.watch(historyServiceProvider);
     return Scaffold(
       appBar: AppBar(
@@ -89,7 +114,8 @@ class LibraryPage extends ConsumerWidget {
             separatorBuilder: (_, _) => const SizedBox(height: 12),
             itemBuilder: (context, i) {
               final r = records[i];
-              final exists = File(r.filePath).existsSync();
+              _checkExists(r.filePath);
+              final exists = _exists[r.filePath] ?? true;
               return Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -159,51 +185,7 @@ class LibraryPage extends ConsumerWidget {
                       ),
                       const SizedBox(width: 8),
                       PopupMenuButton<String>(
-                        onSelected: (v) async {
-                          switch (v) {
-                            case 'open':
-                              await OpenFilex.open(r.filePath);
-                              break;
-                            case 'share':
-                              await SharePlus.instance.share(
-                                ShareParams(
-                                  title: r.title,
-                                  files: [XFile(r.filePath)],
-                                ),
-                              );
-                              break;
-                            case 'delete':
-                              final ok = await showDialog<bool>(
-                                context: context,
-                                builder: (context) => AlertDialog(
-                                  title: const Text('Delete?'),
-                                  content: Text(
-                                    'Remove "${r.title}" from history and delete the file if it exists?',
-                                  ),
-                                  actions: [
-                                    TextButton(
-                                      onPressed: () =>
-                                          Navigator.pop(context, false),
-                                      child: const Text('Cancel'),
-                                    ),
-                                    FilledButton(
-                                      onPressed: () =>
-                                          Navigator.pop(context, true),
-                                      child: const Text('Delete'),
-                                    ),
-                                  ],
-                                ),
-                              );
-                              if (ok == true) {
-                                try {
-                                  final f = File(r.filePath);
-                                  if (f.existsSync()) f.deleteSync();
-                                } catch (_) {}
-                                await history.remove(r.id);
-                              }
-                              break;
-                          }
-                        },
+                        onSelected: (v) => _onMenu(context, r, v),
                         itemBuilder: (context) => [
                           const PopupMenuItem(
                             value: 'open',
@@ -228,5 +210,89 @@ class LibraryPage extends ConsumerWidget {
         },
       ),
     );
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _onMenu(
+    BuildContext context,
+    DownloadRecord r,
+    String action,
+  ) async {
+    switch (action) {
+      case 'open':
+        final fileExists = await File(r.filePath).exists();
+        if (!fileExists) {
+          _showSnack('This file is no longer on the device.');
+          return;
+        }
+        try {
+          await OpenFilex.open(r.filePath);
+        } catch (_) {
+          _showSnack('Could not open the file.');
+        }
+        break;
+      case 'share':
+        final fileExists = await File(r.filePath).exists();
+        if (!fileExists) {
+          _showSnack('This file is no longer on the device.');
+          return;
+        }
+        try {
+          await SharePlus.instance.share(
+            ShareParams(title: r.title, files: [XFile(r.filePath)]),
+          );
+        } catch (_) {
+          _showSnack('Could not share the file.');
+        }
+        break;
+      case 'delete':
+        await _confirmDelete(r);
+        break;
+    }
+  }
+
+  Future<void> _confirmDelete(DownloadRecord r) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete?'),
+        content: Text(
+          'Remove "${r.title}" from history and delete the file if it still exists?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    final file = File(r.filePath);
+    var fileGone = true;
+    try {
+      if (await file.exists()) {
+        await file.delete();
+      }
+    } catch (_) {
+      fileGone = false;
+    }
+    if (!fileGone) {
+      _showSnack('Could not delete the file — the library entry was kept.');
+      return;
+    }
+    final history = ref.read(historyServiceProvider);
+    await history.remove(r.id);
   }
 }

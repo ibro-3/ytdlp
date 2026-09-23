@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path/path.dart' as p;
 
 import '../../core/models/download_task.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/formatters.dart';
+import '../../services/downloads/download_manager.dart';
 
 class QueuePage extends ConsumerWidget {
   const QueuePage({super.key});
@@ -13,7 +15,32 @@ class QueuePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final manager = ref.watch(downloadManagerProvider);
     return Scaffold(
-      appBar: AppBar(title: const Text('Queue')),
+      appBar: AppBar(
+        title: const Text('Queue'),
+        actions: [
+          AnimatedBuilder(
+            animation: manager,
+            builder: (context, _) {
+              if (manager.tasks.isEmpty) return const SizedBox.shrink();
+              final active = manager.activeCount;
+              final pending = manager.queuedCount;
+              final label = [
+                if (active > 0) '$active active',
+                if (pending > 0) '$pending queued',
+              ].join(' · ');
+              return Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Center(
+                  child: Text(
+                    label,
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       body: AnimatedBuilder(
         animation: manager,
         builder: (context, _) {
@@ -181,7 +208,7 @@ class _TaskCard extends ConsumerWidget {
                   if (task.filePath != null)
                     Flexible(
                       child: Text(
-                        task.filePath!.split('/').last,
+                        p.basename(task.filePath!),
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: scheme.onSurfaceVariant,
                         ),
@@ -191,6 +218,17 @@ class _TaskCard extends ConsumerWidget {
                     ),
                 ],
               ),
+              if (task.warning != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  task.warning!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: scheme.tertiary,
+                  ),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ] else if (isFailed) ...[
               Row(
                 children: [
@@ -229,17 +267,17 @@ class _TaskCard extends ConsumerWidget {
                   )
                 else if (isDone) ...[
                   FilledButton.tonalIcon(
-                    onPressed: () => manager.openTask(task),
+                    onPressed: () => _open(context, manager, task),
                     icon: const Icon(Icons.play_arrow, size: 18),
                     label: const Text('Open'),
                   ),
                   OutlinedButton.icon(
-                    onPressed: () => manager.shareTask(task),
+                    onPressed: () => _share(context, manager, task),
                     icon: const Icon(Icons.share_outlined, size: 18),
                     label: const Text('Share'),
                   ),
                   IconButton(
-                    onPressed: () => manager.deleteTask(task),
+                    onPressed: () => _delete(context, manager, task),
                     icon: const Icon(Icons.delete_outline),
                     tooltip: 'Delete file',
                   ),
@@ -265,5 +303,56 @@ class _TaskCard extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _open(
+    BuildContext context,
+    DownloadManager manager,
+    DownloadTask task,
+  ) async {
+    final ok = await manager.openTask(task);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('Could not open the file (it may be missing).'),
+          ),
+        );
+    }
+  }
+
+  Future<void> _share(
+    BuildContext context,
+    DownloadManager manager,
+    DownloadTask task,
+  ) async {
+    final ok = await manager.shareTask(task);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Could not share the file.')),
+        );
+    }
+  }
+
+  Future<void> _delete(
+    BuildContext context,
+    DownloadManager manager,
+    DownloadTask task,
+  ) async {
+    final ok = await manager.deleteTask(task);
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not delete the file — the library entry was kept.',
+            ),
+          ),
+        );
+    }
   }
 }

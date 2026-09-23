@@ -307,23 +307,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      TextField(
-                        controller: _androidUrlController,
-                        decoration: const InputDecoration(
-                          labelText: 'Android yt-dlp build URL (optional)',
-                          hintText: 'https://…/yt-dlp (bionic, per ABI)',
-                          border: OutlineInputBorder(),
+                      if (Platform.isAndroid) ...[
+                        TextField(
+                          controller: _androidUrlController,
+                          decoration: const InputDecoration(
+                            labelText: 'Android yt-dlp build URL (optional)',
+                            hintText: 'https://…/yt-dlp (bionic, per ABI)',
+                            border: OutlineInputBorder(),
+                          ),
+                          keyboardType: TextInputType.url,
                         ),
-                        keyboardType: TextInputType.url,
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Android has no official build — updates need a bionic binary URL. Leave blank to keep the bundled copy.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        const SizedBox(height: 4),
+                        Text(
+                          'Android has no official build — updates need a '
+                          'bionic binary URL. Leave blank to keep the bundled '
+                          'copy.',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
+                              ),
                         ),
-                      ),
-                      const SizedBox(height: 12),
+                        const SizedBox(height: 12),
+                      ],
                       FilledButton.icon(
                         onPressed: _updating ? null : _updateEngine,
                         icon: _updating
@@ -360,13 +367,27 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         ),
                         value: settings.notificationsEnabled,
                         onChanged: (v) async {
-                          if (v) {
-                            await ref
+                          var enable = v;
+                          if (v && Platform.isAndroid) {
+                            enable = await ref
                                 .read(notificationServiceProvider)
                                 .requestPermission();
+                            if (!enable && context.mounted) {
+                              ScaffoldMessenger.of(context)
+                                ..hideCurrentSnackBar()
+                                ..showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      'Notification permission was denied. '
+                                      'Allow it in system settings to get '
+                                      'download alerts.',
+                                    ),
+                                  ),
+                                );
+                            }
                           }
                           await _patch(
-                            settings.copyWith(notificationsEnabled: v),
+                            settings.copyWith(notificationsEnabled: enable),
                           );
                         },
                       ),

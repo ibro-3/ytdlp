@@ -28,6 +28,64 @@ class _HomePageState extends ConsumerState<HomePage> {
   String? _autoPickedFor;
 
   @override
+  void initState() {
+    super.initState();
+    // React to new video metadata in a listener, not from inside `build`.
+    ref.listenManual(homeControllerProvider, (prev, next) {
+      if (next.isLoading) return;
+      final video = next.video;
+      if (video != null) _syncSelections(video);
+    });
+  }
+
+  /// Resets picks when a different video arrives, then auto-picks defaults
+  /// exactly once per video (one-shot; skipped when both format lists are
+  /// intentionally empty).
+  void _syncSelections(VideoInfo video) {
+    if (video.id != _lastVideoId) {
+      _lastVideoId = video.id;
+      _selectedVideo = null;
+      _selectedAudio = null;
+      _autoPickedFor = null;
+    }
+    if (_autoPickedFor == video.id) return;
+    if (video.videoFormats.isEmpty && video.audioFormats.isEmpty) return;
+    _autoPickedFor = video.id;
+    final defaults = ref.read(settingsControllerProvider);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      // The video may have changed while the frame was pending.
+      final current = ref.read(homeControllerProvider).video;
+      if (current == null || current.id != video.id) return;
+      setState(() {
+        // If there are no downloadable video streams (e.g. no ffmpeg to
+        // merge split streams), land on the Audio tab instead of an empty
+        // Quality section.
+        _mode =
+            defaults.defaultAudioOnly ||
+                (video.videoFormats.isEmpty && video.audioFormats.isNotEmpty)
+            ? FormatKind.audio
+            : FormatKind.video;
+        final vPick = _defaultFormat(
+          video,
+          defaults.copyWith(defaultAudioOnly: false),
+        );
+        if (vPick?.kind == FormatKind.video) {
+          _selectedVideo ??= vPick;
+        }
+        _selectedAudio ??= video.audioFormats.firstOrNull;
+      });
+    });
+  }
+
+  void _retry() {
+    final url = _lastUrl;
+    if (url == null) return;
+    if (_urlController.text != url) _urlController.text = url;
+    ref.read(homeControllerProvider.notifier).fetch(url: url);
+  }
+
+  @override
   void dispose() {
     _urlController.dispose();
     super.dispose();
@@ -194,47 +252,6 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final state = ref.watch(homeControllerProvider);
     final video = state.video;
-
-    // Reset picks when a different video arrives, then auto-pick defaults
-    // exactly once (one-shot: the gate below must not reschedule every
-    // frame once a selection is intentionally left empty).
-    if (video != null && video.id != _lastVideoId) {
-      _lastVideoId = video.id;
-      _selectedVideo = null;
-      _selectedAudio = null;
-      _autoPickedFor = null;
-    }
-    if (video != null &&
-        _autoPickedFor != video.id &&
-        (video.videoFormats.isNotEmpty || video.audioFormats.isNotEmpty)) {
-      _autoPickedFor = video.id;
-      final defaults = ref.watch(settingsControllerProvider);
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        // Video may have changed while the frame was pending.
-        final current = ref.read(homeControllerProvider).video;
-        if (current == null || current.id != video.id) return;
-        setState(() {
-          // If there are no downloadable video streams (e.g. no ffmpeg
-          // to merge split streams), land on the Audio tab instead of
-          // an empty Quality section.
-          _mode =
-              defaults.defaultAudioOnly ||
-                  (video.videoFormats.isEmpty && video.audioFormats.isNotEmpty)
-              ? FormatKind.audio
-              : FormatKind.video;
-          final vPick = _defaultFormat(
-            video,
-            defaults.copyWith(defaultAudioOnly: false),
-          );
-          if (vPick?.kind == FormatKind.video) {
-            _selectedVideo ??= vPick;
-          }
-          _selectedAudio ??= video.audioFormats.firstOrNull;
-        });
-      });
-    }
-
     final selected = _mode == FormatKind.video
         ? _selectedVideo
         : _selectedAudio;
@@ -258,7 +275,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                 else if (state.error != null)
                   _ErrorCard(
                     message: state.error!,
-                    onRetry: _lastUrl == null ? null : _submit,
+                    onRetry: _lastUrl == null ? null : _retry,
                   )
                 else if (video != null) ...[
                   VideoInfoCard(video: video),

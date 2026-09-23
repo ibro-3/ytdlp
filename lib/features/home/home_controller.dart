@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
+import '../../services/ytdlp/ytdlp_service.dart';
 
 class HomeState {
   const HomeState({this.isLoading = false, this.video, this.error});
@@ -25,20 +26,29 @@ class HomeState {
 }
 
 class HomeController extends Notifier<HomeState> {
+  int _requestSeq = 0;
+
   @override
   HomeState build() => const HomeState();
 
   Future<void> fetch({required String url}) async {
+    final seq = ++_requestSeq;
     state = state.copyWith(isLoading: true, clearError: true, clearVideo: true);
     try {
       final video = await ref.read(ytdlpServiceProvider).fetchVideoInfo(url);
+      if (seq != _requestSeq) return; // A newer request superseded this one.
       state = state.copyWith(isLoading: false, video: video);
     } catch (e) {
-      state = state.copyWith(isLoading: false, error: e.toString());
+      if (seq != _requestSeq) return;
+      final message = e is YtdlpException ? e.message : e.toString();
+      state = state.copyWith(isLoading: false, error: message);
     }
   }
 
-  void reset() => state = const HomeState();
+  void reset() {
+    _requestSeq++;
+    state = const HomeState();
+  }
 }
 
 final homeControllerProvider = NotifierProvider<HomeController, HomeState>(
