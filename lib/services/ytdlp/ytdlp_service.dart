@@ -12,10 +12,30 @@ class YtdlpException implements Exception {
   String toString() => message;
 }
 
-class YtdlpProcess {
+/// A running yt-dlp process. Kept as an interface so the download manager
+/// can be tested with a fake process.
+abstract interface class DownloadProcess {
+  Stream<String> get lines;
+  Future<int> get exitCode;
+  void cancel();
+}
+
+/// Thin abstraction over starting a download so `DownloadManager` does not
+/// depend directly on process spawning.
+abstract interface class DownloadEngine {
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required String outputDir,
+    required String template,
+  });
+}
+
+class YtdlpProcess implements DownloadProcess {
   YtdlpProcess(this._process);
   final Process _process;
 
+  @override
   Stream<String> get lines {
     final out = _process.stdout
         .transform(utf8.decoder)
@@ -50,42 +70,120 @@ class YtdlpProcess {
     return controller.stream;
   }
 
+  @override
   Future<int> get exitCode => _process.exitCode;
 
+  @override
   void cancel() {
     try {
-      _process.kill();
-    } catch (_) {}
+      _process.kill(ProcessSignal.sigterm);
+    } catch (_) {
+      try {
+        _process.kill();
+      } catch (_) {}
+    }
   }
 }
 
-class YtdlpService {
+class YtdlpService implements DownloadEngine {
   YtdlpService(this._binary);
   final BinaryManager _binary;
+
+  static const _metadataTimeout = Duration(seconds: 90);
 
   Future<VideoInfo> fetchVideoInfo(String url) async {
     final r = await _binary.ensureRunner();
     final hasFfmpeg = await _binary.hasFfmpeg();
-    final ProcessResult result;
+
+    final (code, stdout, stderr, timedOut) = await _runCaptured(r, [
+      '-J',
+      '--no-warnings',
+      '--no-playlist',
+      url,
+    ], timeout: _metadataTimeout);
+    if (timedOut) {
+      throw const YtdlpException(
+        'Getting video info timed out. The site may be slow — try again.',
+      );
+    }
+    if (code != 0) {
+      throw YtdlpException(
+        _extractError(stderr) ?? 'yt-dlp exited with code $code',
+      );
+    }
     try {
-      result = await Process.run(
-        r.executable,
-        r.args(['-J', '--no-warnings', '--no-playlist', url]),
-        environment: r.env,
+      final decoded = jsonDecode(stdout);
+      if (decoded is! Map<String, dynamic>) {
+        throw const YtdlpException('Unexpected yt-dlp response.');
+      }
+      return VideoInfo.fromYtdlpJson(decoded, hasFfmpeg: hasFfmpeg);
+    } on FormatException {
+      throw const YtdlpException('yt-dlp returned invalid JSON.');
+    }
+  }
+
+  /// Runs a command, capturing stdout/stderr and killing the process when it
+  /// exceeds [timeout].
+  Future<(int, String, String, bool)> _runCaptured(
+    ProcessRunner runner,
+    List<String> args, {
+    required Duration timeout,
+  }) async {
+    final Process process;
+    try {
+      process = await Process.start(
+        runner.executable,
+        runner.args(args),
+        environment: runner.env,
       );
     } catch (e) {
       throw YtdlpException(_spawnHint(e));
     }
-    if (result.exitCode != 0) {
-      throw YtdlpException(
-        _extractError(result.stderr) ??
-            'yt-dlp exited with code ${result.exitCode}',
-      );
+
+    final out = StringBuffer();
+    final err = StringBuffer();
+    const maxCapture = 8 * 1024 * 1024;
+    bool tooMuchOutput = false;
+
+    final outSub = process.stdout.transform(utf8.decoder).listen((chunk) {
+      if (out.length < maxCapture) {
+        out.write(chunk);
+      } else {
+        tooMuchOutput = true;
+      }
+    });
+    final errSub = process.stderr.transform(utf8.decoder).listen((chunk) {
+      if (err.length < maxCapture) {
+        err.write(chunk);
+      } else {
+        tooMuchOutput = true;
+      }
+    });
+
+    var timedOut = false;
+    final timer = Timer(timeout, () {
+      timedOut = true;
+      try {
+        process.kill(ProcessSignal.sigterm);
+      } catch (_) {
+        try {
+          process.kill();
+        } catch (_) {}
+      }
+    });
+
+    final code = await process.exitCode;
+    timer.cancel();
+    await outSub.cancel();
+    await errSub.cancel();
+
+    if (tooMuchOutput && code == 0) {
+      throw const YtdlpException('yt-dlp produced too much output.');
     }
-    final decoded = jsonDecode(result.stdout as String) as Map<String, dynamic>;
-    return VideoInfo.fromYtdlpJson(decoded, hasFfmpeg: hasFfmpeg);
+    return (code, out.toString(), err.toString(), timedOut);
   }
 
+  @override
   Future<YtdlpProcess> startDownload({
     required String url,
     required Format format,
@@ -93,16 +191,22 @@ class YtdlpService {
     required String template,
   }) async {
     final bin = await _binary.ensureRunner();
-    final args = [
+    final args = <String>[
       '--newline',
       '--no-playlist',
       '--no-mtime',
+      '--force-overwrites',
       '-o',
       '$outputDir/$template',
       '-f',
       format.selector,
       url,
     ];
+    final ffmpeg = await _binary.androidFfmpegLocation();
+    if (ffmpeg != null) {
+      args.insertAll(0, ['--ffmpeg-location', ffmpeg]);
+    }
+
     final YtdlpProcess process;
     try {
       process = YtdlpProcess(
@@ -117,6 +221,9 @@ class YtdlpService {
     }
     return process;
   }
+
+  /// The location of the bundled Android ffmpeg, or null when unavailable.
+  Future<String?> androidFfmpeg() => _binary.androidFfmpegLocation();
 
   /// Turns a failed process spawn into an actionable message. On Android the
   /// usual culprit is Android 14+ SELinux denying `execute` on the app's own
@@ -133,8 +240,8 @@ class YtdlpService {
         'files — build with targetSdk 28 or lower (see README "Android notes").';
   }
 
-  static String? _extractError(dynamic stderr) {
-    final text = stderr is String ? stderr : stderr.toString();
+  static String? _extractError(String stderr) {
+    final text = stderr;
     final lines = const LineSplitter().convert(text);
     for (final line in lines.reversed) {
       final idx = line.indexOf('ERROR:');

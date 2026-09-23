@@ -69,7 +69,7 @@ void main() {
       // including video-only streams merged with audio).
       final rows = info.videoFormats;
       expect(rows.map((f) => f.label).toList(), [
-        'Best quality',
+        'Best quality · MP4',
         '720p · MP4 · 25.0 MB',
         '480p · MP4',
         '360p · MP4',
@@ -98,12 +98,18 @@ void main() {
       );
 
       final best = info.videoFormats.first;
-      expect(best.selector, 'b[height<=720][ext=mp4]/b[height<=720]/b');
+      expect(
+        best.selector,
+        'b[height<=720][ext=mp4][acodec!=none]/b[height<=720][acodec!=none]',
+      );
 
       final h360 = info.videoFormats.firstWhere(
         (f) => f.label.startsWith('360p'),
       );
-      expect(h360.selector, 'b[height<=360][ext=mp4]/b[height<=360]/b');
+      expect(
+        h360.selector,
+        'b[height<=360][ext=mp4][acodec!=none]/b[height<=360][acodec!=none]',
+      );
     });
 
     test(
@@ -160,7 +166,7 @@ void main() {
 
       final rows = info.videoFormats;
       expect(rows.map((f) => f.label).toList(), [
-        'Best quality · 50.0 MB',
+        'Best quality · MP4 · 50.0 MB',
         '720p · MP4 · 25.0 MB',
       ]);
       expect(rows.first.tier, 1080);

@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'ytdlp_service.dart';
@@ -45,6 +47,10 @@ class BinaryManager {
   bool _usingRuntime = false;
   String? _managedUrl;
 
+  Future<String>? _ytdlpFuture;
+  Future<ProcessRunner>? _runnerFuture;
+  Future<String?>? _ffmpegFuture;
+
   Future<bool> hasFfmpeg() async {
     if (_hasFfmpeg != null) return _hasFfmpeg!;
     if (Platform.isAndroid) {
@@ -55,12 +61,27 @@ class BinaryManager {
     return _hasFfmpeg = onPath != null;
   }
 
-  static const _runtimeVersion = 'v1';
-  static const _ffmpegVersion = 'v1';
+  /// Location of the bundled minimal Android ffmpeg, if available.
+  Future<String?> androidFfmpegLocation() {
+    if (!Platform.isAndroid) return Future.value(null);
+    return _ensureAndroidFfmpeg();
+  }
 
-  /// Extracts the per-ABI minimal static ffmpeg asset (once per version).
-  /// Returns its path, or null when the asset is missing.
-  Future<String?> _ensureAndroidFfmpeg() async {
+  Future<String?> _ensureAndroidFfmpeg() {
+    if (_ffmpegPath != null) return Future.value(_ffmpegPath);
+    final f = _ffmpegFuture ??= _initAndroidFfmpeg();
+    unawaited(
+      f.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {
+          if (identical(_ffmpegFuture, f)) _ffmpegFuture = null;
+        },
+      ),
+    );
+    return f;
+  }
+
+  Future<String?> _initAndroidFfmpeg() async {
     if (_ffmpegPath != null) return _ffmpegPath;
     final support = await getApplicationSupportDirectory();
     final target = File('${support.path}/bin/ffmpeg');
@@ -87,13 +108,58 @@ class BinaryManager {
     return _ffmpegPath;
   }
 
-  Future<ProcessRunner> ensureRunner() async {
-    if (Platform.isAndroid) return _ensureAndroidRunner();
-    final bin = await ensureYtdlp();
-    return ProcessRunner(executable: bin);
+  // Bump whenever the bundled Android runtime or ffmpeg recipe changes.
+  // Combined with the app version it invalidates previously extracted
+  // runtimes, so an app upgrade re-extracts fresh assets.
+  static const _runtimeBuild = 'py3.14-alpine-v1';
+  static const _ffmpegBuild = 'ffmpeg-8.1.3-static-v1';
+  static const _toolVersion = '2026.09.1';
+  static const _runtimeVersion = '$_toolVersion-$_runtimeBuild';
+  static const _ffmpegVersion = '$_toolVersion-$_ffmpegBuild';
+
+  Future<ProcessRunner> ensureRunner() {
+    // Memoize the running init future so two concurrent callers (e.g. a
+    // metadata fetch and a download starting at the same time) never extract
+    // or download the binary twice. A failed attempt is forgotten so a
+    // subsequent call can retry.
+    final f = _runnerFuture ??= _initRunner();
+    unawaited(
+      f.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {
+          if (identical(_runnerFuture, f)) _runnerFuture = null;
+        },
+      ),
+    );
+    return f;
   }
 
-  Future<String> ensureYtdlp() async {
+  Future<ProcessRunner> _initRunner() async {
+    if (Platform.isAndroid) {
+      final runner = await _ensureAndroidRunner();
+      _runnerFuture = Future.value(runner);
+      return runner;
+    }
+    final bin = await ensureYtdlp();
+    final runner = ProcessRunner(executable: bin);
+    _runnerFuture = Future.value(runner);
+    return runner;
+  }
+
+  Future<String> ensureYtdlp() {
+    final f = _ytdlpFuture ??= _initYtdlp();
+    unawaited(
+      f.then<void>(
+        (_) {},
+        onError: (Object _, StackTrace _) {
+          if (identical(_ytdlpFuture, f)) _ytdlpFuture = null;
+        },
+      ),
+    );
+    return f;
+  }
+
+  Future<String> _initYtdlp() async {
     if (_ytdlpPath != null) return _ytdlpPath!;
     final onPath = await _findOnPath(_ytdlpName);
     if (onPath != null) {
@@ -132,13 +198,9 @@ class BinaryManager {
         final support = await getApplicationSupportDirectory();
         final cache = await getTemporaryDirectory();
         await _ensureAndroidFfmpeg();
-        final preArgs = <String>['$usr/bin/yt-dlp'];
-        if (_ffmpegPath != null) {
-          preArgs.addAll(['--ffmpeg-location', File(_ffmpegPath!).parent.path]);
-        }
         return ProcessRunner(
           executable: '$usr/bin/python3.14',
-          preArgs: preArgs,
+          preArgs: <String>['$usr/bin/yt-dlp'],
           env: {
             'LD_LIBRARY_PATH': '$usr/lib',
             'PYTHONHOME': usr,
@@ -153,9 +215,14 @@ class BinaryManager {
     throw YtdlpException(_missingHint());
   }
 
-  /// Extracts the per-ABI python.tar.gz asset into the app support dir
-  /// (once per install). Returns the runtime root, or null when the asset
-  /// is missing/corrupt.
+  /// Extracts a tar.gz asset into the app support dir, atomically.
+  ///
+  /// Extraction goes into a temp directory first and is swapped over the
+  /// previous runtime only when the result verified (executable present,
+  /// marker written). Entry names are validated so archive paths can never
+  /// escape the runtime root, and symlinks that would point outside the
+  /// runtime are skipped. A partial/corrupt extraction never replaces a
+  /// working runtime.
   Future<Directory?> _extractRuntime(String assetPath) async {
     final support = await getApplicationSupportDirectory();
     final abi = assetPath.split('/').reversed.skip(1).first;
@@ -175,16 +242,18 @@ class BinaryManager {
     } catch (_) {
       return null;
     }
+    final tmpRoot = Directory('${root.path}.tmp');
     try {
       final tarBytes = GZipDecoder().decodeBytes(
         data.buffer.asUint8List(),
         verify: true,
       );
       final archive = TarDecoder().decodeBytes(tarBytes);
-      if (await root.exists()) await root.delete(recursive: true);
-      await root.create(recursive: true);
+      if (await tmpRoot.exists()) await tmpRoot.delete(recursive: true);
+      await tmpRoot.create(recursive: true);
       for (final entry in archive.files) {
-        final outPath = '${root.path}/${entry.name}';
+        final outPath = _safeJoin(tmpRoot.path, entry.name);
+        if (outPath == null) continue; // Path escapes the runtime root.
         if (entry.isDirectory) {
           await Directory(outPath).create(recursive: true);
         } else if (entry.isSymbolicLink) {
@@ -192,6 +261,7 @@ class BinaryManager {
           if (target == null || target.isEmpty) continue;
           final link = Link(outPath);
           await link.parent.create(recursive: true);
+          if (await _pointsOutside(tmpRoot.path, outPath, target)) continue;
           try {
             if (await link.exists()) await link.delete();
           } catch (_) {}
@@ -202,20 +272,70 @@ class BinaryManager {
           await out.writeAsBytes(entry.content as List<int>, flush: true);
         }
       }
-      final script = File(
-        '${root.path}/data/data/com.termux/files/usr/bin/yt-dlp',
+      final tmpPython = File(
+        '${tmpRoot.path}/data/data/com.termux/files/usr/bin/python3.14',
       );
-      if (!await pythonBin.exists() || !await script.exists()) return null;
-      await _chmodX(pythonBin.path);
-      await marker.writeAsString(_runtimeVersion, flush: true);
+      final script = File(
+        '${tmpRoot.path}/data/data/com.termux/files/usr/bin/yt-dlp',
+      );
+      if (!await tmpPython.exists() || !await script.exists()) return null;
+      await _chmodX(tmpPython.path);
+      await File('${tmpRoot.path}/.ready-$_runtimeVersion')
+          .writeAsString(_runtimeVersion, flush: true);
+      await _swapDir(tmpRoot, root);
       return root;
     } on YtdlpException {
       rethrow;
     } catch (_) {
       try {
-        if (await root.exists()) await root.delete(recursive: true);
+        if (await tmpRoot.exists()) await tmpRoot.delete(recursive: true);
       } catch (_) {}
       return null;
+    }
+  }
+
+  /// Joins [root] with a (possibly backslash or `..`-laden) archive name,
+  /// returning null when the result would land outside [root].
+  String? _safeJoin(String root, String name) {
+    final normalized = p.normalize(
+      p.joinAll([root, ...name.split(RegExp(r'[/\\]+'))]),
+    );
+    return p.isWithin(root, normalized) ? normalized : null;
+  }
+
+  /// Whether a symlink at [linkPath] pointing to [target] would resolve
+  /// outside [root]. Relative targets are resolved from the link's parent;
+  /// absolute targets must stay inside [root].
+  Future<bool> _pointsOutside(
+    String root,
+    String linkPath,
+    String target,
+  ) async {
+    try {
+      final absolute = p.isAbsolute(target)
+          ? target
+          : p.join(p.dirname(linkPath), target);
+      final normalized = p.normalize(absolute);
+      return !p.isWithin(root, normalized);
+    } catch (_) {
+      return true;
+    }
+  }
+
+  /// Swaps [src] directory over [dst], preserving the previous runtime on
+  /// failure so the app is never left without one.
+  Future<void> _swapDir(Directory src, Directory dst) async {
+    final backup = Directory('${dst.path}.old');
+    if (await backup.exists()) await backup.delete(recursive: true);
+    if (await dst.exists()) await dst.rename(backup.path);
+    try {
+      await src.rename(dst.path);
+      if (await backup.exists()) await backup.delete(recursive: true);
+    } catch (e) {
+      try {
+        if (await backup.exists()) await backup.rename(dst.path);
+      } catch (_) {}
+      rethrow;
     }
   }
 
@@ -257,7 +377,9 @@ class BinaryManager {
   /// - System install: runs `yt-dlp -U`.
   /// - App-managed copy: re-downloads (desktop uses the official release
   ///   URL; Android requires [androidUrl] — there is no official build).
-  /// - Android bundled runtime: updates ship with app releases.
+  /// - Android bundled runtime: a custom [androidUrl] replaces the bundled
+  ///   runtime and becomes the active source; without one, updates ship with
+  ///   app releases.
   Future<String> updateYtdlp({String? androidUrl}) async {
     await ensureRunner();
     if (_isSystem && _ytdlpPath != null) {
@@ -272,12 +394,6 @@ class BinaryManager {
       }
       return ytdlpVersion();
     }
-    if (_usingRuntime) {
-      throw YtdlpException(
-        'The bundled Android runtime updates with app releases.\n'
-        'Current version is shown above; to refresh it, update the app.',
-      );
-    }
     final custom = androidUrl?.trim();
     String url;
     if (!Platform.isAndroid) {
@@ -286,6 +402,12 @@ class BinaryManager {
           'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
     } else if (custom != null && custom.isNotEmpty) {
       url = custom;
+    } else if (_usingRuntime) {
+      throw YtdlpException(
+        'The bundled Android runtime updates with app releases.\n'
+        'Current version is shown above; to refresh it, update the app.\n'
+        'To install a custom build instead, set its URL in Settings.',
+      );
     } else {
       throw YtdlpException(
         'Set an Android yt-dlp build URL in Settings first.\n'
@@ -297,6 +419,11 @@ class BinaryManager {
     if (replaced == null) {
       throw YtdlpException('Download failed — check the URL and connection.');
     }
+    // From here on the custom URL is the active source, even when a bundled
+    // runtime was in use before.
+    _ytdlpPath = replaced;
+    _isSystem = false;
+    _usingRuntime = false;
     _managedUrl = url;
     return ytdlpVersion();
   }
@@ -366,11 +493,21 @@ class BinaryManager {
   }
 
   /// Copies a bundled binary from assets into the app support dir and
-  /// makes it executable (deduplicated per app install).
+  /// makes it executable (deduplicated per app install). Writes are done to
+  /// a temp file and renamed into place so an interrupted install never
+  /// leaves a half-written binary behind.
   Future<String?> _extractAsset(String name) async {
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$name');
-    if (await target.exists()) return target.path;
+    if (await target.exists()) {
+      // Re-apply the exec bit on reuse (e.g. after a backup restore).
+      if (!Platform.isWindows) {
+        try {
+          await _ensureExecutable(target.path);
+        } catch (_) {}
+      }
+      return target.path;
+    }
 
     final candidates = <String>[];
     if (Platform.isAndroid) {
@@ -386,12 +523,15 @@ class BinaryManager {
       try {
         final data = await rootBundle.load(assetPath);
         await target.parent.create(recursive: true);
-        await target.writeAsBytes(data.buffer.asUint8List(), flush: true);
+        final tmp = File('${target.path}.tmp');
+        if (await tmp.exists()) await tmp.delete();
+        await tmp.writeAsBytes(data.buffer.asUint8List(), flush: true);
         if (!Platform.isWindows) {
           try {
-            await Process.run('chmod', ['755', target.path]);
+            await _chmodX(tmp.path);
           } catch (_) {}
         }
+        await _replaceWith(tmp, target);
         return target.path;
       } catch (_) {
         // Asset missing or corrupt — try the next candidate.
@@ -448,35 +588,76 @@ class BinaryManager {
 
   /// Downloads [url] into the app support `bin/` dir. With [force],
   /// replaces any existing copy (used by updates).
+  ///
+  /// The download lands in a temp file first and is only renamed into place
+  /// after it finished and passed validation, so a failed or interrupted
+  /// download never destroys the currently working binary.
   Future<String?> _downloadFromUrl(String url, {bool force = false}) async {
     if (kIsWeb) return null;
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$_ytdlpName');
     if (!force && await target.exists()) return target.path;
 
+    final tmp = File('${target.path}.tmp');
     HttpClient? client;
     try {
       client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
       final req = await client.getUrl(Uri.parse(url));
       final res = await req.close();
-      if (res.statusCode < 200 || res.statusCode >= 300) return null;
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw YtdlpException('HTTP ${res.statusCode} from $url');
+      }
       await target.parent.create(recursive: true);
-      final sink = target.openWrite();
+      if (await tmp.exists()) await tmp.delete();
+      final sink = tmp.openWrite();
       await res.pipe(sink);
       await sink.close();
+      if (tmp.lengthSync() == 0) {
+        throw const YtdlpException('Downloaded file is empty.');
+      }
       if (!Platform.isWindows) {
         try {
-          await Process.run('chmod', ['755', target.path]);
+          await Process.run('chmod', ['755', tmp.path]);
         } catch (_) {}
       }
+      await _replaceWith(tmp, target);
       return target.path;
     } catch (_) {
       try {
-        await target.delete();
+        await tmp.delete();
       } catch (_) {}
       return null;
     } finally {
       client?.close(force: true);
+    }
+  }
+
+  /// Renames [src] over [dst]. On failure the previous file (if any) is
+  /// preserved via a backup rename.
+  Future<void> _replaceWith(File src, File dst) async {
+    final existed = await dst.exists();
+    if (!existed) {
+      await src.rename(dst.path);
+      return;
+    }
+    final backup = File('${dst.path}.bak');
+    if (await backup.exists()) await backup.delete();
+    try {
+      await dst.rename(backup.path);
+    } catch (_) {
+      // Destination may be open/locked — keep going with the backup dance.
+    }
+    try {
+      await src.rename(dst.path);
+      try {
+        if (await backup.exists()) await backup.delete();
+      } catch (_) {}
+    } catch (_) {
+      // Revert: put the previous binary back.
+      try {
+        if (await backup.exists()) await backup.rename(dst.path);
+      } catch (_) {}
+      rethrow;
     }
   }
 }

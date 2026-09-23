@@ -46,9 +46,7 @@ class VideoInfo {
     required bool hasFfmpeg,
   }) {
     final rawFormats =
-        (j['formats'] as List?)
-            ?.map((e) => e as Map<String, dynamic>)
-            .toList() ??
+        (j['formats'] as List?)?.whereType<Map<String, dynamic>>().toList() ??
         const <Map<String, dynamic>>[];
 
     String? thumb;
@@ -106,7 +104,13 @@ class VideoInfo {
     final best = heights.isEmpty ? null : heights.first;
 
     final result = <Format>[
-      _videoFormat(pool, null, hasFfmpeg, labelBase: 'Best quality'),
+      _videoFormat(
+        pool,
+        null,
+        formats,
+        hasFfmpeg: hasFfmpeg,
+        labelBase: 'Best quality',
+      ),
     ];
     // One row per distinct source resolution below the best one, so labels
     // always match what the selector will actually pick (no fake "2160p"
@@ -114,7 +118,15 @@ class VideoInfo {
     for (final h in heights) {
       if (result.length >= 7) break;
       if (best != null && h >= best) continue;
-      result.add(_videoFormat(pool, h, hasFfmpeg, labelBase: '${h}p · MP4'));
+      result.add(
+        _videoFormat(
+          pool,
+          h,
+          formats,
+          hasFfmpeg: hasFfmpeg,
+          labelBase: '${h}p',
+        ),
+      );
     }
     return result;
   }
@@ -122,7 +134,8 @@ class VideoInfo {
   static Format _videoFormat(
     List<Map<String, dynamic>> candidates,
     int? maxHeight,
-    bool hasFfmpeg, {
+    List<Map<String, dynamic>> allFormats, {
+    required bool hasFfmpeg,
     required String labelBase,
   }) {
     var pool = candidates;
@@ -149,20 +162,55 @@ class VideoInfo {
     final selector = hasFfmpeg
         ? (h == null ? 'bv*+ba/b' : 'bv*[height<=$h]+ba/b[height<=$h]/b')
         : (h == null
-              ? 'b[ext=mp4]/b'
-              : 'b[height<=$h][ext=mp4]/b[height<=$h]/b');
+              ? 'b[ext=mp4][acodec!=none]/b[acodec!=none]'
+              : 'b[height<=$h][ext=mp4][acodec!=none]/'
+                    'b[height<=$h][acodec!=none]');
 
-    final sizeLabel = filesize == null
-        ? ''
-        : ' · ${formatBytes(filesize as num)}';
+    // Only claim a container when it is unambiguous for the row's streams.
+    final container = _containerLabel(pool, allFormats, hasFfmpeg);
+    final size = filesize is num ? filesize : null;
+    final sizeLabel = size == null ? '' : ' · ${formatBytes(size)}';
 
     return Format(
       kind: FormatKind.video,
-      label: '$labelBase$sizeLabel',
+      label: '$labelBase · $container$sizeLabel',
       selector: selector,
       tier: h,
-      filesize: (filesize as num?)?.toInt(),
+      filesize: size?.toInt(),
     );
+  }
+
+  /// Best-effort container label for a row. With ffmpeg the output
+  /// container is decided by merging the row's video stream with the best
+  /// audio stream, so we only claim MP4/WebM when every involved stream is
+  /// that container, otherwise we say MKV (yt-dlp's generic fallback).
+  static String _containerLabel(
+    List<Map<String, dynamic>> rowPool,
+    List<Map<String, dynamic>> allFormats,
+    bool hasFfmpeg,
+  ) {
+    final exts = <String>{};
+    for (final f in rowPool) {
+      final e = f['ext'];
+      if (e is String && e.isNotEmpty) exts.add(e);
+    }
+    if (!hasFfmpeg) {
+      if (exts.every((e) => e == 'mp4')) return 'MP4';
+      if (exts.every((e) => e == 'webm')) return 'WebM';
+      return 'MKV';
+    }
+    for (final f in allFormats) {
+      final v = f['vcodec'] as String?;
+      final a = f['acodec'] as String?;
+      final isAudio = (v == null || v == 'none') && a != null && a != 'none';
+      if (isAudio) {
+        final e = f['ext'];
+        if (e is String && e.isNotEmpty) exts.add(e);
+      }
+    }
+    if (exts.every((e) => e == 'mp4' || e == 'm4a')) return 'MP4';
+    if (exts.every((e) => e == 'webm')) return 'WebM';
+    return 'MKV';
   }
 
   static List<Format> _buildAudioFormats(List<Map<String, dynamic>> formats) {
@@ -193,13 +241,14 @@ class VideoInfo {
       bestM4a = audio.first;
     }
     final fs = bestM4a['filesize'] ?? bestM4a['filesize_approx'];
-    final sizeLabel = fs == null ? '' : ' · ${formatBytes(fs as num)}';
+    final size = fs is num ? fs : null;
+    final sizeLabel = size == null ? '' : ' · ${formatBytes(size)}';
     return [
       Format(
         kind: FormatKind.audio,
         label: 'M4A · Best audio$sizeLabel',
         selector: 'ba[ext=m4a]/ba',
-        filesize: (fs as num?)?.toInt(),
+        filesize: size?.toInt(),
       ),
     ];
   }
