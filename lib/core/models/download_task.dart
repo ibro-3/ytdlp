@@ -20,6 +20,17 @@ class DownloadTask {
   String? speed;
   String? eta;
   String? error;
-  String? destinationPath;
+
+  /// Non-fatal problem that happened after the download itself succeeded
+  /// (for example, the file could not be recorded in the library).
+  String? warning;
+
+  /// Path of the final file after a successful download.
   String? filePath;
+
+  /// yt-dlp's most recent reported destination (may be intermediate).
+  String? destinationPath;
+
+  /// Staging directory used while this task was running.
+  String? stagingPath;
 }

@@ -71,11 +71,17 @@ final notificationServiceProvider = Provider<NotificationService>(
 );
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
-  return DownloadManager(
+  // Mobile devices have less headroom than desktops. Two never run at once
+  // on Android/iOS; desktop allows two parallel downloads by default.
+  final maxConcurrency = Platform.isAndroid ? 1 : 2;
+  final manager = DownloadManager(
     ytdlp: ref.watch(ytdlpServiceProvider),
     history: ref.watch(historyServiceProvider),
     downloadsDir: ref.watch(downloadsDirProvider),
     settings: ref.watch(settingsServiceProvider),
     notifications: ref.watch(notificationServiceProvider),
+    maxConcurrency: maxConcurrency,
   );
+  ref.onDispose(manager.dispose);
+  return manager;
 });
