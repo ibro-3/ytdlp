@@ -71,7 +71,7 @@ List<String> buildDownloadArgs({
     args.addAll(['--write-thumbnail', '--convert-thumbnails', 'jpg']);
   }
   if (options.embedThumb) {
-    args.addAll(['--embed-thumbnail', '--thumbnail', 'best']);
+    args.add('--embed-thumbnail');
   }
 
   if (androidFfmpegPath != null) {

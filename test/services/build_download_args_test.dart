@@ -128,13 +128,12 @@ void main() {
       expect(a, isNot(contains('--embed-thumbnail')));
     });
 
-    test('embed thumbnail only embeds, with explicit best quality', () {
+    test('embed thumbnail only embeds', () {
       final a = _args(options: const DownloadOptions(embedThumb: true));
-      expect(
-        a,
-        containsAllInOrder(['--embed-thumbnail', '--thumbnail', 'best']),
-      );
+      expect(a, contains('--embed-thumbnail'));
+      // No -k, no accidental sidecar write, no unsupported quality flag.
       expect(a, isNot(contains('--write-thumbnail')));
+      expect(a, isNot(contains('--thumbnail')));
     });
 
     test('both thumbnail options combine', () {
@@ -148,8 +147,6 @@ void main() {
           '--convert-thumbnails',
           'jpg',
           '--embed-thumbnail',
-          '--thumbnail',
-          'best',
         ]),
       );
     });
@@ -191,8 +188,6 @@ void main() {
           '--convert-thumbnails',
           'jpg',
           '--embed-thumbnail',
-          '--thumbnail',
-          'best',
         ]),
       );
       expect(a, containsAllInOrder(['--cookies', '/c/cookies.txt']));
