@@ -18,6 +18,57 @@ class Format {
   final int? filesize;
 }
 
+/// One subtitle/caption track offered by the source, keyed by language.
+class SubtitleTrack {
+  const SubtitleTrack({
+    required this.lang,
+    required this.name,
+    required this.isAutoOnly,
+    required this.exts,
+  });
+
+  /// ISO language code, e.g. `en`.
+  final String lang;
+
+  /// Human-readable name, e.g. `English`.
+  final String name;
+
+  /// Only machine-generated captions (`automatic_captions`) exist for this
+  /// language — there is no manually authored subtitle track.
+  final bool isAutoOnly;
+
+  /// Extensions yt-dlp can deliver for this track (srt/vtt/ttml/…). Manual
+  /// tracks usually offer srt; auto-generated ones are often vtt-only.
+  final List<String> exts;
+
+  bool get hasSrt => exts.contains('srt');
+}
+
+/// Display names for the most common subtitle languages, shown first in the
+/// picker. Languages outside this map keep their ISO code.
+const Map<String, String> commonSubtitleLanguages = {
+  'en': 'English',
+  'es': 'Spanish',
+  'fr': 'French',
+  'de': 'German',
+  'pt': 'Portuguese',
+  'it': 'Italian',
+  'ar': 'Arabic',
+  'hi': 'Hindi',
+  'ja': 'Japanese',
+  'ko': 'Korean',
+  'ru': 'Russian',
+  'tr': 'Turkish',
+  'pl': 'Polish',
+  'nl': 'Dutch',
+  'vi': 'Vietnamese',
+  'id': 'Indonesian',
+  'th': 'Thai',
+  'zh': 'Chinese',
+  'uk': 'Ukrainian',
+  'sv': 'Swedish',
+};
+
 class VideoInfo {
   const VideoInfo({
     required this.id,
@@ -27,8 +78,10 @@ class VideoInfo {
     this.duration = 0,
     this.uploadDate,
     this.thumbnail,
+    this.hasFfmpeg = false,
     this.videoFormats = const [],
     this.audioFormats = const [],
+    this.subtitleTracks = const [],
   });
 
   final String id;
@@ -38,8 +91,20 @@ class VideoInfo {
   final int duration;
   final DateTime? uploadDate;
   final String? thumbnail;
+
+  /// Whether the app can reach ffmpeg (bundled on Android, PATH on desktop).
+  /// Embedding subtitles/thumbnails requires it.
+  final bool hasFfmpeg;
+
   final List<Format> videoFormats;
   final List<Format> audioFormats;
+
+  /// Subtitle/caption tracks the source offers, common languages first.
+  final List<SubtitleTrack> subtitleTracks;
+
+  /// Number of tracks surfaced directly; an "all languages" option covers
+  /// the rest so the sheet stays compact.
+  static const int subtitleTrackLimit = 8;
 
   factory VideoInfo.fromYtdlpJson(
     Map<String, dynamic> j, {
@@ -49,13 +114,17 @@ class VideoInfo {
         (j['formats'] as List?)?.whereType<Map<String, dynamic>>().toList() ??
         const <Map<String, dynamic>>[];
 
-    String? thumb;
-    final thumbs = j['thumbnails'] as List?;
-    if (thumbs != null && thumbs.isNotEmpty) {
-      final last = thumbs.last;
-      if (last is Map) thumb = last['url'] as String?;
+    // Prefer yt-dlp's own pick (a .jpg for YouTube) over the last raw
+    // thumbnail entry, which is often a maxresdefault.webp that 404s on
+    // older videos.
+    String? thumb = j['thumbnail'] as String?;
+    if (thumb == null || thumb.isEmpty) {
+      final thumbs = j['thumbnails'] as List?;
+      if (thumbs != null && thumbs.isNotEmpty) {
+        final last = thumbs.last;
+        if (last is Map) thumb = last['url'] as String?;
+      }
     }
-    thumb ??= j['thumbnail'] as String?;
 
     return VideoInfo(
       id: (j['id'] as String?) ?? '',
@@ -65,9 +134,67 @@ class VideoInfo {
       duration: (j['duration'] as num?)?.round() ?? 0,
       uploadDate: parseUploadDate(j['upload_date'] as String?),
       thumbnail: thumb,
+      hasFfmpeg: hasFfmpeg,
       videoFormats: _buildVideoFormats(rawFormats, hasFfmpeg),
       audioFormats: _buildAudioFormats(rawFormats),
+      subtitleTracks: _parseSubtitleTracks(j),
     );
+  }
+
+  /// Merges `subtitles` (manual) and `automatic_captions` (auto) into one
+  /// list per language, ordered with the common languages first.
+  static List<SubtitleTrack> _parseSubtitleTracks(Map<String, dynamic> j) {
+    final byLang = <String, ({Set<String> exts, bool manual})>{};
+
+    void merge(dynamic source, {required bool manual}) {
+      if (source is! Map) return;
+      for (final MapEntry(:key, :value) in source.entries) {
+        if (key is! String) continue;
+        final formats = value is List
+            ? value.whereType<Map<String, dynamic>>()
+            : const <Map<String, dynamic>>[];
+        final exts = formats
+            .map((f) => (f['ext'] as String?) ?? '')
+            .where((e) => e.isNotEmpty)
+            .toSet();
+        if (exts.isEmpty) continue;
+        final cur = byLang[key];
+        byLang[key] = (
+          exts: {...?cur?.exts, ...exts},
+          manual: cur?.manual ?? manual,
+        );
+      }
+    }
+
+    merge(j['subtitles'], manual: true);
+    merge(j['automatic_captions'], manual: false);
+
+    final tracks = <SubtitleTrack>[];
+    final emitted = <String>{};
+
+    void emit(String lang, Set<String> exts, bool manual) {
+      if (!emitted.add(lang)) return;
+      tracks.add(
+        SubtitleTrack(
+          lang: lang,
+          name: commonSubtitleLanguages[lang] ?? lang,
+          isAutoOnly: !manual,
+          exts: exts.toList()..sort(),
+        ),
+      );
+    }
+
+    // Common languages first, in a stable priority order.
+    for (final lang in commonSubtitleLanguages.keys) {
+      final entry = byLang[lang];
+      if (entry != null) emit(lang, entry.exts, entry.manual);
+    }
+    // Whatever else the site offers, in insertion order.
+    for (final MapEntry(:key, :value) in byLang.entries) {
+      emit(key, value.exts, value.manual);
+    }
+
+    return tracks.take(subtitleTrackLimit).toList();
   }
 
   static bool _isCombined(Map<String, dynamic> f) {

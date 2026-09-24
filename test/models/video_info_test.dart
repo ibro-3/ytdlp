@@ -267,5 +267,94 @@ void main() {
       expect(rows[0].selector, 'ba/b');
       expect(rows[1].selector, 'ba[abr<=192]/ba');
     });
+
+    test('carries hasFfmpeg and prefers yt-dlp thumbnail over raw list', () {
+      final info = VideoInfo.fromYtdlpJson({
+        ..._ytJson([]),
+        'thumbnail': 'https://example.com/hqdefault.jpg',
+        'thumbnails': [
+          {'url': 'https://example.com/maxresdefault.webp'},
+        ],
+      }, hasFfmpeg: true);
+      expect(info.hasFfmpeg, isTrue);
+      expect(info.thumbnail, 'https://example.com/hqdefault.jpg');
+
+      final noThumb = VideoInfo.fromYtdlpJson(_ytJson([]), hasFfmpeg: false);
+      expect(noThumb.hasFfmpeg, isFalse);
+      expect(noThumb.thumbnail, 'https://example.com/thumb.jpg');
+    });
+  });
+
+  group('subtitle tracks', () {
+    Map<String, dynamic> jsonWith({
+      Map<String, dynamic>? subtitles,
+      Map<String, dynamic>? automaticCaptions,
+    }) => {
+      ..._ytJson([]),
+      'subtitles': ?subtitles,
+      'automatic_captions': ?automaticCaptions,
+    };
+
+    test('merges manual and auto tracks, common languages first', () {
+      final info = VideoInfo.fromYtdlpJson(
+        jsonWith(
+          subtitles: {
+            'de': [
+              {'ext': 'srt'},
+              {'ext': 'vtt'},
+            ],
+            'en': [
+              {'ext': 'srt'},
+              {'ext': 'ttml'},
+            ],
+          },
+          automaticCaptions: {
+            'en': [
+              {'ext': 'vtt'},
+            ],
+            'es': [
+              {'ext': 'vtt'},
+            ],
+            'xx': [
+              {'ext': 'vtt'},
+            ],
+          },
+        ),
+        hasFfmpeg: false,
+      );
+
+      expect(info.subtitleTracks.map((t) => t.lang).toList(), [
+        'en', // common, first
+        'es',
+        'de',
+        'xx', // non-common after the common ones
+      ]);
+      final en = info.subtitleTracks.first;
+      expect(en.name, 'English');
+      expect(en.isAutoOnly, isFalse, reason: 'manual srt exists');
+      expect(en.hasSrt, isTrue);
+      final es = info.subtitleTracks[1];
+      expect(es.isAutoOnly, isTrue, reason: 'only automatic_captions');
+      expect(es.exts, ['vtt']);
+    });
+
+    test('caps the surfaced tracks and drops entries without formats', () {
+      final many = <String, dynamic>{
+        for (var i = 0; i < 20; i++)
+          'l$i': [
+            {'ext': 'srt'},
+          ],
+      };
+      final info = VideoInfo.fromYtdlpJson(
+        jsonWith(subtitles: many, automaticCaptions: {'l0': []}),
+        hasFfmpeg: false,
+      );
+      expect(info.subtitleTracks.length, VideoInfo.subtitleTrackLimit);
+    });
+
+    test('empty when the site offers no subtitles', () {
+      final info = VideoInfo.fromYtdlpJson(jsonWith(), hasFfmpeg: false);
+      expect(info.subtitleTracks, isEmpty);
+    });
   });
 }
