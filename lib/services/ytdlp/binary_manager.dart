@@ -26,6 +26,24 @@ class ProcessRunner {
   List<String> args(List<String> rest) => [...preArgs, ...rest];
 }
 
+/// The extracted Termux-based CPython runtime on Android, kept around so the
+/// updater can run and replace the bundled yt-dlp script.
+class _AndroidRuntime {
+  const _AndroidRuntime({
+    required this.python,
+    required this.script,
+    required this.env,
+  });
+
+  /// `<usr>/bin/python3.14`
+  final String python;
+
+  /// `<usr>/bin/yt-dlp` — the script the runtime executes.
+  final String script;
+
+  final Map<String, String> env;
+}
+
 /// Locates the `yt-dlp` binary:
 ///
 /// Desktop:
@@ -50,6 +68,7 @@ class BinaryManager {
   Future<String>? _ytdlpFuture;
   Future<ProcessRunner>? _runnerFuture;
   Future<String?>? _ffmpegFuture;
+  _AndroidRuntime? _androidRuntime;
 
   Future<bool> hasFfmpeg() async {
     if (_hasFfmpeg != null) return _hasFfmpeg!;
@@ -198,9 +217,9 @@ class BinaryManager {
         final support = await getApplicationSupportDirectory();
         final cache = await getTemporaryDirectory();
         await _ensureAndroidFfmpeg();
-        return ProcessRunner(
-          executable: '$usr/bin/python3.14',
-          preArgs: <String>['$usr/bin/yt-dlp'],
+        final runtime = _AndroidRuntime(
+          python: '$usr/bin/python3.14',
+          script: '$usr/bin/yt-dlp',
           env: {
             'LD_LIBRARY_PATH': '$usr/lib',
             'PYTHONHOME': usr,
@@ -209,6 +228,12 @@ class BinaryManager {
             'HOME': support.path,
             'TMPDIR': cache.path,
           },
+        );
+        _androidRuntime = runtime;
+        return ProcessRunner(
+          executable: runtime.python,
+          preArgs: <String>[runtime.script],
+          env: runtime.env,
         );
       }
     }
@@ -372,15 +397,16 @@ class BinaryManager {
     }
   }
 
-  /// Updates the binary in place and returns the new version.
+  /// Updates yt-dlp in place and returns the new version.
   ///
+  /// The source is fixed — there is nothing to configure:
   /// - System install: runs `yt-dlp -U`.
-  /// - App-managed copy: re-downloads (desktop uses the official release
-  ///   URL; Android requires [androidUrl] — there is no official build).
-  /// - Android bundled runtime: a custom [androidUrl] replaces the bundled
-  ///   runtime and becomes the active source; without one, updates ship with
-  ///   app releases.
-  Future<String> updateYtdlp({String? androidUrl}) async {
+  /// - Desktop app-managed copy: re-downloads the official single-file build.
+  /// - Android bundled runtime: replaces the yt-dlp script inside the
+  ///   extracted CPython runtime with the official standalone release. The
+  ///   interpreter, ffmpeg and native libs still come from the app bundle, so
+  ///   refreshing those needs an app update.
+  Future<String> updateYtdlp() async {
     await ensureRunner();
     if (_isSystem && _ytdlpPath != null) {
       final res = await Process.run(_ytdlpPath!, ['-U']);
@@ -394,41 +420,69 @@ class BinaryManager {
       }
       return ytdlpVersion();
     }
-    final custom = androidUrl?.trim();
-    String url;
-    if (!Platform.isAndroid) {
-      url =
-          _managedUrl ??
-          'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
-    } else if (custom != null && custom.isNotEmpty) {
-      url = custom;
-    } else if (_usingRuntime) {
-      throw YtdlpException(
-        'The bundled Android runtime updates with app releases.\n'
-        'Current version is shown above; to refresh it, update the app.\n'
-        'To install a custom build instead, set its URL in Settings.',
-      );
-    } else {
-      throw YtdlpException(
-        'Set an Android yt-dlp build URL in Settings first.\n'
-        'There is no official Android build — point it at a bionic '
-        'binary for your ABI.',
-      );
-    }
+    if (Platform.isAndroid) return _updateAndroidRuntime();
+
+    final url =
+        _managedUrl ??
+        'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
     final replaced = await _downloadFromUrl(url, force: true);
     if (replaced == null) {
-      throw YtdlpException('Download failed — check the URL and connection.');
+      throw YtdlpException('Download failed — check the connection.');
     }
-    // From here on the custom URL is the active source, even when a bundled
-    // runtime was in use before.
     _ytdlpPath = replaced;
     _isSystem = false;
-    _usingRuntime = false;
     _managedUrl = url;
     return ytdlpVersion();
   }
 
+  /// Refreshes the yt-dlp script inside the bundled Android runtime.
+  ///
+  /// The download is verified by actually running `--version` with the
+  /// runtime's interpreter before it replaces the working script, so a bad or
+  /// incompatible download can never break a working engine.
+  Future<String> _updateAndroidRuntime() async {
+    final runtime = _androidRuntime;
+    if (!_usingRuntime || runtime == null) {
+      throw YtdlpException(
+        'This install runs a custom yt-dlp binary, and custom build URLs are '
+        'no longer configurable.\n'
+        'Install a newer app build to get a refreshed engine.',
+      );
+    }
+    final tmp = File('${runtime.script}.new');
+    if (!await _downloadToFile(_ytDlpScriptUrl, tmp)) {
+      throw YtdlpException('Download failed — check the connection.');
+    }
+    try {
+      await _chmodX(tmp.path);
+      final probe = await Process.run(runtime.python, [
+        tmp.path,
+        '--version',
+      ], environment: runtime.env);
+      if (probe.exitCode != 0) {
+        final detail = '${probe.stdout}${probe.stderr}'.trim();
+        throw YtdlpException(
+          'The downloaded yt-dlp did not run on this device.\n'
+          '${detail.isEmpty ? 'exit ${probe.exitCode}' : detail}',
+        );
+      }
+      await _replaceWith(tmp, File(runtime.script));
+    } catch (_) {
+      try {
+        if (await tmp.exists()) await tmp.delete();
+      } catch (_) {}
+      rethrow;
+    }
+    return ytdlpVersion();
+  }
+
   String get _ytdlpName => Platform.isWindows ? 'yt-dlp.exe' : 'yt-dlp';
+
+  /// Official standalone yt-dlp (a platform-independent Python zipapp).
+  /// Android has no official *binary*, but the bundled CPython runtime can run
+  /// this script, so it is the fixed update source everywhere.
+  static const _ytDlpScriptUrl =
+      'https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp';
 
   String get _officialFileName => Platform.isWindows
       ? 'yt-dlp.exe'
@@ -597,7 +651,16 @@ class BinaryManager {
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$_ytdlpName');
     if (!force && await target.exists()) return target.path;
+    final ok = await _downloadToFile(url, target);
+    return ok ? target.path : null;
+  }
 
+  /// Downloads [url] to [target] atomically: bytes land in a temp file first
+  /// and are only renamed into place once the transfer finished and produced a
+  /// non-empty file. Returns false — leaving [target] untouched — on any
+  /// failure.
+  Future<bool> _downloadToFile(String url, File target) async {
+    if (kIsWeb) return false;
     final tmp = File('${target.path}.tmp');
     HttpClient? client;
     try {
@@ -621,12 +684,12 @@ class BinaryManager {
         } catch (_) {}
       }
       await _replaceWith(tmp, target);
-      return target.path;
+      return true;
     } catch (_) {
       try {
         await tmp.delete();
       } catch (_) {}
-      return null;
+      return false;
     } finally {
       client?.close(force: true);
     }

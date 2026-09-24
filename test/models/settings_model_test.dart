@@ -11,7 +11,6 @@ void main() {
       expect(s.defaultVideoTier, 720);
       expect(s.defaultAudioOnly, isFalse);
       expect(s.notificationsEnabled, isTrue);
-      expect(s.androidYtdlpUrl, isEmpty);
       expect(s.downloadRoot, isEmpty);
       expect(s.tierLabel, '720p');
     });
@@ -23,7 +22,6 @@ void main() {
         defaultVideoTier: null,
         defaultAudioOnly: true,
         notificationsEnabled: false,
-        androidYtdlpUrl: 'https://example.com/yt-dlp',
         downloadRoot: '/data/media/0/ytdlp',
       );
       final back = AppSettings.fromMap(s.toMap());
@@ -33,7 +31,6 @@ void main() {
       expect(back.tierLabel, 'Best');
       expect(back.defaultAudioOnly, isTrue);
       expect(back.notificationsEnabled, isFalse);
-      expect(back.androidYtdlpUrl, 'https://example.com/yt-dlp');
       expect(back.downloadRoot, '/data/media/0/ytdlp');
     });
 
@@ -56,6 +53,17 @@ void main() {
       final s = AppSettings.fromMap({'themeMode': 'nope'});
       expect(s.themeMode, ThemeMode.system);
       expect(s.defaultVideoTier, isNull);
+    });
+
+    test('fromMap ignores a stored androidYtdlpUrl from older installs', () {
+      // The custom build URL setting was removed; old persisted maps must
+      // still load without it.
+      final s = AppSettings.fromMap({
+        'themeMode': 'dark',
+        'androidYtdlpUrl': 'https://example.com/yt-dlp',
+      });
+      expect(s.themeMode, ThemeMode.dark);
+      expect(s.toMap().containsKey('androidYtdlpUrl'), isFalse);
     });
   });
 }

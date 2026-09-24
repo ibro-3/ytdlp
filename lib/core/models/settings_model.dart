@@ -9,7 +9,6 @@ class AppSettings {
     this.defaultVideoTier = 720,
     this.defaultAudioOnly = false,
     this.notificationsEnabled = true,
-    this.androidYtdlpUrl = '',
     this.downloadRoot = '',
   });
 
@@ -30,7 +29,6 @@ class AppSettings {
   final int? defaultVideoTier;
   final bool defaultAudioOnly;
   final bool notificationsEnabled;
-  final String androidYtdlpUrl;
 
   /// Root folder for downloads; empty means the platform default
   /// (`downloadsDir` in providers.dart). Videos and audio go into a
@@ -48,7 +46,6 @@ class AppSettings {
     int? Function()? defaultVideoTier,
     bool? defaultAudioOnly,
     bool? notificationsEnabled,
-    String? androidYtdlpUrl,
     String? downloadRoot,
   }) {
     return AppSettings(
@@ -59,7 +56,6 @@ class AppSettings {
           : this.defaultVideoTier,
       defaultAudioOnly: defaultAudioOnly ?? this.defaultAudioOnly,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
-      androidYtdlpUrl: androidYtdlpUrl ?? this.androidYtdlpUrl,
       downloadRoot: downloadRoot ?? this.downloadRoot,
     );
   }
@@ -70,7 +66,6 @@ class AppSettings {
     'defaultVideoTier': defaultVideoTier,
     'defaultAudioOnly': defaultAudioOnly,
     'notificationsEnabled': notificationsEnabled,
-    'androidYtdlpUrl': androidYtdlpUrl,
     'downloadRoot': downloadRoot,
   };
 
@@ -85,7 +80,6 @@ class AppSettings {
       defaultVideoTier: (m['defaultVideoTier'] as num?)?.toInt(),
       defaultAudioOnly: (m['defaultAudioOnly'] as bool?) ?? false,
       notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
-      androidYtdlpUrl: (m['androidYtdlpUrl'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
     );
   }

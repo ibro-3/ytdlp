@@ -20,21 +20,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   bool _versionLoading = false;
   bool _updating = false;
   String? _engineMessage;
-  late final TextEditingController _androidUrlController;
 
   @override
   void initState() {
     super.initState();
-    _androidUrlController = TextEditingController(
-      text: ref.read(settingsControllerProvider).androidYtdlpUrl,
-    );
     _loadVersion();
-  }
-
-  @override
-  void dispose() {
-    _androidUrlController.dispose();
-    super.dispose();
   }
 
   Future<void> _patch(AppSettings next) =>
@@ -55,21 +45,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  /// Updates yt-dlp from its fixed upstream source — there is nothing to
+  /// configure, so this is just the button.
   Future<void> _updateEngine() async {
     setState(() {
       _updating = true;
       _engineMessage = null;
     });
     try {
-      // Persist a possibly-edited Android URL first.
-      final settings = ref.read(settingsControllerProvider);
-      final url = _androidUrlController.text.trim();
-      if (url != settings.androidYtdlpUrl) {
-        await _patch(settings.copyWith(androidYtdlpUrl: url));
-      }
-      final v = await ref
-          .read(binaryManagerProvider)
-          .updateYtdlp(androidUrl: url.isEmpty ? null : url);
+      final v = await ref.read(binaryManagerProvider).updateYtdlp();
       if (mounted) {
         setState(() {
           _version = v;
@@ -298,30 +282,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      if (Platform.isAndroid) ...[
-                        TextField(
-                          controller: _androidUrlController,
-                          decoration: const InputDecoration(
-                            labelText: 'Android yt-dlp build URL (optional)',
-                            hintText: 'https://…/yt-dlp (bionic, per ABI)',
-                            border: OutlineInputBorder(),
-                          ),
-                          keyboardType: TextInputType.url,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Android has no official build — updates need a '
-                          'bionic binary URL. Leave blank to keep the bundled '
-                          'copy.',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
                       FilledButton.icon(
                         onPressed: _updating ? null : _updateEngine,
                         icon: _updating

@@ -9,7 +9,7 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 - **Download tab** — M3 `SearchBar` URL input (paste/clear), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. The sheet is seeded from the Settings defaults ("Default video quality" / "Audio only by default") on every open.
 - **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. One download runs at a time on mobile, two in parallel on desktop. Posts Android progress/completion notifications (foreground-only in v1).
 - **Library tab** — Hive-backed history, file existence check, open (`open_filex`), share (`share_plus`), clear.
-- **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality / audio-only / ask-each-time, **download folder** (default Downloads, or any writable folder picked in Settings; videos → `Video/`, audio → `Audio/`), yt-dlp version + in-place update (system `yt-dlp -U`, or re-download of the app copy; Android needs a bionic build URL), notification toggle + test.
+- **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality / audio-only, **download folder** (default Downloads, or any writable folder picked in Settings; videos → `Video/`, audio → `Audio/`), yt-dlp version + one-tap update (system `yt-dlp -U`; app-managed copies and the Android runtime refresh from the official release), notification toggle + test.
 
 ## Stack
 
@@ -17,7 +17,7 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 - **Routing:** `go_router` 18 (`StatefulShellRoute.indexedStack`)
 - **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
 - **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlists will group under one folder per playlist inside the matching area.
-- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`, app copies via re-download; Android requires a bionic build URL (no official build exists). Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
+- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`; app-managed desktop copies re-download the official build; on Android the button replaces the yt-dlp script inside the extracted CPython runtime with the official standalone release — downloaded to a temp file and verified by running `--version` with the runtime's own interpreter before it replaces the working script, so a bad download can never break the engine. There is no URL to configure. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
 - **Notifications:** `flutter_local_notifications`, `downloads` channel, `POST_NOTIFICATIONS` (Android 13+ runtime grant on toggle). Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle. Foreground-only in v1 — background downloads need a Foreground Service (follow-up).
 
 ## Project structure
@@ -66,7 +66,7 @@ Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `asset
 ./tool/fetch_android_runtime.sh x86_64   # emulator only
 ```
 
-This produces `assets/bin/android/<abi>/python.tar.gz` (~16 MB per ABI), already registered in `pubspec.yaml`. At first launch the app extracts it to its private files dir and runs `python3.14 bin/yt-dlp` with `LD_LIBRARY_PATH`/`PYTHONHOME`/`SSL_CERT_FILE` pointed at the tree — no root, no Termux app needed.
+This produces `assets/bin/android/<abi>/python.tar.gz` (~16 MB per ABI), already registered in `pubspec.yaml`. At first launch the app extracts it to its private files dir and runs `python3.14 bin/yt-dlp` with `LD_LIBRARY_PATH`/`PYTHONHOME`/`SSL_CERT_FILE` pointed at the tree — no root, no Termux app needed. Settings → **Update yt-dlp** refreshes only the yt-dlp script from the official release; the CPython interpreter, native libs and bundled ffmpeg still ship with the app, so those need an app update.
 
 **ffmpeg (video downloads):** modern YouTube serves video/audio as separate DASH streams, and merging them needs ffmpeg. The Termux ffmpeg package drags in ~97 packages (~40 MB/ABI), so instead a minimal **static** ffmpeg is cross-compiled with the NDK — just the file protocol, mp4/webm/mkv demuxers and muxers yt-dlp needs for `-c copy` merges (~2 MB/ABI):
 
@@ -82,7 +82,7 @@ The app extracts it on first launch and passes `--ffmpeg-location` to yt-dlp, so
 | `x86_64` (Studio emulators)      | `assets/bin/android/x86_64/…`      | verified end-to-end on emulator (fetch + video download w/ ffmpeg merge) |
 | `arm64-v8a` (physical devices)   | `assets/bin/android/arm64-v8a/…`    | same recipe, untested here |
 
-If a per-ABI archive is missing, `assets/bin/android/yt-dlp` (a custom single-file bionic build) is tried as a fallback; otherwise the app shows an actionable error naming the expected path.
+If a per-ABI archive is missing, `assets/bin/android/yt-dlp` (a single-file bionic build committed to the repo) is tried as a fallback; otherwise the app shows an actionable error naming the expected path. An install that ends up on such a build cannot self-update — Settings reports that an app update is needed, since custom build URLs are no longer configurable.
 
 > **Android 14+ SELinux note:** apps targeting recent SDKs (`untrusted_app_34`) are denied `execute` on their own data files (`avc: denied { execute_no_trans }`), which silently breaks any bundled-subprocess design. This project therefore sets `targetSdk = 28` in `android/app/build.gradle.kts` (same approach as Termux) so the bundled runtime can execute. Trade-off: sideload/F-Droid distribution only — the Play Store requires a recent target SDK (and forbids YouTube downloading anyway).
 
