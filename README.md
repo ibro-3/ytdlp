@@ -8,15 +8,23 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 
 - **Download tab** — M3 `SearchBar` URL input (paste/clear), a clipboard paste FAB that extracts the link out of whatever you shared, `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. The sheet is seeded from the Settings defaults ("Default video quality" / "Audio only by default") on every open.
 - **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. One download runs at a time on mobile, two in parallel on desktop. Posts Android progress/completion notifications (foreground-only in v1).
+  - **Resumable**: a failed or interrupted download keeps its staging directory and yt-dlp's `.part` file, so Retry continues instead of re-fetching. Engine flags add `--continue`, `--retries 10`, `--fragment-retries 10` and a capped `--retry-sleep linear=1:5:2` backoff.
+  - **Restart-safe**: the queue is snapshotted to Hive. Work that was running when the process was killed comes back as *failed* ("Interrupted when the app closed — tap Retry to continue") with its partial download intact; staging directories no task refers to are deleted on startup so they can't leak storage.
 - **Library tab** — Hive-backed history, file existence check, open (`open_filex`), share (`share_plus`), clear.
-- **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality / audio-only, **download folder** (default Downloads, or any writable folder picked in Settings; videos → `Video/`, audio → `Audio/`), yt-dlp version + one-tap update (system `yt-dlp -U`; app-managed copies and the Android runtime refresh from the official release), notification toggle + test.
+- **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality / audio-only, **download folder** (default Downloads, or any writable folder picked in Settings; videos → `Video/`, audio → `Audio/`), **cookies.txt import** (see below), yt-dlp version + one-tap update (system `yt-dlp -U`; app-managed copies and the Android runtime refresh from the official release), notification toggle + test.
+
+### Cookies (YouTube and other gated sites)
+
+Some sites — YouTube in particular — refuse anonymous requests, showing "Sign in to confirm you're not a bot" or limiting formats. Settings → **Cookies** imports a Netscape-format `cookies.txt`; it is copied into the app's support directory and handed to yt-dlp via `--cookies`. The app never parses or stores credentials itself, and removing it in Settings deletes the setting (the copy stays on disk until you delete it).
+
+> **Known limitation:** yt-dlp also wants a **PO token** (and increasingly a JS runtime — `yt-dlp-ejs` or Deno) for full YouTube support. This app ships no JS runtime in its bundled CPython runtime and does not run a PO-token provider, so some YouTube formats may be unavailable or fail with a bot check. Cookies fix the *authentication* half; the *PO token* half needs a bundled Deno (~30-40 MB per ABI) or a switch to a pure-JVM yt-dlp. Until then, if YouTube downloads fail while other sites work, that is the cause.
 
 ## Stack
 
 - **State:** `flutter_riverpod` 3.x (`NotifierProvider` for Home, `Provider` for services)
 - **Routing:** `go_router` 18 (`StatefulShellRoute.indexedStack`)
 - **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
-- **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlists will group under one folder per playlist inside the matching area.
+- **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlists will group under one folder per playlist inside the matching area. Three Hive boxes: `history` (library), `settings`, `queue` (task snapshots for restart recovery).
 - **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`; app-managed desktop copies re-download the official build; on Android the button replaces the yt-dlp script inside the extracted CPython runtime with the official standalone release — downloaded to a temp file and verified by running `--version` with the runtime's own interpreter before it replaces the working script, so a bad download can never break the engine. There is no URL to configure. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
 - **Notifications:** `flutter_local_notifications`, `downloads` channel, `POST_NOTIFICATIONS` (Android 13+ runtime grant on toggle). Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle. Foreground-only in v1 — background downloads need a Foreground Service (follow-up).
 
@@ -86,7 +94,20 @@ If a per-ABI archive is missing, `assets/bin/android/yt-dlp` (a single-file bion
 
 > **Android 14+ SELinux note:** apps targeting recent SDKs (`untrusted_app_34`) are denied `execute` on their own data files (`avc: denied { execute_no_trans }`), which silently breaks any bundled-subprocess design. This project therefore sets `targetSdk = 28` in `android/app/build.gradle.kts` (same approach as Termux) so the bundled runtime can execute. Trade-off: sideload/F-Droid distribution only — the Play Store requires a recent target SDK (and forbids YouTube downloading anyway).
 
-APK per-ABI splits are recommended (each runtime adds ~16 MB + ~2 MB ffmpeg).
+APK per-ABI splits are recommended (each runtime adds ~16 MB + ~2 MB ffmpeg). A universal release APK is ~90 MB; split it per ABI for ~25 MB each:
+
+```bash
+flutter build apk --release --split-per-abi
+```
+
+## Before publishing anything
+
+The app still carries Flutter's placeholder identity — these are release blockers that need a human decision (changing `applicationId` later breaks upgrades, so pick once):
+
+- `applicationId = "com.example.ytdlp"` in `android/app/build.gradle.kts` → your own reverse-DNS id.
+- `android:label="YTDL"` in the manifest, and the launcher icon is still the default Flutter icon.
+- Release builds are signed with the **debug key** — create a keystore and wire up `signingConfigs` (keep the keystore out of git; use GitHub secrets for CI).
+- Ship with `--split-per-abi` (see above), and add a changelog/version policy if you publish releases.
 
 ## Android notes
 
@@ -97,17 +118,24 @@ APK per-ABI splits are recommended (each runtime adds ~16 MB + ~2 MB ffmpeg).
 - Release builds are signed with the **debug key** (placeholder in `android/app/build.gradle.kts`). Create a real keystore before publishing anywhere.
 - Distribution: Play Store forbids YouTube downloading — intended for sideload/F-Droid/GitHub.
 
-## Testing the pipeline (desktop)
+## Testing
 
 ```bash
-yt-dlp -J --no-playlist "https://www.youtube.com/watch?v=jNQXAC9IVRw" | head
-ffmpeg -version
-flutter run -d linux --verbose
+flutter test                                    # unit + widget tests (fast, no device)
+flutter test integration_test/app_test.dart -d <device>   # on-device pipeline test
 ```
+
+The integration test boots the real app, fetches a video, picks a format and waits for the download to complete — it needs a device/emulator and network. It runs in CI via the opt-in **Device test (Android)** workflow (Actions → *Run workflow*), which boots an emulator; it is deliberately not on every push because it costs ~10 minutes of emulator time.
 
 ## Roadmap
 
-- Playlist downloads (grouped per playlist in `Video/`/`Audio/`).
-- Subtitles and thumbnail downloads.
-- Share intent (`receive_sharing_intent`).
-- Android foreground service so downloads can continue in the background.
+Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source.
+
+Still open:
+
+- **YouTube PO tokens + a JS runtime** (`yt-dlp-ejs` or Deno) in the bundled runtime — the main remaining blocker for YouTube reliability (see *Cookies* above).
+- **Android foreground service** so downloads survive the app being backgrounded (currently foreground-only).
+- Playlist downloads (`download_layout.dart` already carries the per-playlist template; the caller always passes `false`).
+- Subtitles and thumbnail/metadata embedding.
+- Share intent (`receive_sharing_intent`) — share a link straight into the app.
+- Release identity: app id, icon, signing key, per-ABI splits.
