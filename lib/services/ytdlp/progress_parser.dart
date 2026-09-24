@@ -20,6 +20,7 @@ class YtdlpProgressParser {
     r'^\[Merger\] Merging formats into "(.+)"$',
   );
   static final RegExp _errorRe = RegExp(r'^ERROR:\s*(.+)$');
+  static final RegExp _warningRe = RegExp(r'^WARNING:\s*(.+)$');
 
   static YtdlpProgressData? parseProgress(String line) {
     final m = _progressRe.firstMatch(line);
@@ -48,6 +49,11 @@ class YtdlpProgressParser {
 
   static String? parseError(String line) {
     final m = _errorRe.firstMatch(line);
+    return m?.group(1)?.trim();
+  }
+
+  static String? parseWarning(String line) {
+    final m = _warningRe.firstMatch(line);
     return m?.group(1)?.trim();
   }
 }

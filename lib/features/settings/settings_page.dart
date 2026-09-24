@@ -383,6 +383,58 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         onChanged: (v) =>
                             _patch(settings.copyWith(defaultAudioOnly: v)),
                       ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Subtitle & thumbnail defaults',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Subtitles next to the file'),
+                        subtitle: const Text('.srt/.vtt sidecar'),
+                        value: settings.defaultWriteSubs,
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(defaultWriteSubs: v)),
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Embed subtitles'),
+                        subtitle: const Text('Only when ffmpeg is available'),
+                        value: settings.defaultEmbedSubs,
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(defaultEmbedSubs: v)),
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Include auto-generated captions'),
+                        subtitle: const Text('Machine captions, marked "auto"'),
+                        value: settings.defaultIncludeAutoSubs,
+                        onChanged: (v) => _patch(
+                          settings.copyWith(defaultIncludeAutoSubs: v),
+                        ),
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Embed thumbnail as cover art'),
+                        subtitle: const Text('Only when ffmpeg is available'),
+                        value: settings.defaultEmbedThumb,
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(defaultEmbedThumb: v)),
+                      ),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Save thumbnail (.jpg)'),
+                        subtitle: const Text('Next to the media file'),
+                        value: settings.defaultWriteThumb,
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(defaultWriteThumb: v)),
+                      ),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.cookie_outlined),

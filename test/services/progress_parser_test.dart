@@ -49,5 +49,17 @@ void main() {
         'Unsupported URL: xyz',
       );
     });
+
+    test('parses warning lines and ignores non-warnings', () {
+      expect(
+        YtdlpProgressParser.parseWarning(
+          'WARNING: webm doesn\'t support embedding a thumbnail, '
+          'mkv will be used',
+        ),
+        'webm doesn\'t support embedding a thumbnail, mkv will be used',
+      );
+      expect(YtdlpProgressParser.parseWarning('ERROR: boom'), isNull);
+      expect(YtdlpProgressParser.parseWarning('[download] 10%'), isNull);
+    });
   });
 }

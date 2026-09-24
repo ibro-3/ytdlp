@@ -2,10 +2,84 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../../core/models/download_options.dart';
 import '../../core/models/video_info.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
 import 'json_payload.dart';
+
+/// Builds the yt-dlp command line for one download.
+///
+/// Embed and conversion flags that need ffmpeg are gated on `hasFfmpeg`
+/// (bundled on Android, on PATH on desktop). On Android [androidFfmpegPath]
+/// is prepended so yt-dlp finds the bundled binary.
+List<String> buildDownloadArgs({
+  required String url,
+  required Format format,
+  required DownloadOptions options,
+  required String outputDir,
+  required String template,
+  String? cookiesPath,
+  bool hasFfmpeg = true,
+  String? androidFfmpegPath,
+}) {
+  final args = <String>[
+    '--newline',
+    '--no-playlist',
+    '--no-mtime',
+    // Resume a partially downloaded .part file instead of starting over.
+    // Enabled by default in yt-dlp, but stated here because the manager
+    // deliberately keeps staging directories around for retries.
+    '--continue',
+    // yt-dlp's defaults are 10/10; spelled out so the intent survives a
+    // future upstream change. --retry-sleep adds a capped linear backoff
+    // (none by default), which matters a lot on flaky mobile networks.
+    '--retries',
+    '10',
+    '--fragment-retries',
+    '10',
+    '--retry-sleep',
+    'linear=1:5:2',
+    '--force-overwrites',
+    '-o',
+    '$outputDir/$template',
+    '-f',
+    format.selector,
+  ];
+  if (cookiesPath != null && cookiesPath.isNotEmpty) {
+    args.addAll(['--cookies', cookiesPath]);
+  }
+
+  // Subtitles: the format sheet already prevents embedding into audio files,
+  // but the builder re-checks so a restored/retried task can never ask for
+  // an impossible embed.
+  final embedSubs = options.embedSubs && format.kind == FormatKind.video;
+  if (options.writeSubs || embedSubs) {
+    args.add('--write-subs');
+    if (options.includeAutoSubs) args.add('--write-auto-subs');
+    args.addAll(['--sub-langs', options.subLangsTarget]);
+  }
+  if (embedSubs) {
+    // MP4/M4A text tracks must be srt (auto captions are vtt-only), and the
+    // conversion is harmless for MKV/WebM. Sidecars keep yt-dlp's default
+    // format so the sidecar path works without ffmpeg.
+    if (hasFfmpeg) args.addAll(['--convert-subs', 'srt']);
+    args.add('--embed-subs');
+  }
+
+  if (options.writeThumb) {
+    args.addAll(['--write-thumbnail', '--convert-thumbnails', 'jpg']);
+  }
+  if (options.embedThumb) {
+    args.addAll(['--embed-thumbnail', '--thumbnail', 'best']);
+  }
+
+  if (androidFfmpegPath != null) {
+    args.insertAll(0, ['--ffmpeg-location', androidFfmpegPath]);
+  }
+  args.add(url);
+  return args;
+}
 
 class YtdlpException implements Exception {
   const YtdlpException(this.message);
@@ -28,6 +102,7 @@ abstract interface class DownloadEngine {
   Future<DownloadProcess> startDownload({
     required String url,
     required Format format,
+    required DownloadOptions options,
     required String outputDir,
     required String template,
     String? cookiesPath,
@@ -234,42 +309,22 @@ class YtdlpService implements DownloadEngine {
   Future<YtdlpProcess> startDownload({
     required String url,
     required Format format,
+    required DownloadOptions options,
     required String outputDir,
     required String template,
     String? cookiesPath,
   }) async {
     final bin = await _binary.ensureRunner();
-    final args = <String>[
-      '--newline',
-      '--no-playlist',
-      '--no-mtime',
-      // Resume a partially downloaded .part file instead of starting over.
-      // Enabled by default in yt-dlp, but stated here because the manager
-      // deliberately keeps staging directories around for retries.
-      '--continue',
-      // yt-dlp's defaults are 10/10; spelled out so the intent survives a
-      // future upstream change. --retry-sleep adds a capped linear backoff
-      // (none by default), which matters a lot on flaky mobile networks.
-      '--retries',
-      '10',
-      '--fragment-retries',
-      '10',
-      '--retry-sleep',
-      'linear=1:5:2',
-      '--force-overwrites',
-      '-o',
-      '$outputDir/$template',
-      '-f',
-      format.selector,
-    ];
-    if (cookiesPath != null && cookiesPath.isNotEmpty) {
-      args.addAll(['--cookies', cookiesPath]);
-    }
-    args.add(url);
     final ffmpeg = await _binary.androidFfmpegLocation();
-    if (ffmpeg != null) {
-      args.insertAll(0, ['--ffmpeg-location', ffmpeg]);
-    }
+    final args = buildDownloadArgs(
+      url: url,
+      format: format,
+      options: options,
+      outputDir: outputDir,
+      template: template,
+      cookiesPath: cookiesPath,
+      androidFfmpegPath: ffmpeg,
+    );
 
     final YtdlpProcess process;
     try {

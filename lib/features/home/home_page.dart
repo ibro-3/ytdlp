@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/models/download_options.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
@@ -84,16 +85,20 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// Opens the format picker, then enqueues whatever the user chose.
   Future<void> _download(VideoInfo video) async {
     final settings = ref.read(settingsControllerProvider);
-    final format = await showFormatPickerSheet(
+    final result = await showFormatPickerSheet(
       context,
       video: video,
       settings: settings,
     );
-    if (format != null && mounted) _enqueue(video, format);
+    if (result != null && mounted) {
+      _enqueue(video, result.format, result.options);
+    }
   }
 
-  void _enqueue(VideoInfo video, Format format) {
-    ref.read(downloadManagerProvider).enqueue(video: video, format: format);
+  void _enqueue(VideoInfo video, Format format, DownloadOptions options) {
+    ref
+        .read(downloadManagerProvider)
+        .enqueue(video: video, format: format, options: options);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(

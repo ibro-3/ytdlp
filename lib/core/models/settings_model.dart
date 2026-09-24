@@ -10,6 +10,11 @@ class AppSettings {
     this.defaultAudioOnly = false,
     this.defaultAudioTier,
     this.notificationsEnabled = true,
+    this.defaultEmbedSubs = false,
+    this.defaultWriteSubs = false,
+    this.defaultIncludeAutoSubs = false,
+    this.defaultEmbedThumb = false,
+    this.defaultWriteThumb = false,
     this.cookiesPath = '',
     this.downloadRoot = '',
   });
@@ -49,6 +54,14 @@ class AppSettings {
   /// `Video/` / `Audio/` subfolder of this root.
   final String downloadRoot;
 
+  /// Defaults seeded into the download sheet. Embed options are only honored
+  /// when ffmpeg is available (bundled on Android, inferred on desktop).
+  final bool defaultEmbedSubs;
+  final bool defaultWriteSubs;
+  final bool defaultIncludeAutoSubs;
+  final bool defaultEmbedThumb;
+  final bool defaultWriteThumb;
+
   Color get seed => Color(seedColor);
 
   String get tierLabel =>
@@ -61,6 +74,11 @@ class AppSettings {
     bool? defaultAudioOnly,
     int? Function()? defaultAudioTier,
     bool? notificationsEnabled,
+    bool? defaultEmbedSubs,
+    bool? defaultWriteSubs,
+    bool? defaultIncludeAutoSubs,
+    bool? defaultEmbedThumb,
+    bool? defaultWriteThumb,
     String? cookiesPath,
     String? downloadRoot,
   }) {
@@ -75,6 +93,12 @@ class AppSettings {
           ? defaultAudioTier()
           : this.defaultAudioTier,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+      defaultEmbedSubs: defaultEmbedSubs ?? this.defaultEmbedSubs,
+      defaultWriteSubs: defaultWriteSubs ?? this.defaultWriteSubs,
+      defaultIncludeAutoSubs:
+          defaultIncludeAutoSubs ?? this.defaultIncludeAutoSubs,
+      defaultEmbedThumb: defaultEmbedThumb ?? this.defaultEmbedThumb,
+      defaultWriteThumb: defaultWriteThumb ?? this.defaultWriteThumb,
       cookiesPath: cookiesPath ?? this.cookiesPath,
       downloadRoot: downloadRoot ?? this.downloadRoot,
     );
@@ -87,6 +111,11 @@ class AppSettings {
     'defaultAudioOnly': defaultAudioOnly,
     'defaultAudioTier': defaultAudioTier,
     'notificationsEnabled': notificationsEnabled,
+    'defaultEmbedSubs': defaultEmbedSubs,
+    'defaultWriteSubs': defaultWriteSubs,
+    'defaultIncludeAutoSubs': defaultIncludeAutoSubs,
+    'defaultEmbedThumb': defaultEmbedThumb,
+    'defaultWriteThumb': defaultWriteThumb,
     'cookiesPath': cookiesPath,
     'downloadRoot': downloadRoot,
   };
@@ -103,6 +132,11 @@ class AppSettings {
       defaultAudioOnly: (m['defaultAudioOnly'] as bool?) ?? false,
       defaultAudioTier: (m['defaultAudioTier'] as num?)?.toInt(),
       notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
+      defaultEmbedSubs: (m['defaultEmbedSubs'] as bool?) ?? false,
+      defaultWriteSubs: (m['defaultWriteSubs'] as bool?) ?? false,
+      defaultIncludeAutoSubs: (m['defaultIncludeAutoSubs'] as bool?) ?? false,
+      defaultEmbedThumb: (m['defaultEmbedThumb'] as bool?) ?? false,
+      defaultWriteThumb: (m['defaultWriteThumb'] as bool?) ?? false,
       cookiesPath: (m['cookiesPath'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
     );

@@ -6,6 +6,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/models/download_options.dart';
 import '../../core/models/download_record.dart';
 import '../../core/models/download_task.dart';
 import '../../core/models/video_info.dart';
@@ -139,6 +140,7 @@ class DownloadManager extends ChangeNotifier {
   DownloadTask enqueue({
     required VideoInfo video,
     required Format format,
+    DownloadOptions options = const DownloadOptions(),
     String? stagingPath,
   }) {
     final task = DownloadTask(
@@ -146,6 +148,7 @@ class DownloadManager extends ChangeNotifier {
       video: video,
       format: format,
       createdAt: DateTime.now(),
+      options: options,
       stagingPath: stagingPath,
     );
     _tasks.insert(0, task);
@@ -197,6 +200,7 @@ class DownloadManager extends ChangeNotifier {
         dl = await ytdlp.startDownload(
           url: task.video.webUrl,
           format: task.format,
+          options: task.options,
           outputDir: staging.path,
           template: _stagingTemplate(task),
           cookiesPath: settings?.settings.cookiesPath,
@@ -238,6 +242,14 @@ class DownloadManager extends ChangeNotifier {
         final err = YtdlpProgressParser.parseError(line);
         if (err != null && task.error == null) {
           task.error = err;
+          _maybeNotifyUi();
+        }
+        // yt-dlp warnings are non-fatal (e.g. "webm doesn't support
+        // embedding a thumbnail, mkv will be used") but worth showing so a
+        // surprising container change or skipped embed is explainable.
+        final warn = YtdlpProgressParser.parseWarning(line);
+        if (warn != null && task.warning == null) {
+          task.warning = warn;
           _maybeNotifyUi();
         }
       }
@@ -353,9 +365,49 @@ class DownloadManager extends ChangeNotifier {
     _maybeNotifyUi();
   }
 
+  /// Extensions that are never the media file itself: subtitle sidecars,
+  /// thumbnails and yt-dlp partials. The final file is only ever picked
+  /// from the remaining extensions so a `[download] Destination:` line for
+  /// a `.vtt` or a lingering `.part` can never be reported as the result.
+  static const Set<String> _nonMediaExtensions = {
+    'srt',
+    'vtt',
+    'ass',
+    'lrc',
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+    'part',
+    'ytdl',
+    'temp',
+    'json',
+  };
+
+  /// Extensions worth keeping next to the media file once it lands in the
+  /// final folder: subtitle sidecars and thumbnails. Deliberately excludes
+  /// partials (`.part`/`.ytdl`/`.temp`) — nothing half-written should ever
+  /// be moved into the library, and the staging cleanup removes them.
+  static const Set<String> _movableArtifactExtensions = {
+    'srt',
+    'vtt',
+    'ass',
+    'lrc',
+    'jpg',
+    'jpeg',
+    'png',
+    'webp',
+  };
+
+  bool _isSidecar(String path, Set<String> extensions) {
+    final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
+    return extensions.contains(ext);
+  }
+
   /// Picks the final file this task produced: the reported destination (or
-  /// merged file) when it is valid, otherwise the newest matching file in
-  /// the staging directory. Never accepts files outside staging.
+  /// merged file) when it is a media file, otherwise the newest matching
+  /// media file in the staging directory. Never accepts files outside
+  /// staging, and never a sidecar or partial.
   Future<String?> _findFinalFile(
     Directory staging,
     DownloadTask task,
@@ -363,6 +415,7 @@ class DownloadManager extends ChangeNotifier {
   ) async {
     if (lastDestination != null &&
         p.isWithin(staging.path, lastDestination) &&
+        !_isSidecar(lastDestination, _nonMediaExtensions) &&
         await _isValidFile(lastDestination)) {
       return lastDestination;
     }
@@ -372,6 +425,7 @@ class DownloadManager extends ChangeNotifier {
       await for (final entity in staging.list()) {
         if (entity is! File) continue;
         if (!entity.path.contains('[${task.video.id}]')) continue;
+        if (_isSidecar(entity.path, _nonMediaExtensions)) continue;
         final stat = await entity.stat();
         if (stat.type != FileSystemEntityType.file || stat.size <= 0) continue;
         if (newest == null || stat.modified.isAfter(newest.modified)) {
@@ -394,8 +448,11 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// Renames [source] into [finalDir] with a unique name, returning the new
-  /// path and its size.
+  /// Moves [source] (the media file) and every sibling artifact in its
+  /// staging directory — subtitle sidecars, thumbnails — into [finalDirPath],
+  /// returning the moved media file and its size. The media rename is
+  /// critical; moving sidecars is best-effort so a stubborn subtitle can
+  /// never fail an otherwise completed download.
   Future<({String path, int size})?> _moveToFinal(
     String source,
     String finalDirPath,
@@ -403,22 +460,44 @@ class DownloadManager extends ChangeNotifier {
     try {
       final dir = Directory(finalDirPath);
       await dir.create(recursive: true);
-      final base = p.basename(source);
-      final dot = base.lastIndexOf('.');
-      final stem = dot > 0 ? base.substring(0, dot) : base;
-      final ext = dot > 0 ? base.substring(dot) : '';
-      var candidate = p.join(finalDirPath, base);
-      var i = 1;
-      while (await File(candidate).exists()) {
-        candidate = p.join(finalDirPath, '$stem ($i)$ext');
-        i++;
-      }
-      await File(source).rename(candidate);
-      final stat = await File(candidate).stat();
-      return (path: candidate, size: stat.size);
+      // Move the media file first; if that fails there is nothing to
+      // complete with.
+      final media = await _moveUnique(source, finalDirPath);
+      final staging = p.dirname(source);
+      try {
+        await for (final entity in Directory(staging).list()) {
+          if (entity is! File || entity.path == source) continue;
+          if (!_isSidecar(entity.path, _movableArtifactExtensions)) continue;
+          try {
+            await _moveUnique(entity.path, finalDirPath);
+          } catch (_) {
+            // Best effort: a sidecar that cannot be moved is left behind for
+            // the staging cleanup to remove.
+          }
+        }
+      } catch (_) {}
+      final stat = await File(media).stat();
+      return (path: media, size: stat.size);
     } catch (_) {
       return null;
     }
+  }
+
+  /// Renames a single file into [finalDirPath] with a unique name (appending
+  /// " (n)" before the extension on collision, like the OS file manager).
+  Future<String> _moveUnique(String source, String finalDirPath) async {
+    final base = p.basename(source);
+    final dot = base.lastIndexOf('.');
+    final stem = dot > 0 ? base.substring(0, dot) : base;
+    final ext = dot > 0 ? base.substring(dot) : '';
+    var candidate = p.join(finalDirPath, base);
+    var i = 1;
+    while (await File(candidate).exists()) {
+      candidate = p.join(finalDirPath, '$stem ($i)$ext');
+      i++;
+    }
+    await File(source).rename(candidate);
+    return candidate;
   }
 
   Future<void> _deleteRecursive(String path) async {
@@ -523,6 +602,7 @@ class DownloadManager extends ChangeNotifier {
     final next = enqueue(
       video: task.video,
       format: task.format,
+      options: task.options,
       stagingPath: task.stagingPath,
     );
     notifyListeners();

@@ -1,3 +1,4 @@
+import 'download_options.dart';
 import 'video_info.dart';
 
 enum DownloadStatus { queued, downloading, completed, failed, canceled }
@@ -8,6 +9,7 @@ class DownloadTask {
     required this.video,
     required this.format,
     required this.createdAt,
+    this.options = const DownloadOptions(),
     this.stagingPath,
   });
 
@@ -15,6 +17,9 @@ class DownloadTask {
   final VideoInfo video;
   final Format format;
   final DateTime createdAt;
+
+  /// Subtitle/thumbnail extras chosen when this download was enqueued.
+  final DownloadOptions options;
 
   DownloadStatus status = DownloadStatus.queued;
   double progress = 0;
@@ -65,6 +70,7 @@ class DownloadTask {
       'tier': format.tier,
       'filesize': format.filesize,
     },
+    'options': options.toMap(),
   };
 
   /// Rebuilds a task from a [toMap] snapshot. Any missing or malformed field
@@ -99,6 +105,9 @@ class DownloadTask {
           selector: (f['selector'] as String?) ?? 'b',
           tier: (f['tier'] as num?)?.toInt(),
           filesize: (f['filesize'] as num?)?.toInt(),
+        ),
+        options: DownloadOptions.fromMap(
+          (m['options'] as Map?)?.cast<String, dynamic>(),
         ),
       )
       ..status = _statusFrom(m['status'] as String?)

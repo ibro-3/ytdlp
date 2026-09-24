@@ -27,21 +27,43 @@ const _audio = Format(
   label: 'M4A · Best audio',
   selector: 'ba[ext=m4a]/ba',
 );
+const _audioMedium = Format(
+  kind: FormatKind.audio,
+  label: 'Medium · M4A · 128kbps',
+  selector: 'ba[ext=m4a][abr<=128]/ba[ext=m4a]',
+  tier: 128,
+);
+const _enSubs = SubtitleTrack(
+  lang: 'en',
+  name: 'English',
+  isAutoOnly: false,
+  exts: ['srt', 'vtt'],
+);
+const _autoDeSubs = SubtitleTrack(
+  lang: 'de',
+  name: 'German',
+  isAutoOnly: true,
+  exts: ['vtt'],
+);
 
 VideoInfo _video({
   List<Format> videoFormats = const [_best, _p720, _p360],
   List<Format> audioFormats = const [_audio],
+  List<SubtitleTrack> subtitleTracks = const [],
+  bool hasFfmpeg = false,
 }) => VideoInfo(
   id: 'abc123',
   title: 'Sample video',
   webUrl: 'https://example.com/watch?v=abc123',
   videoFormats: videoFormats,
   audioFormats: audioFormats,
+  subtitleTracks: subtitleTracks,
+  hasFfmpeg: hasFfmpeg,
 );
 
 /// Holds the sheet's result so tests can assert on it after the sheet closes.
 class _Result {
-  Format? picked;
+  FormatPickerResult? picked;
 }
 
 /// Pumps a button that opens the picker, then opens it.
@@ -110,7 +132,7 @@ void main() {
     expect(_chipSelected(tester, '720p'), isTrue);
 
     await _tapDownload(tester);
-    expect(result.picked?.selector, _p720.selector);
+    expect(result.picked?.format.selector, _p720.selector);
   });
 
   testWidgets('defaultVideoTier null falls back to Best quality', (
@@ -125,7 +147,7 @@ void main() {
     expect(_chipSelected(tester, 'Best quality'), isTrue);
 
     await _tapDownload(tester);
-    expect(result.picked?.selector, _best.selector);
+    expect(result.picked?.format.selector, _best.selector);
   });
 
   testWidgets('tapping a quality chip changes the picked format', (
@@ -142,7 +164,7 @@ void main() {
     expect(_chipSelected(tester, '360p'), isTrue);
 
     await _tapDownload(tester);
-    expect(result.picked?.selector, _p360.selector);
+    expect(result.picked?.format.selector, _p360.selector);
   });
 
   testWidgets('switching to Audio downloads the audio format', (tester) async {
@@ -157,8 +179,8 @@ void main() {
     expect(find.text('Audio quality'), findsOneWidget);
 
     await _tapDownload(tester);
-    expect(result.picked?.kind, FormatKind.audio);
-    expect(result.picked?.selector, _audio.selector);
+    expect(result.picked?.format.kind, FormatKind.audio);
+    expect(result.picked?.format.selector, _audio.selector);
   });
 
   testWidgets('defaultAudioOnly pre-selects Audio', (tester) async {
@@ -215,5 +237,158 @@ void main() {
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
     expect(result.picked, isNull);
+  });
+
+  testWidgets('defaultAudioTier seeds the matching audio row', (tester) async {
+    final result = await _openSheet(
+      tester,
+      video: _video(audioFormats: const [_audio, _audioMedium]),
+      settings: const AppSettings(
+        defaultAudioOnly: true,
+        defaultAudioTier: 128,
+      ),
+    );
+    await _tapDownload(tester);
+    expect(result.picked?.format.selector, _audioMedium.selector);
+  });
+
+  testWidgets('settings seed the subtitle and thumbnail switches', (
+    tester,
+  ) async {
+    await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_enSubs], hasFfmpeg: true),
+      settings: const AppSettings(
+        defaultWriteSubs: true,
+        defaultEmbedSubs: true,
+        defaultIncludeAutoSubs: true,
+        defaultEmbedThumb: true,
+        defaultWriteThumb: true,
+      ),
+    );
+
+    final write = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Save next to the file'),
+    );
+    final embed = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Embed in the file'),
+    );
+    final auto = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Include auto-generated'),
+    );
+    final cover = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Embed as cover art'),
+    );
+    final jpg = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Save .jpg next to the file'),
+    );
+    expect(write.value, isTrue);
+    expect(embed.value, isTrue);
+    expect(embed.onChanged, isNotNull);
+    expect(auto.value, isTrue);
+    expect(cover.value, isTrue);
+    expect(cover.onChanged, isNotNull);
+    expect(jpg.value, isTrue);
+  });
+
+  testWidgets('embed switches are forced off and disabled without ffmpeg', (
+    tester,
+  ) async {
+    await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_enSubs]),
+      settings: const AppSettings(
+        defaultEmbedSubs: true,
+        defaultEmbedThumb: true,
+      ),
+    );
+
+    final embed = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Embed in the file'),
+    );
+    final cover = tester.widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, 'Embed as cover art'),
+    );
+    expect(embed.value, isFalse, reason: 'seeding must not lie');
+    expect(embed.onChanged, isNull, reason: 'no ffmpeg → cannot embed');
+    expect(cover.value, isFalse);
+    expect(cover.onChanged, isNull);
+  });
+
+  testWidgets('audio mode reports embed subs off even if it was toggled', (
+    tester,
+  ) async {
+    final result = await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_enSubs], hasFfmpeg: true),
+    );
+
+    await tester.tap(find.text('Embed in the file'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Audio'));
+    await tester.pumpAndSettle();
+    await _tapDownload(tester);
+
+    expect(result.picked?.format.kind, FormatKind.audio);
+    expect(result.picked?.options.embedSubs, isFalse);
+  });
+
+  testWidgets('picking a language narrows sub-langs; all is the default', (
+    tester,
+  ) async {
+    final result = await _openSheet(
+      tester,
+      video: _video(
+        subtitleTracks: const [_enSubs, _autoDeSubs],
+        hasFfmpeg: true,
+      ),
+    );
+
+    // Subtitles off by default → no language row yet.
+    expect(find.text('All available'), findsNothing);
+
+    await tester.tap(find.text('Save next to the file'));
+    await tester.pumpAndSettle();
+    // Default is "all available": the chip is selected, options say all.
+    await tester.ensureVisible(find.text('All available'));
+    await tester.pumpAndSettle();
+    expect(find.text('All available'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'All available'))
+          .selected,
+      isTrue,
+    );
+
+    await tester.ensureVisible(find.text('English'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('English'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'English'))
+          .selected,
+      isTrue,
+    );
+    expect(
+      tester
+          .widget<FilterChip>(find.widgetWithText(FilterChip, 'All available'))
+          .selected,
+      isFalse,
+    );
+
+    await _tapDownload(tester);
+    expect(result.picked?.options.writeSubs, isTrue);
+    expect(result.picked?.options.subLanguages, ['en']);
+  });
+
+  testWidgets('auto-only languages are visibly marked', (tester) async {
+    await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_autoDeSubs], hasFfmpeg: true),
+    );
+    await tester.tap(find.text('Save next to the file'));
+    await tester.pumpAndSettle();
+    expect(find.text('German (auto)'), findsOneWidget);
   });
 }

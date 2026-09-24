@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:path/path.dart' as p;
 import 'package:ytdlp/core/models/download_task.dart';
+import 'package:ytdlp/core/models/download_options.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
@@ -43,10 +44,22 @@ class _EngineCall {
 
 /// Writes the expected output file into the staging dir so the manager can
 /// validate and move it, mirroring what yt-dlp would do.
+///
+/// With [sidecars] it also writes subtitle/thumbnail/partial files, with the
+/// sidecars newer than the media file (mirroring yt-dlp writing subs first
+/// and thumbnails last). With [destinationIsSidecar] the reported
+/// `Destination:` line points at the subtitle, the trap the real CLI falls
+/// into when subtitles are written before the media.
 class _FakeEngine implements DownloadEngine {
-  _FakeEngine({this.exitCode});
+  _FakeEngine({
+    this.exitCode,
+    this.sidecars = false,
+    this.destinationIsSidecar = false,
+  });
 
   final Future<int>? exitCode;
+  final bool sidecars;
+  final bool destinationIsSidecar;
   final List<_EngineCall> calls = [];
   int started = 0;
 
@@ -54,6 +67,7 @@ class _FakeEngine implements DownloadEngine {
   Future<_FakeProcess> startDownload({
     required String url,
     required Format format,
+    required DownloadOptions options,
     required String outputDir,
     required String template,
     String? cookiesPath,
@@ -62,13 +76,28 @@ class _FakeEngine implements DownloadEngine {
     final file = File(p.join(outputDir, 'Title [abc123].mp4'));
     await file.parent.create(recursive: true);
     await file.writeAsString('video-bytes');
+    final lines = <String>[];
+    String? subPath;
+    if (sidecars) {
+      // Written after the media file so they are NEWER — the old "newest
+      // file matching [id]" heuristic would have picked one of these.
+      subPath = p.join(outputDir, 'Title [abc123].en.srt');
+      await File(subPath)
+          .writeAsString('1\n00:00:00,000 --> 00:00:01,000\nHi\n');
+      final jpg = File(p.join(outputDir, 'Title [abc123].jpg'));
+      await jpg.writeAsString('thumb');
+      await File(p.join(outputDir, 'Title [abc123].mp4.part'))
+          .writeAsString('stale partial');
+    }
+    if (destinationIsSidecar && subPath != null) {
+      lines.add('[download] Destination: $subPath');
+    } else {
+      lines.add('[download] Destination: ${file.path}');
+    }
     final call = _EngineCall(
       url,
       outputDir,
-      _FakeProcess(
-        lines: ['[download] Destination: ${file.path}'],
-        exitCode: exitCode ?? Future<int>.value(0),
-      ),
+      _FakeProcess(lines: lines, exitCode: exitCode ?? Future<int>.value(0)),
     );
     calls.add(call);
     return call.process;
@@ -82,6 +111,7 @@ class _NoFileEngine implements DownloadEngine {
   Future<DownloadProcess> startDownload({
     required String url,
     required Format format,
+    required DownloadOptions options,
     required String outputDir,
     required String template,
     String? cookiesPath,
@@ -101,6 +131,7 @@ class _FailingAfterPartEngine implements DownloadEngine {
   Future<DownloadProcess> startDownload({
     required String url,
     required Format format,
+    required DownloadOptions options,
     required String outputDir,
     required String template,
     String? cookiesPath,
@@ -425,6 +456,63 @@ void main() {
         expect(t.warning, contains('library'));
       },
     );
+
+    test(
+      'sidecar subtitles/thumbnails move with the media file; partials stay',
+      () async {
+        final engine = _FakeEngine(sidecars: true);
+        final m = manager(engine);
+        addTearDown(m.dispose);
+
+        final t = m.enqueue(
+          video: _video('abc123'),
+          format: _video('abc123').videoFormats.first,
+        );
+        await waitUntil(() => t.status == DownloadStatus.completed);
+
+        // All three artifacts land in the final Video/ folder...
+        bool inFinal(String name) =>
+            File(p.join(tempRoot.path, 'Video', name)).existsSync();
+        await waitUntil(() => inFinal('Title [abc123].jpg'));
+        expect(inFinal('Title [abc123].mp4'), isTrue);
+        expect(inFinal('Title [abc123].en.srt'), isTrue);
+        // ...the stale .part does not, and neither does staging itself.
+        expect(inFinal('Title [abc123].mp4.part'), isFalse);
+        expect(
+          Directory(p.join(tempRoot.path, '.ytdlp-staging')).existsSync(),
+          isFalse,
+        );
+        expect(t.filePath, endsWith('Title [abc123].mp4'));
+      },
+    );
+
+    test(
+      'a Destination line pointing at a subtitle never wins over the media',
+      () async {
+        final engine = _FakeEngine(sidecars: true, destinationIsSidecar: true);
+        final m = manager(engine);
+        addTearDown(m.dispose);
+
+        final t = m.enqueue(
+          video: _video('abc123'),
+          format: _video('abc123').videoFormats.first,
+        );
+        await waitUntil(() => t.status == DownloadStatus.completed);
+
+        expect(t.filePath, endsWith('Title [abc123].mp4'));
+        expect(
+          await File(p.join(tempRoot.path, 'Video', 'Title [abc123].mp4'))
+              .exists(),
+          isTrue,
+        );
+        // The sidecar was moved too (destinationIsSidecar wrote one).
+        expect(
+          await File(p.join(tempRoot.path, 'Video', 'Title [abc123].en.srt'))
+              .exists(),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('DownloadManager persistence', () {
@@ -486,6 +574,12 @@ void main() {
                 selector: 'ba[ext=m4a]/ba',
                 filesize: 1234,
               ),
+              options: const DownloadOptions(
+                writeSubs: true,
+                embedThumb: true,
+                includeAutoSubs: true,
+                subLanguages: ['en', 'de'],
+              ),
               createdAt: DateTime(2026, 5, 4, 3, 2, 1),
             )
             ..status = DownloadStatus.failed
@@ -504,6 +598,35 @@ void main() {
       expect(back.error, 'boom');
       expect(back.progress, closeTo(0.42, 0.0001));
       expect(back.createdAt, task.createdAt);
+      expect(back.options.writeSubs, isTrue);
+      expect(back.options.embedThumb, isTrue);
+      expect(back.options.includeAutoSubs, isTrue);
+      expect(back.options.subLanguages, ['en', 'de']);
+    });
+
+    test('DownloadOptions round-trips and tolerates a missing map', () {
+      const opts = DownloadOptions(
+        embedSubs: true,
+        writeSubs: true,
+        includeAutoSubs: true,
+        subLanguages: ['fr', 'en'],
+        embedThumb: true,
+        writeThumb: true,
+      );
+      final back = DownloadOptions.fromMap(opts.toMap());
+      expect(back.embedSubs, isTrue);
+      expect(back.writeSubs, isTrue);
+      expect(back.includeAutoSubs, isTrue);
+      expect(back.subLanguages, ['fr', 'en']);
+      expect(back.embedThumb, isTrue);
+      expect(back.writeThumb, isTrue);
+      expect(back.subLangsTarget, 'fr,en');
+
+      expect(DownloadOptions.fromMap(null).subsEnabled, isFalse);
+      expect(const DownloadOptions().subLangsTarget, 'all');
+
+      const allOff = DownloadOptions();
+      expect(DownloadOptions.fromMap(allOff.toMap()).subsEnabled, isFalse);
     });
 
     test('a corrupt record does not break loading', () async {
