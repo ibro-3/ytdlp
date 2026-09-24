@@ -16,6 +16,51 @@ void main() {
       expect(isValidUrl('ftp://example.com'), isFalse);
       expect(isValidUrl('   '), isFalse);
     });
+
+    group('extractUrl', () {
+      test('returns a bare URL unchanged', () {
+        expect(
+          extractUrl('https://youtu.be/jNQXAC9IVRw'),
+          'https://youtu.be/jNQXAC9IVRw',
+        );
+      });
+
+      test('trims surrounding whitespace', () {
+        expect(
+          extractUrl('  https://example.com/video \n'),
+          'https://example.com/video',
+        );
+      });
+
+      test('pulls a URL out of shared text', () {
+        expect(
+          extractUrl(
+            'check this out https://www.youtube.com/watch?v=abc123 !!!',
+          ),
+          'https://www.youtube.com/watch?v=abc123',
+        );
+      });
+
+      test('handles a URL wrapped in an angle bracket', () {
+        expect(
+          extractUrl('see <https://example.com/v>'),
+          'https://example.com/v',
+        );
+      });
+
+      test('keeps balanced parentheses inside a URL', () {
+        expect(
+          extractUrl('https://en.wikipedia.org/wiki/Foo_(bar)'),
+          'https://en.wikipedia.org/wiki/Foo_(bar)',
+        );
+      });
+
+      test('returns null when there is no URL', () {
+        expect(extractUrl(''), isNull);
+        expect(extractUrl('just some words'), isNull);
+        expect(extractUrl('ftp://example.com/file'), isNull);
+      });
+    });
   });
 
   group('formatters', () {

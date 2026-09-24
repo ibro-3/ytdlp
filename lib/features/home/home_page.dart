@@ -48,6 +48,39 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.read(homeControllerProvider.notifier).fetch(url: raw);
   }
 
+  /// Fills the URL field from the clipboard and fetches immediately.
+  ///
+  /// Shared text often wraps the link in a sentence, so [extractUrl] pulls
+  /// the URL out of whatever shape the clipboard holds.
+  Future<void> _pasteFromClipboard() async {
+    final messenger = ScaffoldMessenger.of(context);
+    String? text;
+    try {
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      text = data?.text;
+    } catch (_) {
+      text = null;
+    }
+    final url = text == null ? null : extractUrl(text);
+    if (url == null) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('No link found in the clipboard')),
+        );
+      return;
+    }
+    if (_urlController.text == url) {
+      // Already pasted — don't re-fetch on every tap.
+      _submit();
+      return;
+    }
+    _urlController
+      ..text = url
+      ..selection = TextSelection.collapsed(offset: url.length);
+    _submit();
+  }
+
   /// Opens the format picker, then enqueues whatever the user chose.
   Future<void> _download(VideoInfo video) async {
     final settings = ref.read(settingsControllerProvider);
@@ -84,6 +117,12 @@ class _HomePageState extends ConsumerState<HomePage> {
 
     return Scaffold(
       appBar: AppBar(title: const Text('Download')),
+      // Shortcut for the common case: you copied a link in another app.
+      floatingActionButton: FloatingActionButton(
+        onPressed: _pasteFromClipboard,
+        tooltip: 'Paste a link from the clipboard',
+        child: const Icon(Icons.content_paste),
+      ),
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
