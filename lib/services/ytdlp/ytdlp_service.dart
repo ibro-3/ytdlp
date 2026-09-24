@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../../core/models/video_info.dart';
 import 'binary_manager.dart';
+import 'bounded_capture.dart';
 
 class YtdlpException implements Exception {
   const YtdlpException(this.message);
@@ -96,24 +97,30 @@ class YtdlpService implements DownloadEngine {
     final r = await _binary.ensureRunner();
     final hasFfmpeg = await _binary.hasFfmpeg();
 
-    final (code, stdout, stderr, timedOut) = await _runCaptured(r, [
+    final run = await _runCaptured(r, [
       '-J',
       '--no-warnings',
       '--no-playlist',
       url,
     ], timeout: _metadataTimeout);
-    if (timedOut) {
+    if (run.timedOut) {
       throw const YtdlpException(
         'Getting video info timed out. The site may be slow — try again.',
       );
     }
-    if (code != 0) {
+    // A payload this large is never a single video. A playlist URL makes
+    // yt-dlp emit the whole collection and still exit 0, which used to
+    // surface as the useless "produced too much output".
+    if (run.stdoutOverflowed) {
+      throw YtdlpException(_oversizeMessage(run));
+    }
+    if (run.code != 0) {
       throw YtdlpException(
-        _extractError(stderr) ?? 'yt-dlp exited with code $code',
+        _extractError(run.stderr) ?? 'yt-dlp exited with code ${run.code}',
       );
     }
     try {
-      final decoded = jsonDecode(stdout);
+      final decoded = jsonDecode(run.stdout);
       if (decoded is! Map<String, dynamic>) {
         throw const YtdlpException('Unexpected yt-dlp response.');
       }
@@ -123,9 +130,27 @@ class YtdlpService implements DownloadEngine {
     }
   }
 
-  /// Runs a command, capturing stdout/stderr and killing the process when it
-  /// exceeds [timeout].
-  Future<(int, String, String, bool)> _runCaptured(
+  /// Explains an oversized metadata response, naming the most likely cause.
+  static String _oversizeMessage(_CapturedRun run) {
+    final size = formatBytesShort(run.stdoutBytes);
+    if (BoundedCapture.looksLikePlaylist(run.stdout) ||
+        run.stderr.toLowerCase().contains('playlist')) {
+      return 'That link is a playlist, and this app downloads one video at a '
+          'time.\nOpen the playlist and copy the link to a single video.';
+    }
+    return 'The site sent a very large response ($size) that the app could '
+        'not read.\nTry a different link, or report it with the site name.';
+  }
+
+  /// Runs a command, capturing output under byte budgets and killing the
+  /// process when it exceeds [timeout] or floods stdout.
+  ///
+  /// The two streams get separate budgets: the JSON payload on stdout is
+  /// allowed to be large (and its head is kept so the caller can tell a
+  /// playlist from a genuinely huge response), while stderr is a diagnostic
+  /// stream whose *tail* is kept. Overflowing stderr never fails an otherwise
+  /// successful command — chatty warnings are not a download error.
+  Future<_CapturedRun> _runCaptured(
     ProcessRunner runner,
     List<String> args, {
     required Duration timeout,
@@ -141,29 +166,16 @@ class YtdlpService implements DownloadEngine {
       throw YtdlpException(_spawnHint(e));
     }
 
-    final out = StringBuffer();
-    final err = StringBuffer();
-    const maxCapture = 8 * 1024 * 1024;
-    bool tooMuchOutput = false;
+    const maxStdout = 16 * 1024 * 1024;
+    const maxStderr = 64 * 1024;
+    final out = BoundedCapture(maxBytes: maxStdout, keep: CaptureKeep.head);
+    final err = BoundedCapture(
+      maxBytes: maxStderr,
+      keep: CaptureKeep.tail,
+      windowChars: 16 * 1024,
+    );
 
-    final outSub = process.stdout.transform(utf8.decoder).listen((chunk) {
-      if (out.length < maxCapture) {
-        out.write(chunk);
-      } else {
-        tooMuchOutput = true;
-      }
-    });
-    final errSub = process.stderr.transform(utf8.decoder).listen((chunk) {
-      if (err.length < maxCapture) {
-        err.write(chunk);
-      } else {
-        tooMuchOutput = true;
-      }
-    });
-
-    var timedOut = false;
-    final timer = Timer(timeout, () {
-      timedOut = true;
+    void kill() {
       try {
         process.kill(ProcessSignal.sigterm);
       } catch (_) {
@@ -171,6 +183,25 @@ class YtdlpService implements DownloadEngine {
           process.kill();
         } catch (_) {}
       }
+    }
+
+    // A payload that blows the budget is never useful to us — stop reading and
+    // stop the process rather than letting it write into the void.
+    var killedForFlood = false;
+    final outSub = process.stdout.transform(lenientDecoder).listen((chunk) {
+      if (!out.add(chunk) && !killedForFlood) {
+        killedForFlood = true;
+        kill();
+      }
+    });
+    final errSub = process.stderr.transform(lenientDecoder).listen((chunk) {
+      err.add(chunk);
+    });
+
+    var timedOut = false;
+    final timer = Timer(timeout, () {
+      timedOut = true;
+      kill();
     });
 
     final code = await process.exitCode;
@@ -178,10 +209,16 @@ class YtdlpService implements DownloadEngine {
     await outSub.cancel();
     await errSub.cancel();
 
-    if (tooMuchOutput && code == 0) {
-      throw const YtdlpException('yt-dlp produced too much output.');
-    }
-    return (code, out.toString(), err.toString(), timedOut);
+    return _CapturedRun(
+      code: code,
+      stdout: out.text,
+      stderr: err.text,
+      timedOut: timedOut,
+      stdoutBytes: out.bytes,
+      stdoutOverflowed: out.overflowed,
+      stderrOverflowed: err.overflowed,
+      killedForFlood: killedForFlood,
+    );
   }
 
   @override
@@ -268,4 +305,33 @@ class YtdlpService implements DownloadEngine {
     final trimmed = text.trim();
     return trimmed.isEmpty ? null : trimmed.split('\n').last.trim();
   }
+}
+
+/// Result of a captured run, with enough context to explain a failure.
+class _CapturedRun {
+  const _CapturedRun({
+    required this.code,
+    required this.stdout,
+    required this.stderr,
+    required this.timedOut,
+    required this.stdoutBytes,
+    required this.stdoutOverflowed,
+    required this.stderrOverflowed,
+    required this.killedForFlood,
+  });
+
+  final int code;
+  final String stdout;
+  final String stderr;
+  final bool timedOut;
+
+  /// Bytes seen on stdout, including any dropped after the budget was hit.
+  final int stdoutBytes;
+
+  final bool stdoutOverflowed;
+
+  /// Only a diagnostic hint: stderr overflow never fails a successful command.
+  final bool stderrOverflowed;
+
+  final bool killedForFlood;
 }

@@ -118,6 +118,15 @@ The app still carries Flutter's placeholder identity — these are release block
 - Release builds are signed with the **debug key** (placeholder in `android/app/build.gradle.kts`). Create a real keystore before publishing anywhere.
 - Distribution: Play Store forbids YouTube downloading — intended for sideload/F-Droid/GitHub.
 
+### Metadata fetch limits
+
+`fetchVideoInfo` runs yt-dlp with a 90s timeout and bounded output capture. The two streams get separate budgets: 16 MB for the JSON payload on stdout (a real single video is ~100 KB), 64 KB for stderr, whose *tail* is kept for diagnostics. When stdout exceeds its budget the process is killed immediately instead of buffering a runaway response, and the app says what happened:
+
+- a **playlist link** — yt-dlp returns the whole collection (tens of MB) and still exits 0, so the app reports "that link is a playlist, this app downloads one video at a time" rather than a generic error;
+- otherwise the site sent a response too large to read, with the actual size.
+
+A chatty stderr never fails a successful fetch, and output is decoded leniently so one malformed byte from a site cannot blank out the metadata.
+
 ## Testing
 
 ```bash
