@@ -10,6 +10,7 @@ void main() {
       expect(s.seedColor, 0xFFD32F2F);
       expect(s.defaultVideoTier, 720);
       expect(s.defaultAudioOnly, isFalse);
+      expect(s.defaultAudioTier, isNull, reason: 'Best audio by default');
       expect(s.notificationsEnabled, isTrue);
       expect(s.downloadRoot, isEmpty);
       expect(s.tierLabel, '720p');
@@ -21,6 +22,7 @@ void main() {
         seedColor: 0xFF1565C0,
         defaultVideoTier: null,
         defaultAudioOnly: true,
+        defaultAudioTier: 128,
         notificationsEnabled: false,
         downloadRoot: '/data/media/0/ytdlp',
       );
@@ -30,8 +32,17 @@ void main() {
       expect(back.defaultVideoTier, isNull);
       expect(back.tierLabel, 'Best');
       expect(back.defaultAudioOnly, isTrue);
+      expect(back.defaultAudioTier, 128);
       expect(back.notificationsEnabled, isFalse);
       expect(back.downloadRoot, '/data/media/0/ytdlp');
+    });
+
+    test('copyWith can clear the audio tier to Best via thunk', () {
+      const s = AppSettings(defaultAudioTier: 192);
+      final cleared = s.copyWith(defaultAudioTier: () => null);
+      expect(cleared.defaultAudioTier, isNull);
+      final kept = s.copyWith();
+      expect(kept.defaultAudioTier, 192);
     });
 
     test('copyWith sets and clears downloadRoot', () {

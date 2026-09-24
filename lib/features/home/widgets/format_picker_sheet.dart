@@ -55,7 +55,7 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
     }
     _mode = mode;
     _videoSel = _hasVideo ? _defaultVideoFormat(widget.video, settings) : null;
-    _audioSel = _hasAudio ? widget.video.audioFormats.first : null;
+    _audioSel = _hasAudio ? _defaultAudioFormat(widget.video, settings) : null;
   }
 
   /// Picks the video format matching the saved default tier, falling back to
@@ -68,6 +68,17 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
       }
     }
     return video.videoFormats.first;
+  }
+
+  /// Picks the audio tier matching the saved default (null = Best audio).
+  static Format _defaultAudioFormat(VideoInfo video, AppSettings settings) {
+    final tier = settings.defaultAudioTier;
+    if (tier != null) {
+      for (final f in video.audioFormats) {
+        if (f.tier == tier) return f;
+      }
+    }
+    return video.audioFormats.first;
   }
 
   @override

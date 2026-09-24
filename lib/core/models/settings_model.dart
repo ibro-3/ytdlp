@@ -8,6 +8,7 @@ class AppSettings {
     this.seedColor = 0xFFD32F2F,
     this.defaultVideoTier = 720,
     this.defaultAudioOnly = false,
+    this.defaultAudioTier,
     this.notificationsEnabled = true,
     this.cookiesPath = '',
     this.downloadRoot = '',
@@ -15,6 +16,9 @@ class AppSettings {
 
   /// Null tier = Best quality.
   static const List<int?> videoTierOptions = [null, 1080, 720, 480, 360];
+
+  /// Audio quality tiers from [VideoInfo.audioTiers]; null = best available.
+  static const List<int?> audioTierOptions = [null, 192, 128, 96];
 
   static const List<(String, int)> seedOptions = [
     ('Red', 0xFFD32F2F),
@@ -29,6 +33,9 @@ class AppSettings {
   final int seedColor;
   final int? defaultVideoTier;
   final bool defaultAudioOnly;
+
+  /// Audio tier matching [AppSettings.audioTierOptions]; null = best.
+  final int? defaultAudioTier;
   final bool notificationsEnabled;
 
   /// Optional Netscape-format `cookies.txt` handed to yt-dlp via `--cookies`.
@@ -52,6 +59,7 @@ class AppSettings {
     int? seedColor,
     int? Function()? defaultVideoTier,
     bool? defaultAudioOnly,
+    int? Function()? defaultAudioTier,
     bool? notificationsEnabled,
     String? cookiesPath,
     String? downloadRoot,
@@ -63,6 +71,9 @@ class AppSettings {
           ? defaultVideoTier()
           : this.defaultVideoTier,
       defaultAudioOnly: defaultAudioOnly ?? this.defaultAudioOnly,
+      defaultAudioTier: defaultAudioTier != null
+          ? defaultAudioTier()
+          : this.defaultAudioTier,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       cookiesPath: cookiesPath ?? this.cookiesPath,
       downloadRoot: downloadRoot ?? this.downloadRoot,
@@ -74,6 +85,7 @@ class AppSettings {
     'seedColor': seedColor,
     'defaultVideoTier': defaultVideoTier,
     'defaultAudioOnly': defaultAudioOnly,
+    'defaultAudioTier': defaultAudioTier,
     'notificationsEnabled': notificationsEnabled,
     'cookiesPath': cookiesPath,
     'downloadRoot': downloadRoot,
@@ -89,6 +101,7 @@ class AppSettings {
       seedColor: (m['seedColor'] as num?)?.toInt() ?? 0xFFD32F2F,
       defaultVideoTier: (m['defaultVideoTier'] as num?)?.toInt(),
       defaultAudioOnly: (m['defaultAudioOnly'] as bool?) ?? false,
+      defaultAudioTier: (m['defaultAudioTier'] as num?)?.toInt(),
       notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
       cookiesPath: (m['cookiesPath'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',

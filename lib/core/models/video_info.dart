@@ -213,43 +213,110 @@ class VideoInfo {
     return 'MKV';
   }
 
-  static List<Format> _buildAudioFormats(List<Map<String, dynamic>> formats) {
-    final audio =
-        formats.where((f) {
-          final v = f['vcodec'] as String?;
-          final a = f['acodec'] as String?;
-          return (v == null || v == 'none') && a != null && a != 'none';
-        }).toList()..sort((a, b) {
-          final c = ((b['tbr'] as num?)?.toDouble() ?? 0).compareTo(
-            (a['tbr'] as num?)?.toDouble() ?? 0,
-          );
-          if (c != 0) return c;
-          final aIsM4a = (a['ext'] == 'm4a') ? 0 : 1;
-          final bIsM4a = (b['ext'] == 'm4a') ? 0 : 1;
-          return aIsM4a.compareTo(bIsM4a);
-        });
+  /// Named quality tiers for audio downloads, best first. [target] is the
+  /// bitrate ceiling in kbps; null means "best available" with no ceiling.
+  static const List<(String, int?)> audioTiers = [
+    ('Best audio', null),
+    ('High', 192),
+    ('Medium', 128),
+    ('Low', 96),
+  ];
 
-    Map<String, dynamic>? bestM4a;
-    for (final f in audio) {
-      if (f['ext'] == 'm4a') {
-        bestM4a = f;
-        break;
-      }
+  static List<Format> _buildAudioFormats(List<Map<String, dynamic>> formats) {
+    final audio = formats.where(_isAudioOnly).toList();
+    if (audio.isEmpty) return const [];
+
+    // Prefer M4A (AAC) for convenience and compatibility, exactly like the
+    // historical single "M4A · Best audio" row. Sites without m4a fall back
+    // to their best audio container (Opus/MP3/…).
+    final m4a = audio.where((f) => f['ext'] == 'm4a').toList();
+    final pool = m4a.isNotEmpty ? m4a : audio;
+    final sorted = _sortAudioBestFirst(pool);
+    final best = sorted.first;
+
+    final rows = <Format>[];
+    final seenIds = <String>{};
+    for (final (name, target) in audioTiers) {
+      final picked = _resolveAudioTier(sorted, best, target);
+      final id = picked['format_id'] as String?;
+      // A tier is only interesting when it delivers a stream we have not
+      // already offered — sites with two distinct bitrates (YouTube) would
+      // otherwise show four rows for the same two files, and a tier whose
+      // fallback reuses an earlier tier's stream would too.
+      if (id != null && !seenIds.add(id)) continue;
+      final size = picked['filesize'] ?? picked['filesize_approx'];
+      final sizeLabel = size is num ? ' · ${formatBytes(size)}' : '';
+      rows.add(
+        Format(
+          kind: FormatKind.audio,
+          label: '${_audioRowLabel(name, picked)}$sizeLabel',
+          selector: _audioSelector(pool, target),
+          tier: target,
+          filesize: size is num ? size.toInt() : null,
+        ),
+      );
     }
-    if (bestM4a == null) {
-      if (audio.isEmpty) return const [];
-      bestM4a = audio.first;
+    return rows;
+  }
+
+  /// The stream a tier's selector would actually pick: the best one at or
+  /// below [target], falling back to the best overall (yt-dlp's `/ba` tail).
+  static Map<String, dynamic> _resolveAudioTier(
+    List<Map<String, dynamic>> sortedBestFirst,
+    Map<String, dynamic> best,
+    int? target,
+  ) {
+    if (target == null) return best;
+    for (final f in sortedBestFirst) {
+      if (_audioBitrate(f) <= target) return f;
     }
-    final fs = bestM4a['filesize'] ?? bestM4a['filesize_approx'];
-    final size = fs is num ? fs : null;
-    final sizeLabel = size == null ? '' : ' · ${formatBytes(size)}';
-    return [
-      Format(
-        kind: FormatKind.audio,
-        label: 'M4A · Best audio$sizeLabel',
-        selector: 'ba[ext=m4a]/ba',
-        filesize: size?.toInt(),
-      ),
-    ];
+    return best;
+  }
+
+  static List<Map<String, dynamic>> _sortAudioBestFirst(
+    List<Map<String, dynamic>> pool,
+  ) => List.of(pool)
+    ..sort((a, b) {
+      final c = _audioBitrate(b).compareTo(_audioBitrate(a));
+      if (c != 0) return c;
+      final aM4a = a['ext'] == 'm4a' ? 0 : 1;
+      final bM4a = b['ext'] == 'm4a' ? 0 : 1;
+      return aM4a.compareTo(bM4a);
+    });
+
+  /// A stream's audio bitrate in kbps (`abr`), falling back to the total
+  /// bitrate for audio-only streams that report only `tbr`.
+  static double _audioBitrate(Map<String, dynamic> f) =>
+      (f['abr'] as num?)?.toDouble() ?? (f['tbr'] as num?)?.toDouble() ?? 0;
+
+  static bool _isAudioOnly(Map<String, dynamic> f) {
+    final v = f['vcodec'] as String?;
+    final a = f['acodec'] as String?;
+    return (v == null || v == 'none') && a != null && a != 'none';
+  }
+
+  static String _audioRowLabel(String tierName, Map<String, dynamic> picked) {
+    final abr = _audioBitrate(picked).round();
+    final ext = picked['ext'] as String? ?? 'audio';
+    final extLabel = switch (ext) {
+      'm4a' => 'M4A',
+      'webm' => 'WebM',
+      'opus' => 'Opus',
+      'ogg' => 'OGG',
+      'mp3' => 'MP3',
+      'aac' => 'AAC',
+      _ => ext.toUpperCase(),
+    };
+    return '$tierName · $extLabel · ${abr}kbps';
+  }
+
+  /// Selector for a tier, preferring m4a when the site offers it so the
+  /// fallback behaves the same as the historical `ba[ext=m4a]/ba` row.
+  static String _audioSelector(List<Map<String, dynamic>> pool, int? target) {
+    final isM4a = pool.any((f) => f['ext'] == 'm4a');
+    if (target == null) return isM4a ? 'ba[ext=m4a]/ba' : 'ba/b';
+    return isM4a
+        ? 'ba[ext=m4a][abr<=$target]/ba[ext=m4a]'
+        : 'ba[abr<=$target]/ba';
   }
 }

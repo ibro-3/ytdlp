@@ -32,6 +32,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _patch(AppSettings next) =>
       ref.read(settingsControllerProvider.notifier).patch(next);
 
+  static String _audioTierLabel(int? t) => switch (t) {
+    null => 'Best audio',
+    192 => 'High',
+    128 => 'Medium',
+    96 => 'Low',
+    _ => '$t',
+  };
+
   Future<void> _loadVersion() async {
     setState(() {
       _versionLoading = true;
@@ -340,6 +348,26 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               selected: settings.defaultVideoTier == t,
                               onSelected: (_) => _patch(
                                 settings.copyWith(defaultVideoTier: () => t),
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Default audio quality',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          for (final t in AppSettings.audioTierOptions)
+                            ChoiceChip(
+                              label: Text(_audioTierLabel(t)),
+                              selected: settings.defaultAudioTier == t,
+                              onSelected: (_) => _patch(
+                                settings.copyWith(defaultAudioTier: () => t),
                               ),
                             ),
                         ],

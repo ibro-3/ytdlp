@@ -9,6 +9,7 @@ Map<String, dynamic> _fmt(
   int? height,
   int? filesize,
   double? tbr,
+  double? abr,
 }) => {
   'format_id': id,
   'ext': ext,
@@ -17,6 +18,7 @@ Map<String, dynamic> _fmt(
   'height': ?height,
   'filesize': ?filesize,
   'tbr': ?tbr,
+  'abr': ?abr,
 };
 
 Map<String, dynamic> _ytJson(List<Map<String, dynamic>> formats) => {
@@ -185,6 +187,85 @@ void main() {
       // Merging is impossible — no single-file stream, no video options.
       expect(info.videoFormats, isEmpty);
       expect(info.audioFormats, hasLength(1));
+    });
+
+    test('audio: one row per distinct tier the site actually offers', () {
+      final info = VideoInfo.fromYtdlpJson(
+        _ytJson([
+          for (final (i, b) in [320, 192, 160, 128, 96].indexed)
+            _fmt(
+              'a$i',
+              vcodec: 'none',
+              acodec: 'mp4a',
+              ext: 'm4a',
+              abr: b.toDouble(),
+            ),
+        ]),
+        hasFfmpeg: false,
+      );
+
+      final rows = info.audioFormats;
+      expect(rows.map((f) => f.label).toList(), [
+        'Best audio · M4A · 320kbps',
+        'High · M4A · 192kbps',
+        'Medium · M4A · 128kbps',
+        'Low · M4A · 96kbps',
+      ]);
+      expect(rows[0].selector, 'ba[ext=m4a]/ba');
+      expect(rows[1].selector, 'ba[ext=m4a][abr<=192]/ba[ext=m4a]');
+      expect(rows[2].tier, 128);
+    });
+
+    test('audio: tiers that deliver the same stream are hidden (YouTube)', () {
+      // YouTube m4a only has two distinct bitrates — four named tiers must
+      // collapse to two honest rows instead of duplicating the same files.
+      final info = VideoInfo.fromYtdlpJson(
+        _ytJson([
+          _fmt(
+            'a1',
+            vcodec: 'none',
+            acodec: 'mp4a',
+            ext: 'm4a',
+            abr: 130,
+            filesize: 309288,
+          ),
+          _fmt(
+            'a0',
+            vcodec: 'none',
+            acodec: 'mp4a',
+            ext: 'm4a',
+            abr: 49,
+            filesize: 117495,
+          ),
+        ]),
+        hasFfmpeg: false,
+      );
+
+      final rows = info.audioFormats;
+      expect(rows.map((f) => f.label).toList(), [
+        'Best audio · M4A · 130kbps · 302.0 KB',
+        'Medium · M4A · 49kbps · 114.7 KB',
+      ]);
+      expect(rows[1].selector, 'ba[ext=m4a][abr<=128]/ba[ext=m4a]');
+    });
+
+    test('audio: falls back to the site container when there is no m4a', () {
+      final info = VideoInfo.fromYtdlpJson(
+        _ytJson([
+          _fmt('w1', vcodec: 'none', acodec: 'opus', ext: 'webm', abr: 200),
+          _fmt('w0', vcodec: 'none', acodec: 'opus', ext: 'webm', abr: 100),
+        ]),
+        hasFfmpeg: false,
+      );
+
+      final rows = info.audioFormats;
+      // Best→200, High→100 (≤192), Medium→100 (dup), Low→fallback 200 (dup).
+      expect(rows.map((f) => f.label).toList(), [
+        'Best audio · WebM · 200kbps',
+        'High · WebM · 100kbps',
+      ]);
+      expect(rows[0].selector, 'ba/b');
+      expect(rows[1].selector, 'ba[abr<=192]/ba');
     });
   });
 }
