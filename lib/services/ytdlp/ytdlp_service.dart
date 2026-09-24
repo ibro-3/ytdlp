@@ -5,6 +5,7 @@ import 'dart:io';
 import '../../core/models/video_info.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
+import 'json_payload.dart';
 
 class YtdlpException implements Exception {
   const YtdlpException(this.message);
@@ -120,13 +121,21 @@ class YtdlpService implements DownloadEngine {
       );
     }
     try {
-      final decoded = jsonDecode(run.stdout);
+      final decoded = decodeYtdlpPayload(run.stdout);
+      if (decoded == null) {
+        throw YtdlpException(jsonFailureMessage(run.stdout));
+      }
       if (decoded is! Map<String, dynamic>) {
         throw const YtdlpException('Unexpected yt-dlp response.');
       }
       return VideoInfo.fromYtdlpJson(decoded, hasFfmpeg: hasFfmpeg);
     } on FormatException {
-      throw const YtdlpException('yt-dlp returned invalid JSON.');
+      // Only reachable from fromYtdlpJson's parsing; a decode failure is
+      // already turned into an actionable message above.
+      throw const YtdlpException(
+        'yt-dlp sent video details the app could not understand.\n'
+        'Try updating yt-dlp in Settings.',
+      );
     }
   }
 

@@ -120,12 +120,12 @@ The app still carries Flutter's placeholder identity — these are release block
 
 ### Metadata fetch limits
 
-`fetchVideoInfo` runs yt-dlp with a 90s timeout and bounded output capture. The two streams get separate budgets: 16 MB for the JSON payload on stdout (a real single video is ~100 KB), 64 KB for stderr, whose *tail* is kept for diagnostics. When stdout exceeds its budget the process is killed immediately instead of buffering a runaway response, and the app says what happened:
+`fetchVideoInfo` runs yt-dlp with a 90s timeout and bounded output capture. The two streams get separate budgets: 16 MB for the JSON payload on stdout (a real single video is ~100 KB), 64 KB for stderr, whose *tail* is kept for diagnostics. The stdout payload is retained **in full** up to its budget — it is what gets parsed, so it is never window-truncated. When stdout exceeds its budget the process is killed immediately instead of buffering a runaway response, and the app says what happened:
 
 - a **playlist link** — yt-dlp returns the whole collection (tens of MB) and still exits 0, so the app reports "that link is a playlist, this app downloads one video at a time" rather than a generic error;
 - otherwise the site sent a response too large to read, with the actual size.
 
-A chatty stderr never fails a successful fetch, and output is decoded leniently so one malformed byte from a site cannot blank out the metadata.
+A chatty stderr never fails a successful fetch, and output is decoded leniently so one malformed byte from a site cannot blank out the metadata. If a payload still cannot be read, the app shows what the response actually began with (and tolerates a short non-JSON preamble the bundled runtime may print to stdout) instead of a bare "invalid JSON".
 
 ## Testing
 

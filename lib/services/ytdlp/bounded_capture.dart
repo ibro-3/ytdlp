@@ -6,10 +6,14 @@ enum CaptureKeep { head, tail }
 /// Accumulates process output up to a byte budget without letting a runaway
 /// process exhaust memory.
 ///
-/// What is retained is deliberately small and bounded: the *head* (to tell
-/// what kind of payload arrived) or the *tail* (where a traceback ends). The
-/// byte count keeps rising past the budget so callers can detect a flood, but
-/// the retained text never does.
+/// Why the two modes exist:
+/// - *head* keeps everything written while under the budget, because that
+///   payload is what the caller must parse — truncating it would corrupt a
+///   good response. Memory is bounded by [maxBytes] because the caller stops
+///   the process (see the `false` return) as soon as the budget is crossed.
+/// - *tail* keeps only the last [windowChars] characters, so a chatty stderr
+///   stays cheap even while the byte count runs away (the count keeps rising
+///   so the caller can still detect a flood).
 class BoundedCapture {
   BoundedCapture({
     required this.maxBytes,
@@ -23,19 +27,20 @@ class BoundedCapture {
   /// Which end to retain.
   final CaptureKeep keep;
 
-  /// Maximum characters retained: the head prefix, or the tail window.
+  /// Maximum characters retained in tail mode.
   final int windowChars;
 
   int _seen = 0;
   bool _overflowed = false;
   String _buf = '';
 
-  /// Bytes seen on the stream, including those dropped after the budget.
+  /// Characters seen on the stream, including those dropped after the budget.
   int get bytes => _seen;
 
   bool get overflowed => _overflowed;
 
-  /// The retained head or tail. Bounded by [windowChars].
+  /// The retained text: the full payload in head mode (up to [maxBytes]), or
+  /// the last [windowChars] characters in tail mode.
   String get text => _buf;
 
   /// Feeds a chunk. Returns false once the budget is exhausted, so a caller
@@ -43,20 +48,27 @@ class BoundedCapture {
   bool add(String chunk) {
     if (chunk.isEmpty) return !_overflowed;
     _seen += chunk.length;
-    if (_seen > maxBytes) _overflowed = true;
-
-    if (keep == CaptureKeep.head) {
-      if (_buf.length < windowChars) {
-        final room = windowChars - _buf.length;
-        _buf += room >= chunk.length ? chunk : chunk.substring(0, room);
-      }
-    } else {
-      _buf += chunk;
-      if (_buf.length > windowChars) {
-        _buf = _buf.substring(_buf.length - windowChars);
-      }
+    if (_seen > maxBytes) {
+      _overflowed = true;
+      // Head mode: stop retaining here — the payload past the budget would
+      // only be dropped after the caller kills the process anyway.
+      if (keep == CaptureKeep.head) return false;
+      _slide(chunk);
+      return false;
     }
-    return !_overflowed;
+    if (keep == CaptureKeep.head) {
+      _buf += chunk;
+    } else {
+      _slide(chunk);
+    }
+    return true;
+  }
+
+  void _slide(String chunk) {
+    _buf += chunk;
+    if (_buf.length > windowChars) {
+      _buf = _buf.substring(_buf.length - windowChars);
+    }
   }
 
   /// Whether [text] looks like a yt-dlp playlist payload.

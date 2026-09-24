@@ -15,7 +15,7 @@ void main() {
     });
 
     test('reports overflow while keeping the beginning of the stream', () {
-      final c = BoundedCapture(maxBytes: 10, windowChars: 32);
+      final c = BoundedCapture(maxBytes: 10);
       expect(c.add('0123456789'), isTrue, reason: 'exactly at the budget');
       expect(
         c.add('MORE-DATA'),
@@ -26,19 +26,28 @@ void main() {
       expect(c.bytes, 19, reason: 'counts what was seen, not what was kept');
       expect(
         c.text,
-        startsWith('0123456789'),
-        reason: 'the retained head is still a prefix of the stream',
+        '0123456789',
+        reason: 'head stops retaining at the budget',
       );
     });
 
-    test('bounds the retained head for a flood of chunks', () {
-      final c = BoundedCapture(maxBytes: 8, windowChars: 4);
+    test('head mode retains the full payload, not just windowChars', () {
+      // The retained stdout is the payload the caller parses, so it must not
+      // be truncated by the tail-window size. This is the regression that
+      // turned a ~91 KB YouTube fetch into "invalid JSON" (cut at 64 KB).
+      final c = BoundedCapture(maxBytes: 200 * 1024, windowChars: 64);
+      expect(c.add('x' * 100 * 1024), isTrue);
+      expect(c.overflowed, isFalse);
+      expect(c.text.length, 100 * 1024);
+    });
+
+    test('head mode stops retaining once the budget is crossed', () {
+      final c = BoundedCapture(maxBytes: 8);
       c.add('aaaa');
       c.add('bbbb');
-      c.add('cccc');
-      c.add('dddd');
+      expect(c.add('cccc'), isFalse);
       expect(c.overflowed, isTrue);
-      expect(c.text.length, lessThanOrEqualTo(4));
+      expect(c.text, 'aaaabbbb');
     });
   });
 
