@@ -160,12 +160,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                     ),
                   ],
                 ] else
-                  _EmptyHint(
-                    onExampleTap: (url) {
-                      _urlController.text = url;
-                      _submit();
-                    },
-                  ),
+                  const _EmptyHint(),
               ],
             ),
           ),
@@ -338,8 +333,7 @@ class _ErrorCard extends StatelessWidget {
 }
 
 class _EmptyHint extends StatelessWidget {
-  const _EmptyHint({required this.onExampleTap});
-  final ValueChanged<String> onExampleTap;
+  const _EmptyHint();
 
   @override
   Widget build(BuildContext context) {
@@ -364,19 +358,6 @@ class _EmptyHint extends StatelessWidget {
               'Supports 1000+ sites via yt-dlp.',
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              children: [
-                ActionChip(
-                  label: const Text('Try a sample URL'),
-                  avatar: const Icon(Icons.play_circle_outline, size: 18),
-                  onPressed: () => onExampleTap(
-                    'https://www.youtube.com/watch?v=jNQXAC9IVRw',
-                  ),
-                ),
-              ],
             ),
           ],
         ),

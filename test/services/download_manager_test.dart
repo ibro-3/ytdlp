@@ -183,6 +183,13 @@ void main() {
               .existsSync(),
           isTrue,
         );
+        // A task flips to `completed` just before its `finally` block removes
+        // staging, so wait for the directory to actually go away rather than
+        // assuming the cleanup already ran when the status changed.
+        await waitUntil(
+          () =>
+              !Directory(p.join(tempRoot.path, '.ytdlp-staging')).existsSync(),
+        );
         expect(
           Directory(p.join(tempRoot.path, '.ytdlp-staging')).existsSync(),
           isFalse,
