@@ -8,6 +8,7 @@ import 'package:ytdlp/core/models/download_task.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
+import 'package:ytdlp/services/downloads/queue_store.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
 /// A fake yt-dlp process for deterministic manager tests.
@@ -424,5 +425,97 @@ void main() {
         expect(t.warning, contains('library'));
       },
     );
+  });
+
+  group('DownloadManager persistence', () {
+    test(
+      'restores an interrupted task as failed and keeps it resumable',
+      () async {
+        final store = QueueStore(historyBox);
+        final live = Directory(
+          p.join(tempRoot.path, '.ytdlp-staging', 'live-task'),
+        )..createSync(recursive: true);
+        File(p.join(live.path, 'Title [abc123].mp4.part'))
+            .writeAsStringSync('part');
+        final orphan = Directory(
+          p.join(tempRoot.path, '.ytdlp-staging', 'orphan'),
+        )..createSync(recursive: true);
+
+        // A task that was mid-download when the process died, plus an orphan
+        // staging directory no task refers to.
+        final video = _video('abc123');
+        final interrupted = DownloadTask(
+          id: 'live-task',
+          video: video,
+          format: video.videoFormats.first,
+          createdAt: DateTime(2026, 1, 1),
+          stagingPath: live.path,
+        )..status = DownloadStatus.downloading;
+        await store.save([interrupted]);
+
+        final engine = _FakeEngine();
+        final m = DownloadManager(
+          ytdlp: engine,
+          history: history,
+          downloadsDir: () async => tempRoot,
+          queueStore: store,
+        );
+        addTearDown(m.dispose);
+
+        await waitUntil(() => m.tasks.isNotEmpty && !orphan.existsSync());
+        final restored = m.tasks.single;
+        expect(restored.id, 'live-task');
+        expect(restored.status, DownloadStatus.failed);
+        expect(restored.error, contains('Interrupted'));
+        expect(restored.stagingPath, live.path);
+        expect(live.existsSync(), isTrue, reason: 'partial download preserved');
+        expect(engine.started, 0, reason: 'restored tasks do not auto-start');
+      },
+    );
+
+    test('a persisted task round-trips its fields', () async {
+      final store = QueueStore(historyBox);
+      final video = _video('abc123');
+      final task =
+          DownloadTask(
+              id: 'snap',
+              video: video,
+              format: const Format(
+                kind: FormatKind.audio,
+                label: 'M4A · Best audio',
+                selector: 'ba[ext=m4a]/ba',
+                filesize: 1234,
+              ),
+              createdAt: DateTime(2026, 5, 4, 3, 2, 1),
+            )
+            ..status = DownloadStatus.failed
+            ..error = 'boom'
+            ..progress = 0.42;
+      await store.save([task]);
+
+      final back = store.load().single;
+      expect(back.id, 'snap');
+      expect(back.video.title, video.title);
+      expect(back.video.webUrl, video.webUrl);
+      expect(back.format.kind, FormatKind.audio);
+      expect(back.format.selector, 'ba[ext=m4a]/ba');
+      expect(back.format.filesize, 1234);
+      expect(back.status, DownloadStatus.failed);
+      expect(back.error, 'boom');
+      expect(back.progress, closeTo(0.42, 0.0001));
+      expect(back.createdAt, task.createdAt);
+    });
+
+    test('a corrupt record does not break loading', () async {
+      final store = QueueStore(historyBox);
+      await historyBox.put('queue', [
+        'not a map',
+        {'id': 'ok'},
+        {'id': ''},
+      ]);
+      final loaded = store.load();
+      expect(loaded, hasLength(1));
+      expect(loaded.single.id, 'ok');
+    });
   });
 }

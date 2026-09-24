@@ -15,6 +15,7 @@ import '../ytdlp/progress_parser.dart';
 import '../ytdlp/ytdlp_service.dart';
 import 'download_layout.dart';
 import 'history_service.dart';
+import 'queue_store.dart';
 
 /// Runs a bounded queue of downloads with deterministic cancellation.
 ///
@@ -29,20 +30,26 @@ class DownloadManager extends ChangeNotifier {
     required this.downloadsDir,
     this.settings,
     this.notifications,
+    this.queueStore,
     this.maxConcurrency = 1,
-  });
+  }) {
+    if (queueStore != null) unawaited(_restore());
+  }
 
   final DownloadEngine ytdlp;
   final HistoryService history;
   final Future<Directory> Function() downloadsDir;
   final SettingsService? settings;
   final NotificationService? notifications;
+  final QueueStore? queueStore;
   final int maxConcurrency;
 
   final List<DownloadTask> _tasks = [];
   final Map<String, DownloadProcess> _processes = {};
 
   DateTime _lastUiNotify = DateTime.fromMillisecondsSinceEpoch(0);
+  Timer? _persistDebounce;
+  bool _restoring = false;
 
   /// Per-task throttle state for progress notifications (≤ 1 per 2s, and
   /// only when the percentage actually changed).
@@ -57,6 +64,73 @@ class DownloadManager extends ChangeNotifier {
   /// Tasks waiting for a free slot.
   int get queuedCount =>
       _tasks.where((t) => t.status == DownloadStatus.queued).length;
+
+  /// Restores the persisted queue after a restart.
+  ///
+  /// Work that was in flight is surfaced as `failed` (its process died with
+  /// the app) but keeps its staging directory, so one tap on Retry continues
+  /// the partial download. Staging directories no task refers to are deleted
+  /// so an interrupted run cannot leak gigabytes forever.
+  Future<void> _restore() async {
+    final store = queueStore;
+    if (store == null) return;
+    _restoring = true;
+    try {
+      final restored = store.load();
+      for (final task in restored) {
+        if (task.status == DownloadStatus.queued ||
+            task.status == DownloadStatus.downloading) {
+          task.status = DownloadStatus.failed;
+          task.error =
+              'Interrupted when the app closed — tap Retry to continue.';
+        }
+        _tasks.add(task);
+      }
+      _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      await _cleanOrphanStaging(restored.map((t) => t.stagingPath).toSet());
+      notifyListeners();
+    } catch (_) {
+      // A broken store must never prevent the app from starting.
+    } finally {
+      _restoring = false;
+    }
+  }
+
+  /// Deletes staging directories under the download root that no task
+  /// references.
+  Future<void> _cleanOrphanStaging(Set<String?> keep) async {
+    try {
+      final root = await _downloadRoot();
+      final stagingRoot = Directory(p.join(root, '.ytdlp-staging'));
+      if (!await stagingRoot.exists()) return;
+      final live = keep.whereType<String>().map(p.normalize).toSet();
+      await for (final entity in stagingRoot.list()) {
+        if (entity is! Directory) continue;
+        if (live.contains(p.normalize(entity.path))) continue;
+        await _deleteRecursive(entity.path);
+      }
+      if (await stagingRoot.list().isEmpty) await stagingRoot.delete();
+    } catch (_) {}
+  }
+
+  /// Persists the queue, debounced so progress updates don't hammer storage.
+  void _schedulePersist() {
+    if (_restoring || queueStore == null) return;
+    _persistDebounce?.cancel();
+    _persistDebounce = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_persist());
+    });
+  }
+
+  Future<void> _persist() async {
+    final store = queueStore;
+    if (store == null) return;
+    try {
+      await store.save(_tasks);
+    } catch (_) {
+      // Persistence is best-effort; a download must not fail because of it.
+    }
+  }
 
   /// Enqueues a download. Returns the created task.
   ///
@@ -357,6 +431,7 @@ class DownloadManager extends ChangeNotifier {
   /// UI-driven throttling: task fields update on every stream line, but
   /// widgets are rebuilt at most ~10×/second.
   void _maybeNotifyUi() {
+    _schedulePersist();
     final now = DateTime.now();
     if (now.difference(_lastUiNotify).inMilliseconds >= 100) {
       _lastUiNotify = now;
@@ -524,6 +599,7 @@ class DownloadManager extends ChangeNotifier {
 
   @override
   void dispose() {
+    _persistDebounce?.cancel();
     for (final dl in _processes.values) {
       try {
         dl.cancel();

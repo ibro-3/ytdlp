@@ -11,6 +11,7 @@ Future<void> main() async {
   await Hive.initFlutter();
   final historyBox = await Hive.openBox<dynamic>('history');
   final settingsBox = await Hive.openBox<dynamic>('settings');
+  final queueBox = await Hive.openBox<dynamic>('queue');
   final notifications = NotificationService();
   await notifications.init();
   runApp(
@@ -18,6 +19,7 @@ Future<void> main() async {
       overrides: [
         historyBoxProvider.overrideWithValue(historyBox),
         settingsBoxProvider.overrideWithValue(settingsBox),
+        queueBoxProvider.overrideWithValue(queueBox),
         notificationServiceProvider.overrideWithValue(notifications),
       ],
       child: const App(),

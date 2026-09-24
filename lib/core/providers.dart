@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../services/downloads/download_manager.dart';
 import '../services/downloads/history_service.dart';
+import '../services/downloads/queue_store.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/settings/settings_service.dart';
 import '../services/ytdlp/binary_manager.dart';
@@ -19,6 +20,15 @@ final historyBoxProvider = Provider<Box<dynamic>>((ref) {
 final settingsBoxProvider = Provider<Box<dynamic>>((ref) {
   throw UnimplementedError('settingsBoxProvider must be overridden in main()');
 });
+
+/// Queue snapshots, so a killed app doesn't lose in-flight downloads.
+final queueBoxProvider = Provider<Box<dynamic>>((ref) {
+  throw UnimplementedError('queueBoxProvider must be overridden in main()');
+});
+
+final queueStoreProvider = Provider<QueueStore>(
+  (ref) => QueueStore(ref.watch(queueBoxProvider)),
+);
 
 final historyServiceProvider = Provider<HistoryService>((ref) {
   final box = ref.watch(historyBoxProvider);
@@ -80,6 +90,7 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
     downloadsDir: ref.watch(downloadsDirProvider),
     settings: ref.watch(settingsServiceProvider),
     notifications: ref.watch(notificationServiceProvider),
+    queueStore: ref.watch(queueStoreProvider),
     maxConcurrency: maxConcurrency,
   );
   ref.onDispose(manager.dispose);
