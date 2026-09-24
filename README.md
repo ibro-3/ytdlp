@@ -6,7 +6,7 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 
 ## Features
 
-- **Download tab** — M3 `SearchBar` URL input (paste/clear), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), format picker (`SegmentedButton` Video/Audio + `ChoiceChip` qualities), `FilledButton` download. Honors Settings defaults; with "Ask quality each time" shows a bottom-sheet picker before every download.
+- **Download tab** — M3 `SearchBar` URL input (paste/clear), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. The sheet is seeded from the Settings defaults ("Default video quality" / "Audio only by default") on every open.
 - **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. One download runs at a time on mobile, two in parallel on desktop. Posts Android progress/completion notifications (foreground-only in v1).
 - **Library tab** — Hive-backed history, file existence check, open (`open_filex`), share (`share_plus`), clear.
 - **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality / audio-only / ask-each-time, **download folder** (default Downloads, or any writable folder picked in Settings; videos → `Video/`, audio → `Audio/`), yt-dlp version + in-place update (system `yt-dlp -U`, or re-download of the app copy; Android needs a bionic build URL), notification toggle + test.

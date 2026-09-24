@@ -3,11 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
 import 'home_controller.dart';
+import 'widgets/format_picker_sheet.dart';
 import 'widgets/video_info_card.dart';
 
 class HomePage extends ConsumerStatefulWidget {
@@ -20,63 +20,6 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   final TextEditingController _urlController = TextEditingController();
   String? _lastUrl;
-  String? _lastVideoId;
-
-  FormatKind _mode = FormatKind.video;
-  Format? _selectedVideo;
-  Format? _selectedAudio;
-  String? _autoPickedFor;
-
-  @override
-  void initState() {
-    super.initState();
-    // React to new video metadata in a listener, not from inside `build`.
-    ref.listenManual(homeControllerProvider, (prev, next) {
-      if (next.isLoading) return;
-      final video = next.video;
-      if (video != null) _syncSelections(video);
-    });
-  }
-
-  /// Resets picks when a different video arrives, then auto-picks defaults
-  /// exactly once per video (one-shot; skipped when both format lists are
-  /// intentionally empty).
-  void _syncSelections(VideoInfo video) {
-    if (video.id != _lastVideoId) {
-      _lastVideoId = video.id;
-      _selectedVideo = null;
-      _selectedAudio = null;
-      _autoPickedFor = null;
-    }
-    if (_autoPickedFor == video.id) return;
-    if (video.videoFormats.isEmpty && video.audioFormats.isEmpty) return;
-    _autoPickedFor = video.id;
-    final defaults = ref.read(settingsControllerProvider);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      // The video may have changed while the frame was pending.
-      final current = ref.read(homeControllerProvider).video;
-      if (current == null || current.id != video.id) return;
-      setState(() {
-        // If there are no downloadable video streams (e.g. no ffmpeg to
-        // merge split streams), land on the Audio tab instead of an empty
-        // Quality section.
-        _mode =
-            defaults.defaultAudioOnly ||
-                (video.videoFormats.isEmpty && video.audioFormats.isNotEmpty)
-            ? FormatKind.audio
-            : FormatKind.video;
-        final vPick = _defaultFormat(
-          video,
-          defaults.copyWith(defaultAudioOnly: false),
-        );
-        if (vPick?.kind == FormatKind.video) {
-          _selectedVideo ??= vPick;
-        }
-        _selectedAudio ??= video.audioFormats.firstOrNull;
-      });
-    });
-  }
 
   void _retry() {
     final url = _lastUrl;
@@ -105,40 +48,15 @@ class _HomePageState extends ConsumerState<HomePage> {
     ref.read(homeControllerProvider.notifier).fetch(url: raw);
   }
 
-  void _download(VideoInfo video) {
+  /// Opens the format picker, then enqueues whatever the user chose.
+  Future<void> _download(VideoInfo video) async {
     final settings = ref.read(settingsControllerProvider);
-    if (settings.askQualityEachTime) {
-      _showQualitySheet(video, settings);
-      return;
-    }
-    final format = _defaultFormat(video, settings);
-    if (format == null) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('No matching format for this video')),
-        );
-      return;
-    }
-    _enqueue(video, format);
-  }
-
-  /// Picks the download format from saved defaults (tier + audio-only).
-  Format? _defaultFormat(VideoInfo video, AppSettings settings) {
-    if (settings.defaultAudioOnly) {
-      if (video.audioFormats.isNotEmpty) return video.audioFormats.first;
-    }
-    final tier = settings.defaultVideoTier;
-    if (tier == null) {
-      if (video.videoFormats.isNotEmpty) return video.videoFormats.first;
-    } else {
-      for (final f in video.videoFormats) {
-        if (f.tier == tier) return f;
-      }
-      // Requested tier above the source max → fall back to Best.
-      if (video.videoFormats.isNotEmpty) return video.videoFormats.first;
-    }
-    return video.audioFormats.firstOrNull;
+    final format = await showFormatPickerSheet(
+      context,
+      video: video,
+      settings: settings,
+    );
+    if (format != null && mounted) _enqueue(video, format);
   }
 
   void _enqueue(VideoInfo video, Format format) {
@@ -156,106 +74,13 @@ class _HomePageState extends ConsumerState<HomePage> {
       );
   }
 
-  /// Bottom-sheet quality picker shown when `askQualityEachTime` is on.
-  Future<void> _showQualitySheet(VideoInfo video, AppSettings settings) async {
-    var mode = settings.defaultAudioOnly ? FormatKind.audio : FormatKind.video;
-    Format? videoSel = _defaultFormat(
-      video,
-      settings.copyWith(defaultAudioOnly: false),
-    );
-    Format? audioSel = video.audioFormats.isEmpty
-        ? null
-        : video.audioFormats.first;
-
-    final picked = await showModalBottomSheet<Format>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setSheet) {
-          final options = mode == FormatKind.video
-              ? video.videoFormats
-              : video.audioFormats;
-          final selected = mode == FormatKind.video ? videoSel : audioSel;
-          return SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Choose quality',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  SegmentedButton<FormatKind>(
-                    segments: const [
-                      ButtonSegment(
-                        value: FormatKind.video,
-                        label: Text('Video'),
-                        icon: Icon(Icons.videocam_outlined),
-                      ),
-                      ButtonSegment(
-                        value: FormatKind.audio,
-                        label: Text('Audio'),
-                        icon: Icon(Icons.audiotrack_outlined),
-                      ),
-                    ],
-                    selected: {mode},
-                    onSelectionChanged: (s) => setSheet(() => mode = s.first),
-                  ),
-                  const SizedBox(height: 12),
-                  if (options.isEmpty)
-                    const Text('No formats available for this type.')
-                  else
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        for (final f in options)
-                          ChoiceChip(
-                            label: Text(f.label),
-                            selected: selected?.selector == f.selector,
-                            onSelected: (_) => setSheet(() {
-                              if (mode == FormatKind.video) {
-                                videoSel = f;
-                              } else {
-                                audioSel = f;
-                              }
-                            }),
-                          ),
-                      ],
-                    ),
-                  const SizedBox(height: 16),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: selected == null
-                          ? null
-                          : () => Navigator.of(context).pop(selected),
-                      icon: const Icon(Icons.download),
-                      label: const Text('Download'),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-    if (picked != null && mounted) _enqueue(video, picked);
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(homeControllerProvider);
     final video = state.video;
-    final selected = _mode == FormatKind.video
-        ? _selectedVideo
-        : _selectedAudio;
-    final canDownload = video != null && selected != null && !state.isLoading;
+    final hasFormats =
+        video != null &&
+        (video.videoFormats.isNotEmpty || video.audioFormats.isNotEmpty);
 
     return Scaffold(
       appBar: AppBar(title: const Text('Download')),
@@ -280,25 +105,21 @@ class _HomePageState extends ConsumerState<HomePage> {
                 else if (video != null) ...[
                   VideoInfoCard(video: video),
                   const SizedBox(height: 16),
-                  _FormatSelector(
-                    mode: _mode,
-                    video: video,
-                    selectedVideo: _selectedVideo,
-                    selectedAudio: _selectedAudio,
-                    onModeChanged: (m) => setState(() => _mode = m),
-                    onVideoSelected: (f) => setState(() => _selectedVideo = f),
-                    onAudioSelected: (f) => setState(() => _selectedAudio = f),
-                  ),
-                  const SizedBox(height: 16),
+                  // One button: format + quality live in the bottom sheet.
                   FilledButton.icon(
-                    onPressed: canDownload ? () => _download(video) : null,
+                    onPressed: hasFormats ? () => _download(video) : null,
                     icon: const Icon(Icons.download),
-                    label: Text(
-                      selected == null
-                          ? 'Select a format'
-                          : 'Download ${selected.kind == FormatKind.audio ? 'audio' : 'video'}',
-                    ),
+                    label: const Text('Download'),
                   ),
+                  if (!hasFormats) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'No downloadable formats for this video.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ] else
                   _EmptyHint(
                     onExampleTap: (url) {
@@ -518,98 +339,6 @@ class _EmptyHint extends StatelessWidget {
                 ),
               ],
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FormatSelector extends StatelessWidget {
-  const _FormatSelector({
-    required this.mode,
-    required this.video,
-    required this.selectedVideo,
-    required this.selectedAudio,
-    required this.onModeChanged,
-    required this.onVideoSelected,
-    required this.onAudioSelected,
-  });
-
-  final FormatKind mode;
-  final VideoInfo video;
-  final Format? selectedVideo;
-  final Format? selectedAudio;
-  final ValueChanged<FormatKind> onModeChanged;
-  final ValueChanged<Format> onVideoSelected;
-  final ValueChanged<Format> onAudioSelected;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Format', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 12),
-            SegmentedButton<FormatKind>(
-              segments: const [
-                ButtonSegment(
-                  value: FormatKind.video,
-                  label: Text('Video'),
-                  icon: Icon(Icons.videocam_outlined),
-                ),
-                ButtonSegment(
-                  value: FormatKind.audio,
-                  label: Text('Audio'),
-                  icon: Icon(Icons.audiotrack_outlined),
-                ),
-              ],
-              selected: {mode},
-              onSelectionChanged: (s) => onModeChanged(s.first),
-            ),
-            const SizedBox(height: 16),
-            if (mode == FormatKind.video) ...[
-              Text('Quality', style: Theme.of(context).textTheme.labelMedium),
-              const SizedBox(height: 8),
-              if (video.videoFormats.isEmpty)
-                Text(
-                  'No downloadable video streams (needs ffmpeg to merge). Try the Audio tab.',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                )
-              else
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final f in video.videoFormats)
-                      ChoiceChip(
-                        label: Text(f.label),
-                        selected: selectedVideo?.selector == f.selector,
-                        onSelected: (_) => onVideoSelected(f),
-                      ),
-                  ],
-                ),
-            ] else ...[
-              Text('Audio', style: Theme.of(context).textTheme.labelMedium),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final f in video.audioFormats)
-                    ChoiceChip(
-                      label: Text(f.label),
-                      selected: selectedAudio?.selector == f.selector,
-                      onSelected: (_) => onAudioSelected(f),
-                    ),
-                ],
-              ),
-            ],
           ],
         ),
       ),
