@@ -264,21 +264,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Audio only by default'),
                         subtitle: const Text(
-                          'Download M4A audio instead of video',
+                          'Pre-select M4A audio when opening the download '
+                          'format sheet',
                         ),
                         value: settings.defaultAudioOnly,
                         onChanged: (v) =>
                             _patch(settings.copyWith(defaultAudioOnly: v)),
-                      ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text('Ask quality each time'),
-                        subtitle: const Text(
-                          'Show a quality picker before every download',
-                        ),
-                        value: settings.askQualityEachTime,
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(askQualityEachTime: v)),
                       ),
                     ],
                   ),

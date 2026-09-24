@@ -10,7 +10,6 @@ void main() {
       expect(s.seedColor, 0xFFD32F2F);
       expect(s.defaultVideoTier, 720);
       expect(s.defaultAudioOnly, isFalse);
-      expect(s.askQualityEachTime, isTrue);
       expect(s.notificationsEnabled, isTrue);
       expect(s.androidYtdlpUrl, isEmpty);
       expect(s.downloadRoot, isEmpty);
@@ -23,7 +22,6 @@ void main() {
         seedColor: 0xFF1565C0,
         defaultVideoTier: null,
         defaultAudioOnly: true,
-        askQualityEachTime: false,
         notificationsEnabled: false,
         androidYtdlpUrl: 'https://example.com/yt-dlp',
         downloadRoot: '/data/media/0/ytdlp',
@@ -34,7 +32,6 @@ void main() {
       expect(back.defaultVideoTier, isNull);
       expect(back.tierLabel, 'Best');
       expect(back.defaultAudioOnly, isTrue);
-      expect(back.askQualityEachTime, isFalse);
       expect(back.notificationsEnabled, isFalse);
       expect(back.androidYtdlpUrl, 'https://example.com/yt-dlp');
       expect(back.downloadRoot, '/data/media/0/ytdlp');

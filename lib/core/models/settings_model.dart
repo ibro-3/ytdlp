@@ -8,7 +8,6 @@ class AppSettings {
     this.seedColor = 0xFFD32F2F,
     this.defaultVideoTier = 720,
     this.defaultAudioOnly = false,
-    this.askQualityEachTime = true,
     this.notificationsEnabled = true,
     this.androidYtdlpUrl = '',
     this.downloadRoot = '',
@@ -30,7 +29,6 @@ class AppSettings {
   final int seedColor;
   final int? defaultVideoTier;
   final bool defaultAudioOnly;
-  final bool askQualityEachTime;
   final bool notificationsEnabled;
   final String androidYtdlpUrl;
 
@@ -49,7 +47,6 @@ class AppSettings {
     int? seedColor,
     int? Function()? defaultVideoTier,
     bool? defaultAudioOnly,
-    bool? askQualityEachTime,
     bool? notificationsEnabled,
     String? androidYtdlpUrl,
     String? downloadRoot,
@@ -61,7 +58,6 @@ class AppSettings {
           ? defaultVideoTier()
           : this.defaultVideoTier,
       defaultAudioOnly: defaultAudioOnly ?? this.defaultAudioOnly,
-      askQualityEachTime: askQualityEachTime ?? this.askQualityEachTime,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
       androidYtdlpUrl: androidYtdlpUrl ?? this.androidYtdlpUrl,
       downloadRoot: downloadRoot ?? this.downloadRoot,
@@ -73,7 +69,6 @@ class AppSettings {
     'seedColor': seedColor,
     'defaultVideoTier': defaultVideoTier,
     'defaultAudioOnly': defaultAudioOnly,
-    'askQualityEachTime': askQualityEachTime,
     'notificationsEnabled': notificationsEnabled,
     'androidYtdlpUrl': androidYtdlpUrl,
     'downloadRoot': downloadRoot,
@@ -89,7 +84,6 @@ class AppSettings {
       seedColor: (m['seedColor'] as num?)?.toInt() ?? 0xFFD32F2F,
       defaultVideoTier: (m['defaultVideoTier'] as num?)?.toInt(),
       defaultAudioOnly: (m['defaultAudioOnly'] as bool?) ?? false,
-      askQualityEachTime: (m['askQualityEachTime'] as bool?) ?? true,
       notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
       androidYtdlpUrl: (m['androidYtdlpUrl'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
