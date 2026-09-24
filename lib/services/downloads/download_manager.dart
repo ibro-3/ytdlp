@@ -59,12 +59,20 @@ class DownloadManager extends ChangeNotifier {
       _tasks.where((t) => t.status == DownloadStatus.queued).length;
 
   /// Enqueues a download. Returns the created task.
-  DownloadTask enqueue({required VideoInfo video, required Format format}) {
+  ///
+  /// [stagingPath] lets a retry reuse a previous attempt's staging directory
+  /// so yt-dlp can continue its `.part` file instead of starting from zero.
+  DownloadTask enqueue({
+    required VideoInfo video,
+    required Format format,
+    String? stagingPath,
+  }) {
     final task = DownloadTask(
       id: '${DateTime.now().microsecondsSinceEpoch}',
       video: video,
       format: format,
       createdAt: DateTime.now(),
+      stagingPath: stagingPath,
     );
     _tasks.insert(0, task);
     notifyListeners();
@@ -100,8 +108,12 @@ class DownloadManager extends ChangeNotifier {
       if (_isCanceled(task)) return;
 
       // Each task downloads into an isolated staging directory next to the
-      // final location (same filesystem ⇒ the final move is a rename).
-      staging = Directory(p.join(root, '.ytdlp-staging', id));
+      // final location (same filesystem ⇒ the final move is a rename). A retry
+      // reuses its previous directory so yt-dlp can continue the .part file.
+      final stagingRoot = p.join(root, '.ytdlp-staging');
+      staging =
+          await _resumeStaging(stagingRoot, task) ??
+          Directory(p.join(stagingRoot, id));
       await staging.create(recursive: true);
       task.stagingPath = staging.path;
       if (_isCanceled(task)) return;
@@ -113,6 +125,7 @@ class DownloadManager extends ChangeNotifier {
           format: task.format,
           outputDir: staging.path,
           template: _stagingTemplate(task),
+          cookiesPath: settings?.settings.cookiesPath,
         );
       } on YtdlpException catch (e) {
         return _fail(task, e.message);
@@ -211,26 +224,46 @@ class DownloadManager extends ChangeNotifier {
     } finally {
       _processes.remove(id);
       _progressNotification.remove(id);
-      final stagingPath = staging?.path ?? task.stagingPath;
-      if (stagingPath != null) {
-        await _deleteRecursive(stagingPath);
-        // Remove the now-empty staging root (best effort; a concurrent
-        // task may still be using it, in which case this is a no-op).
-        final parent = p.dirname(stagingPath);
-        if (p.basename(parent) == '.ytdlp-staging') {
-          try {
-            await Directory(parent).delete();
-          } catch (_) {}
+      // A failed task keeps its staging directory (and yt-dlp's .part file)
+      // so Retry can continue instead of re-downloading from the start.
+      // Completed and canceled tasks clean up after themselves.
+      final keepForResume = task.status == DownloadStatus.failed;
+      if (!keepForResume) {
+        final stagingPath = staging?.path ?? task.stagingPath;
+        if (stagingPath != null) {
+          await _deleteRecursive(stagingPath);
+          // Remove the now-empty staging root (best effort; a concurrent
+          // task may still be using it, in which case this is a no-op).
+          final parent = p.dirname(stagingPath);
+          if (p.basename(parent) == '.ytdlp-staging') {
+            try {
+              await Directory(parent).delete();
+            } catch (_) {}
+          }
         }
+        task.stagingPath = null;
       }
-      task.stagingPath = null;
       if (_isCanceled(task)) {
         unawaited(_cancelNotification(id));
-        _maybeNotifyUi();
       }
       _maybeNotifyUi();
       _pump();
     }
+  }
+
+  /// The previous staging directory of [task] when it is still usable, so the
+  /// download resumes from its `.part` file. Only directories inside the
+  /// current staging root are accepted — a path that no longer matches the
+  /// configured download root is ignored.
+  Future<Directory?> _resumeStaging(
+    String stagingRoot,
+    DownloadTask task,
+  ) async {
+    final path = task.stagingPath;
+    if (path == null) return null;
+    if (!p.isWithin(stagingRoot, path)) return null;
+    final dir = Directory(path);
+    return await dir.exists() ? dir : null;
   }
 
   /// Template used inside the staging directory. Playlists are out of
@@ -407,16 +440,22 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// Re-enqueues a failed task with a fresh id and staging directory.
+  /// Re-enqueues a failed task with a fresh id, reusing its staging directory
+  /// so yt-dlp continues the partial download.
   DownloadTask? retry(DownloadTask task) {
     if (task.status != DownloadStatus.failed) return null;
     _tasks.removeWhere((t) => t.id == task.id);
-    final next = enqueue(video: task.video, format: task.format);
+    final next = enqueue(
+      video: task.video,
+      format: task.format,
+      stagingPath: task.stagingPath,
+    );
     notifyListeners();
     return next;
   }
 
-  /// Removes a finished/canceled task from the queue without touching files.
+  /// Removes a finished/canceled task from the queue without touching the
+  /// downloaded file. Any staging directory kept for a resume is reclaimed.
   /// Returns false when the task is still running.
   bool dismiss(String id) {
     final task = _tasks.where((t) => t.id == id).firstOrNull;
@@ -426,6 +465,8 @@ class DownloadManager extends ChangeNotifier {
       return false;
     }
     _tasks.removeWhere((t) => t.id == id);
+    final staging = task.stagingPath;
+    if (staging != null) unawaited(_deleteRecursive(staging));
     notifyListeners();
     return true;
   }
@@ -448,6 +489,8 @@ class DownloadManager extends ChangeNotifier {
       // Even if the record could not be removed, the file is gone.
     }
     _tasks.removeWhere((t) => t.id == task.id);
+    final staging = task.stagingPath;
+    if (staging != null) await _deleteRecursive(staging);
     notifyListeners();
     return true;
   }

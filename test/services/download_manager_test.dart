@@ -55,6 +55,7 @@ class _FakeEngine implements DownloadEngine {
     required Format format,
     required String outputDir,
     required String template,
+    String? cookiesPath,
   }) async {
     started++;
     final file = File(p.join(outputDir, 'Title [abc123].mp4'));
@@ -82,8 +83,41 @@ class _NoFileEngine implements DownloadEngine {
     required Format format,
     required String outputDir,
     required String template,
+    String? cookiesPath,
   }) async {
     return _FakeProcess(lines: const ['[download] Destination: missing.mp4']);
+  }
+}
+
+/// Engine that writes a `.part` file and then fails, the way a dropped
+/// connection looks: a partial download that should be resumable. The first
+/// attempt fails immediately; later attempts hang until the test cancels them.
+class _FailingAfterPartEngine implements DownloadEngine {
+  final List<_EngineCall> calls = [];
+  final Completer<int> _hang = Completer<int>();
+
+  @override
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+  }) async {
+    final part = File(p.join(outputDir, 'Title [abc123].mp4.part'));
+    await part.parent.create(recursive: true);
+    await part.writeAsString('partial');
+    final attempt = calls.length;
+    final call = _EngineCall(
+      url,
+      outputDir,
+      _FakeProcess(
+        lines: ['[download] Destination: ${part.path}'],
+        exitCode: attempt == 0 ? Future<int>.value(1) : _hang.future,
+      ),
+    );
+    calls.add(call);
+    return call.process;
   }
 }
 
@@ -271,6 +305,41 @@ void main() {
       await waitUntil(() => t.status == DownloadStatus.failed);
       expect(t.error, contains('output file'));
     });
+
+    test(
+      'a failed task keeps its staging dir and retry resumes in it',
+      () async {
+        // First attempt fails after writing a .part file, like a dropped
+        // connection would.
+        final engine = _FailingAfterPartEngine();
+        final m = manager(engine);
+        addTearDown(m.dispose);
+
+        final t = m.enqueue(
+          video: _video('resume'),
+          format: _video('resume').videoFormats.first,
+        );
+        await waitUntil(() => t.status == DownloadStatus.failed);
+        final staging = t.stagingPath;
+        expect(staging, isNotNull, reason: 'staging kept for resume');
+        final part = File(p.join(staging!, 'Title [abc123].mp4.part'));
+        expect(part.existsSync(), isTrue, reason: '.part survives the failure');
+
+        // Retrying reuses the same directory so yt-dlp can continue.
+        final retried = m.retry(t)!;
+        expect(retried.id, isNot(t.id));
+        expect(retried.stagingPath, staging, reason: 'seeded for resume');
+        await waitUntil(() => engine.calls.length == 2);
+        expect(engine.calls[1].outputDir, staging);
+
+        // Dismissing the retried task reclaims the kept directory.
+        m.cancel(retried.id);
+        await waitUntil(() => retried.status == DownloadStatus.canceled);
+        expect(m.dismiss(retried.id), isTrue);
+        // Cancelling is synchronous but cleanup runs in the task's finally.
+        await waitUntil(() => !Directory(staging).existsSync());
+      },
+    );
   });
 
   group('DownloadManager cleanup and ops', () {

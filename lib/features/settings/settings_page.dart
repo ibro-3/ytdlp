@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import '../../core/models/settings_model.dart';
 import '../../core/providers.dart';
@@ -92,6 +94,104 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   void _resetDownloadFolder() =>
       _patch(ref.read(settingsControllerProvider).copyWith(downloadRoot: ''));
+
+  /// Imports a Netscape-format `cookies.txt`.
+  ///
+  /// The file is copied into the app's support directory so the picked path
+  /// can't stop resolving (Android pickers hand back cache paths, and desktop
+  /// users may pick a file on removable media), then yt-dlp is pointed at the
+  /// copy via `--cookies`.
+  Future<void> _pickCookiesFile() async {
+    final messenger = ScaffoldMessenger.of(context);
+    PlatformFile? picked;
+    try {
+      picked = await FilePicker.pickFile(
+        dialogTitle: 'Choose cookies.txt',
+        type: FileType.custom,
+        allowedExtensions: const ['txt'],
+      );
+    } catch (_) {
+      picked = null; // Picker unavailable on this platform.
+    }
+    if (picked == null) return; // Cancelled.
+
+    List<int>? bytes;
+    try {
+      bytes = await picked.readAsBytes();
+    } catch (_) {
+      final path = picked.path;
+      if (path == null) {
+        bytes = null;
+      } else {
+        try {
+          bytes = await File(path).readAsBytes();
+        } catch (_) {
+          bytes = null;
+        }
+      }
+    }
+    if (bytes == null || bytes.isEmpty) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text("Couldn't read that file")),
+        );
+      return;
+    }
+    if (!_looksLikeCookieJar(bytes)) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'That does not look like a cookies.txt (Netscape format)',
+            ),
+          ),
+        );
+      return;
+    }
+    try {
+      final support = await getApplicationSupportDirectory();
+      final target = File('${support.path}/cookies.txt');
+      await target.parent.create(recursive: true);
+      await target.writeAsBytes(bytes, flush: true);
+      await _patch(
+        ref.read(settingsControllerProvider).copyWith(cookiesPath: target.path),
+      );
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Cookies saved')));
+    } catch (e) {
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text("Couldn't save the cookies: $e")),
+        );
+    }
+  }
+
+  /// A cookie jar starts with `# Netscape HTTP Cookie File` or a row of
+  /// tab-separated fields; anything else is rejected before it reaches
+  /// yt-dlp, which would otherwise fail every download with a parse error.
+  static bool _looksLikeCookieJar(List<int> bytes) {
+    String text;
+    try {
+      text = utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return false;
+    }
+    for (final line in const LineSplitter().convert(text)) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.startsWith('#')) {
+        if (trimmed.contains('Netscape HTTP Cookie File')) return true;
+        continue;
+      }
+      // domain \t flag \t path \t secure \t expiry \t name \t value
+      return trimmed.split('\t').length >= 7;
+    }
+    return false;
+  }
 
   /// A picked folder must be a real, writable filesystem path — yt-dlp runs
   /// as a child process and can only write by path (not via SAF `content://`).
@@ -254,6 +354,38 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         value: settings.defaultAudioOnly,
                         onChanged: (v) =>
                             _patch(settings.copyWith(defaultAudioOnly: v)),
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.cookie_outlined),
+                        title: const Text('Cookies (optional)'),
+                        subtitle: Text(
+                          settings.cookiesPath.isEmpty
+                              ? 'Off — some sites need a cookies.txt to allow '
+                                    'downloads'
+                              : p.basename(settings.cookiesPath),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (settings.cookiesPath.isNotEmpty)
+                              IconButton(
+                                icon: const Icon(Icons.close),
+                                tooltip: 'Remove cookies',
+                                onPressed: () =>
+                                    _patch(settings.copyWith(cookiesPath: '')),
+                              ),
+                            IconButton(
+                              icon: const Icon(Icons.folder_open),
+                              tooltip: settings.cookiesPath.isEmpty
+                                  ? 'Choose cookies.txt'
+                                  : 'Change cookies.txt',
+                              onPressed: _pickCookiesFile,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   ),

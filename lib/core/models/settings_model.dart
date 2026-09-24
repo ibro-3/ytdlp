@@ -9,6 +9,7 @@ class AppSettings {
     this.defaultVideoTier = 720,
     this.defaultAudioOnly = false,
     this.notificationsEnabled = true,
+    this.cookiesPath = '',
     this.downloadRoot = '',
   });
 
@@ -30,6 +31,12 @@ class AppSettings {
   final bool defaultAudioOnly;
   final bool notificationsEnabled;
 
+  /// Optional Netscape-format `cookies.txt` handed to yt-dlp via `--cookies`.
+  /// Some sites (notably YouTube) refuse anonymous requests; a cookie jar
+  /// lets the user authenticate without the app storing any credentials.
+  /// Empty = no cookies.
+  final String cookiesPath;
+
   /// Root folder for downloads; empty means the platform default
   /// (`downloadsDir` in providers.dart). Videos and audio go into a
   /// `Video/` / `Audio/` subfolder of this root.
@@ -46,6 +53,7 @@ class AppSettings {
     int? Function()? defaultVideoTier,
     bool? defaultAudioOnly,
     bool? notificationsEnabled,
+    String? cookiesPath,
     String? downloadRoot,
   }) {
     return AppSettings(
@@ -56,6 +64,7 @@ class AppSettings {
           : this.defaultVideoTier,
       defaultAudioOnly: defaultAudioOnly ?? this.defaultAudioOnly,
       notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
+      cookiesPath: cookiesPath ?? this.cookiesPath,
       downloadRoot: downloadRoot ?? this.downloadRoot,
     );
   }
@@ -66,6 +75,7 @@ class AppSettings {
     'defaultVideoTier': defaultVideoTier,
     'defaultAudioOnly': defaultAudioOnly,
     'notificationsEnabled': notificationsEnabled,
+    'cookiesPath': cookiesPath,
     'downloadRoot': downloadRoot,
   };
 
@@ -80,6 +90,7 @@ class AppSettings {
       defaultVideoTier: (m['defaultVideoTier'] as num?)?.toInt(),
       defaultAudioOnly: (m['defaultAudioOnly'] as bool?) ?? false,
       notificationsEnabled: (m['notificationsEnabled'] as bool?) ?? true,
+      cookiesPath: (m['cookiesPath'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
     );
   }

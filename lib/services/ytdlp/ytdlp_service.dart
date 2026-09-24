@@ -28,6 +28,7 @@ abstract interface class DownloadEngine {
     required Format format,
     required String outputDir,
     required String template,
+    String? cookiesPath,
   });
 }
 
@@ -189,19 +190,36 @@ class YtdlpService implements DownloadEngine {
     required Format format,
     required String outputDir,
     required String template,
+    String? cookiesPath,
   }) async {
     final bin = await _binary.ensureRunner();
     final args = <String>[
       '--newline',
       '--no-playlist',
       '--no-mtime',
+      // Resume a partially downloaded .part file instead of starting over.
+      // Enabled by default in yt-dlp, but stated here because the manager
+      // deliberately keeps staging directories around for retries.
+      '--continue',
+      // yt-dlp's defaults are 10/10; spelled out so the intent survives a
+      // future upstream change. --retry-sleep adds a capped linear backoff
+      // (none by default), which matters a lot on flaky mobile networks.
+      '--retries',
+      '10',
+      '--fragment-retries',
+      '10',
+      '--retry-sleep',
+      'linear=1:5:2',
       '--force-overwrites',
       '-o',
       '$outputDir/$template',
       '-f',
       format.selector,
-      url,
     ];
+    if (cookiesPath != null && cookiesPath.isNotEmpty) {
+      args.addAll(['--cookies', cookiesPath]);
+    }
+    args.add(url);
     final ffmpeg = await _binary.androidFfmpegLocation();
     if (ffmpeg != null) {
       args.insertAll(0, ['--ffmpeg-location', ffmpeg]);

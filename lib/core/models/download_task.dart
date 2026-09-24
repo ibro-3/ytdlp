@@ -8,6 +8,7 @@ class DownloadTask {
     required this.video,
     required this.format,
     required this.createdAt,
+    this.stagingPath,
   });
 
   final String id;
