@@ -10,9 +10,12 @@ import 'json_payload.dart';
 
 /// Builds the yt-dlp command line for one download.
 ///
-/// Embed and conversion flags that need ffmpeg are gated on `hasFfmpeg`
-/// (bundled on Android, on PATH on desktop). On Android [androidFfmpegPath]
-/// is prepended so yt-dlp finds the bundled binary.
+/// Embed and conversion flags are gated on `hasFfmpeg` (bundled on Android, on
+/// PATH on desktop). Those flags make yt-dlp run postprocessing, which probes
+/// the output with **ffprobe** — so this should only be true when ffprobe is
+/// reachable too, or the download fails with "ffprobe not found". On Android
+/// [androidFfmpegPath] is prepended so yt-dlp finds the bundled binary, and it
+/// looks for ffprobe in the same directory.
 List<String> buildDownloadArgs({
   required String url,
   required Format format,
@@ -172,6 +175,8 @@ class YtdlpService implements DownloadEngine {
   Future<VideoInfo> fetchVideoInfo(String url) async {
     final r = await _binary.ensureRunner();
     final hasFfmpeg = await _binary.hasFfmpeg();
+    // Embedding/conversion also needs ffprobe, which is not implied by ffmpeg.
+    final canPostprocess = await _binary.hasFfprobe();
 
     final run = await _runCaptured(r, [
       '-J',
@@ -203,7 +208,11 @@ class YtdlpService implements DownloadEngine {
       if (decoded is! Map<String, dynamic>) {
         throw const YtdlpException('Unexpected yt-dlp response.');
       }
-      return VideoInfo.fromYtdlpJson(decoded, hasFfmpeg: hasFfmpeg);
+      return VideoInfo.fromYtdlpJson(
+        decoded,
+        hasFfmpeg: hasFfmpeg,
+        canPostprocess: canPostprocess,
+      );
     } on FormatException {
       // Only reachable from fromYtdlpJson's parsing; a decode failure is
       // already turned into an actionable message above.
@@ -323,6 +332,10 @@ class YtdlpService implements DownloadEngine {
       outputDir: outputDir,
       template: template,
       cookiesPath: cookiesPath,
+      // This defaulted to true before, so embed/conversion flags were added
+      // even on a desktop without ffmpeg — where yt-dlp then fails in
+      // postprocessing. Probe the real capability instead.
+      hasFfmpeg: await _binary.hasFfmpeg(),
       androidFfmpegPath: ffmpeg,
     );
 

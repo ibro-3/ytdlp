@@ -60,6 +60,12 @@ class _AndroidRuntime {
 class BinaryManager {
   String? _ytdlpPath;
   String? _ffmpegPath;
+  String? _ffprobePath;
+
+  /// Whether the bundled ffprobe was extracted. Distinguishes "ffmpeg is
+  /// present but postprocessing is unavailable" from "ffmpeg is missing".
+  bool _probeExtracted = false;
+
   bool? _hasFfmpeg;
   bool _isSystem = false;
   bool _usingRuntime = false;
@@ -86,6 +92,27 @@ class BinaryManager {
     return _ensureAndroidFfmpeg();
   }
 
+  /// Whether yt-dlp can run postprocessing on this device.
+  ///
+  /// Embedding subtitles or a thumbnail cover goes through
+  /// `FFmpegMetadataPP`, which probes the output with **ffprobe** — ffmpeg
+  /// alone is enough to merge DASH streams but not to postprocess, and
+  /// yt-dlp fails with "Postprocessing: ffprobe not found" when it is
+  /// missing. Desktop installs report true whenever ffmpeg is on PATH, since
+  /// a normal system ffmpeg package always ships ffprobe beside it.
+  Future<bool> hasFfprobe() async {
+    if (!Platform.isAndroid) return hasFfmpeg();
+    await _ensureAndroidFfmpeg();
+    return _probeExtracted;
+  }
+
+  /// Location of the bundled Android ffprobe, if available.
+  Future<String?> androidFfprobeLocation() async {
+    if (!Platform.isAndroid) return null;
+    await _ensureAndroidFfmpeg();
+    return _ffprobePath;
+  }
+
   Future<String?> _ensureAndroidFfmpeg() {
     if (_ffmpegPath != null) return Future.value(_ffmpegPath);
     final f = _ffmpegFuture ??= _initAndroidFfmpeg();
@@ -103,22 +130,40 @@ class BinaryManager {
   Future<String?> _initAndroidFfmpeg() async {
     if (_ffmpegPath != null) return _ffmpegPath;
     final support = await getApplicationSupportDirectory();
-    final target = File('${support.path}/bin/ffmpeg');
+    final ffmpeg = File('${support.path}/bin/ffmpeg');
+    final ffprobe = File('${support.path}/bin/ffprobe');
     final marker = File('${support.path}/bin/.ffmpeg-v');
-    if (await target.exists()) {
+
+    if (await ffmpeg.exists()) {
       try {
         if ((await marker.readAsString()).trim() == _ffmpegVersion) {
-          await _ensureExecutable(target.path);
-          return _ffmpegPath = target.path;
+          await _ensureExecutable(ffmpeg.path);
+          // A copy stamped by an older build predates ffprobe. Postprocessing
+          // needs it, so re-extract rather than silently fail later.
+          if (await ffprobe.exists()) {
+            await _ensureExecutable(ffprobe.path);
+            _ffprobePath = ffprobe.path;
+            return _ffmpegPath = ffmpeg.path;
+          }
         }
       } catch (_) {}
       // Stale or unmarked copy from an older app install.
-      try {
-        await target.delete();
-      } catch (_) {}
+      for (final f in [ffmpeg, ffprobe]) {
+        try {
+          if (await f.exists()) await f.delete();
+        } catch (_) {}
+      }
     }
+
     final extracted = await _extractAsset('ffmpeg');
     if (extracted != null) {
+      // yt-dlp derives ffprobe's path from the --ffmpeg-location it is given,
+      // so the probe must land beside ffmpeg or postprocessing fails with
+      // "ffprobe not found". A missing ffprobe is not fatal: ffmpeg alone still
+      // merges DASH streams, it just cannot postprocess.
+      final probe = await _extractAsset('ffprobe');
+      _probeExtracted = probe != null;
+      if (probe != null) _ffprobePath = probe;
       try {
         await marker.writeAsString(_ffmpegVersion, flush: true);
       } catch (_) {}
@@ -131,7 +176,8 @@ class BinaryManager {
   // Combined with the app version it invalidates previously extracted
   // runtimes, so an app upgrade re-extracts fresh assets.
   static const _runtimeBuild = 'py3.14-alpine-v1';
-  static const _ffmpegBuild = 'ffmpeg-8.1.3-static-v1';
+  // v2 added ffprobe alongside ffmpeg, which postprocessing requires.
+  static const _ffmpegBuild = 'ffmpeg-8.1.3-static-v2-ffprobe';
   static const _toolVersion = '2026.09.1';
   static const _runtimeVersion = '$_toolVersion-$_runtimeBuild';
   static const _ffmpegVersion = '$_toolVersion-$_ffmpegBuild';

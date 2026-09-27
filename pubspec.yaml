@@ -79,11 +79,15 @@ flutter:
     # prefers the system binary and can auto-download the official single-file
     # build, so these are optional. Android uses the self-contained
     # CPython + yt-dlp runtime (built by tool/fetch_android_runtime.sh) and a
-    # minimal static ffmpeg for merging DASH streams (tool/fetch_ffmpeg_android.sh):
+    # minimal static ffmpeg + ffprobe (tool/fetch_ffmpeg_android.sh). Both are
+    # required: ffmpeg merges DASH streams, ffprobe is what yt-dlp's
+    # postprocessing (embed subs / thumbnail) probes the output with.
     - assets/bin/android/x86_64/python.tar.gz
     - assets/bin/android/arm64-v8a/python.tar.gz
     - assets/bin/android/x86_64/ffmpeg
+    - assets/bin/android/x86_64/ffprobe
     - assets/bin/android/arm64-v8a/ffmpeg
+    - assets/bin/android/arm64-v8a/ffprobe
     - assets/bin/.gitkeep
 
   # To add assets to your application, add an assets section, like this:

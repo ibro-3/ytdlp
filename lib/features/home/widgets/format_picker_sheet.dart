@@ -59,8 +59,10 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   bool get _hasAudio => widget.video.audioFormats.isNotEmpty;
   bool get _hasSubtitles => widget.video.subtitleTracks.isNotEmpty;
 
-  /// Whether ffmpeg can be reached; embed options are gated on it.
-  bool get _canEmbed => widget.video.hasFfmpeg;
+  /// Whether yt-dlp can postprocess here. Embed options are gated on this
+  /// rather than on ffmpeg alone, because postprocessing additionally needs
+  /// ffprobe — offering them without it yields "ffprobe not found".
+  bool get _canEmbed => widget.video.canPostprocess;
 
   @override
   void initState() {

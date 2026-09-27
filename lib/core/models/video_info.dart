@@ -79,10 +79,14 @@ class VideoInfo {
     this.uploadDate,
     this.thumbnail,
     this.hasFfmpeg = false,
+    // Defaults to [hasFfmpeg] because they coincide on desktop, where a system
+    // ffmpeg always ships ffprobe beside it. They can differ on Android, where
+    // the bundled pair may be incomplete, so callers that know should say so.
+    bool? canPostprocess,
     this.videoFormats = const [],
     this.audioFormats = const [],
     this.subtitleTracks = const [],
-  });
+  }) : canPostprocess = canPostprocess ?? hasFfmpeg;
 
   final String id;
   final String title;
@@ -93,8 +97,19 @@ class VideoInfo {
   final String? thumbnail;
 
   /// Whether the app can reach ffmpeg (bundled on Android, PATH on desktop).
-  /// Embedding subtitles/thumbnails requires it.
+  /// Deciding between split streams that must be merged and single-file
+  /// combined streams depends on it.
   final bool hasFfmpeg;
+
+  /// Whether yt-dlp can run *postprocessing* here — embedding subtitles or a
+  /// thumbnail cover, converting subtitle formats.
+  ///
+  /// This is stricter than [hasFfmpeg]: it also needs **ffprobe**, which yt-dlp
+  /// uses to probe the output. Merging only needs ffmpeg, so the two can differ
+  /// (notably on Android, where the bundled pair may be incomplete). Offering
+  /// the embed toggles when this is false would produce a download that fails
+  /// with "Postprocessing: ffprobe not found".
+  final bool canPostprocess;
 
   final List<Format> videoFormats;
   final List<Format> audioFormats;
@@ -109,6 +124,10 @@ class VideoInfo {
   factory VideoInfo.fromYtdlpJson(
     Map<String, dynamic> j, {
     required bool hasFfmpeg,
+    // Defaults to [hasFfmpeg] because they coincide on desktop, where a system
+    // ffmpeg always ships ffprobe beside it. They can differ on Android, where
+    // the bundled pair may be incomplete, so callers that know should say so.
+    bool? canPostprocess,
   }) {
     final rawFormats =
         (j['formats'] as List?)?.whereType<Map<String, dynamic>>().toList() ??
@@ -135,6 +154,7 @@ class VideoInfo {
       uploadDate: parseUploadDate(j['upload_date'] as String?),
       thumbnail: thumb,
       hasFfmpeg: hasFfmpeg,
+      canPostprocess: canPostprocess ?? hasFfmpeg,
       videoFormats: _buildVideoFormats(rawFormats, hasFfmpeg),
       audioFormats: _buildAudioFormats(rawFormats),
       subtitleTracks: _parseSubtitleTracks(j),

@@ -79,25 +79,27 @@ Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `asset
 
 This produces `assets/bin/android/<abi>/python.tar.gz` (~16 MB per ABI), already registered in `pubspec.yaml`. At first launch the app extracts it to its private files dir and runs `python3.14 bin/yt-dlp` with `LD_LIBRARY_PATH`/`PYTHONHOME`/`SSL_CERT_FILE` pointed at the tree — no root, no Termux app needed. Settings → **Update yt-dlp** refreshes only the yt-dlp script from the official release; the CPython interpreter, native libs and bundled ffmpeg still ship with the app, so those need an app update.
 
-**ffmpeg (video downloads):** modern YouTube serves video/audio as separate DASH streams, and merging them needs ffmpeg. The Termux ffmpeg package drags in ~97 packages (~40 MB/ABI), so instead a minimal **static** ffmpeg is cross-compiled with the NDK — just the file protocol, mp4/webm/mkv demuxers and muxers yt-dlp needs for `-c copy` merges (~2 MB/ABI):
+**ffmpeg + ffprobe (video downloads and postprocessing):** modern YouTube serves video/audio as separate DASH streams, and merging them needs ffmpeg. The Termux ffmpeg package drags in ~97 packages (~40 MB/ABI), so instead a minimal **static** ffmpeg is cross-compiled with the NDK — just the file protocol, mp4/webm/mkv demuxers and muxers yt-dlp needs for `-c copy` merges (~2 MB/ABI):
 
 ```bash
 ./tool/fetch_ffmpeg_android.sh          # both ABIs (needs ANDROID_NDK / ~/Android/Sdk/ndk)
 ./tool/fetch_ffmpeg_android.sh x86_64   # emulator only
 ```
 
-The app extracts it on first launch and passes `--ffmpeg-location` to yt-dlp, so video downloads merge on-device.
+**ffprobe ships alongside ffmpeg and is equally required.** Merging only needs ffmpeg, but every *postprocessing* step — embedding subtitles, embedding a thumbnail cover, converting subtitle formats — goes through yt-dlp's `FFmpegMetadataPP`, which probes the output with ffprobe and aborts with `Postprocessing: ffprobe not found. Please install or provide the path using --ffmpeg-location`. yt-dlp resolves the pair from a single `--ffmpeg-location`: given the path to ffmpeg it looks for ffprobe in the same directory, so the two must be extracted together.
+
+The app extracts both on first launch and passes the ffmpeg path to `--ffmpeg-location`, so video downloads merge and embed on-device. The extraction marker (`ffmpeg-8.1.3-static-v2-ffprobe` in `binary_manager.dart`) must be bumped whenever these binaries change, or existing installs keep a stale ffmpeg-only copy; it also re-extracts when ffprobe is missing.
 
 | ABI (device)                     | Asset                              | Status               |
 | -------------------------------- | ---------------------------------- | -------------------- |
-| `x86_64` (Studio emulators)      | `assets/bin/android/x86_64/…`      | verified end-to-end on emulator (fetch + video download w/ ffmpeg merge) |
+| `x86_64` (Studio emulators)      | `assets/bin/android/x86_64/…`      | ffmpeg merge verified end-to-end on emulator; ffprobe rebuilt and packaged, not yet exercised on-device |
 | `arm64-v8a` (physical devices)   | `assets/bin/android/arm64-v8a/…`    | same recipe, untested here |
 
 If a per-ABI archive is missing, `assets/bin/android/yt-dlp` (a single-file bionic build committed to the repo) is tried as a fallback; otherwise the app shows an actionable error naming the expected path. An install that ends up on such a build cannot self-update — Settings reports that an app update is needed, since custom build URLs are no longer configurable.
 
 > **Android 14+ SELinux note:** apps targeting recent SDKs (`untrusted_app_34`) are denied `execute` on their own data files (`avc: denied { execute_no_trans }`), which silently breaks any bundled-subprocess design. This project therefore sets `targetSdk = 28` in `android/app/build.gradle.kts` (same approach as Termux) so the bundled runtime can execute. Trade-off: sideload/F-Droid distribution only — the Play Store requires a recent target SDK (and forbids YouTube downloading anyway).
 
-APK per-ABI splits are recommended (each runtime adds ~16 MB + ~2 MB ffmpeg). A universal release APK is ~90 MB; split it per ABI for ~25 MB each:
+APK per-ABI splits are recommended (each runtime adds ~16 MB + ~2 MB ffmpeg + ~1.7 MB ffprobe). A universal release APK is ~90 MB; split it per ABI for ~25 MB each:
 
 ```bash
 flutter build apk --release --split-per-abi
@@ -145,7 +147,7 @@ This produces separate APKs for `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86`.
 
 - `INTERNET` permission added to `android/app/src/main/AndroidManifest.xml`.
 - Downloads go to app-specific external dir on Android 10+ (no storage permission needed). A folder picked in Settings must be a real, writable filesystem path — the bundled yt-dlp child process writes by path, not via SAF `content://` URIs (SD-card picks are rejected with an explanation; on-device folders work).
-- **Android notes (ffmpeg):** on Android the bundled minimal static `ffmpeg` is used so DASH video/audio streams can merge (`--ffmpeg-location`). When ffmpeg is unavailable (desktop without a system `ffmpeg`), video is combined-only (no DASH merge) and audio is `M4A` (`ba[ext=m4a]/ba`).
+- **Android notes (ffmpeg/ffprobe):** on Android the bundled minimal static `ffmpeg` is used so DASH video/audio streams can merge, and the bundled `ffprobe` is what yt-dlp's postprocessing probes with (`--ffmpeg-location`). The embed toggles in the format sheet are gated on *ffprobe* specifically, not ffmpeg, because ffmpeg alone can merge but cannot postprocess — otherwise the download would fail with "ffprobe not found". When ffmpeg is unavailable (desktop without a system `ffmpeg`), video is combined-only (no DASH merge) and audio is `M4A` (`ba[ext=m4a]/ba`).
 - **`targetSdk = 28` is deliberate.** Android 10+ (API 29+) enforces W^X for apps targeting API 29+: `exec()` on files in app-writable storage is denied (`avc: denied { execute_no_trans }`), which breaks the bundled CPython/yt-dlp runtime extracted into the app support dir. Termux ships targetSdk 28 for the same reason. Because that trips Google Play's `ExpiredTargetSdkVersion` lint on release builds, that single check is disabled in `android/app/build.gradle.kts` — every other lint rule still runs. A higher target is still reachable for experiments with `-P ytdlpTargetSdk=33`, but the runtime will not execute under it without repackaging the engine (e.g. shipping it via `jniLibs` into `nativeLibraryDir`) or switching to a pure-JVM yt-dlp.
 - Release builds are signed with the keystore described in **Release identity** above, falling back to the debug key with a warning when `android/key.properties` is absent.
 - **`compileSdk` is 37 while `targetSdk` stays 28.** `receive_sharing_intent` 1.9.0 and `flutter_foreground_task` 11.x compile against 37, so `android/app/build.gradle.kts` pins `compileSdk = 37` instead of following `flutter.compileSdkVersion` (36 in Flutter 3.47). These are independent: `compileSdk` only gates which APIs are visible at compile time, while `targetSdk` drives runtime behaviour — so the W^X requirement that keeps the bundled CPython runtime executable is unaffected. Verified via `aapt2 dump badging`: `compileSdkVersion='37'`, `targetSdkVersion='28'`.

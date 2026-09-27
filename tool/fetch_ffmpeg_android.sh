@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
-# Cross-compiles a minimal static ffmpeg for Android (bionic) with the NDK,
-# for the bundled yt-dlp runtime to merge split video+audio (DASH) streams.
-# Ships as assets/bin/android/<abi>/ffmpeg.
+# Cross-compiles a minimal static ffmpeg + ffprobe for Android (bionic) with
+# the NDK, for the bundled yt-dlp runtime. Ships as
+# assets/bin/android/<abi>/{ffmpeg,ffprobe}.
+#
+# Both are required. ffmpeg merges split video+audio (DASH) streams, but any
+# *postprocessing* (embedding subtitles or a thumbnail cover, converting
+# subtitle formats) goes through yt-dlp's FFmpegMetadataPP, which probes the
+# output with ffprobe and fails hard with
+#   "Postprocessing: ffprobe not found. Please install or provide the path
+#    using --ffmpeg-location"
+# yt-dlp resolves the pair from a single --ffmpeg-location: given the path to
+# ffmpeg it looks for ffprobe next to it, so the two must ship together in the
+# same directory.
 #
 # Why not the Termux ffmpeg package? Its libav*.so link the entire codec
 # universe (~97 packages, ~+40 MB/ABI). yt-dlp only merges with `-c copy`,
 # which needs no encoders/decoders/filters — just the file protocol, the
-# mp4/m4a/webm demuxers and matching muxers. A static build with only those
-# is a few MB per ABI.
+# mp4/m4a/webm demuxers and matching muxers. ffprobe only reads container
+# metadata, which the same demuxers cover. A static build with only those is a
+# few MB per ABI.
 #
 # Usage: ./tool/fetch_ffmpeg_android.sh [x86_64|arm64-v8a]   (default: both)
 #
@@ -64,9 +75,9 @@ for ARCH in "${ARCHES[@]}"; do
       --disable-doc --disable-debug --disable-network --disable-symver \
       --disable-x86asm \
       --disable-avdevice \
-      --disable-ffplay --disable-ffprobe \
+      --disable-ffplay \
       --disable-everything \
-      --enable-ffmpeg \
+      --enable-ffmpeg --enable-ffprobe \
       --enable-small \
       --enable-protocol=file,pipe \
       --enable-demuxer=mov,matroska \
@@ -75,13 +86,18 @@ for ARCH in "${ARCHES[@]}"; do
       --enable-bsf=aac_adtstoasc,h264_mp4toannexb,hevc_mp4toannexb,opus_metadata
     make -j"$(nproc)"
   ) || { echo "build failed for $ARCH (see ffbuild/config.log)"; exit 1; }
-  BIN="$SRC.$TARCH/ffmpeg"
-  [ -x "$BIN" ] || { echo "no ffmpeg binary produced"; exit 1; }
-  cp "$BIN" "$OUT/$ARCH/ffmpeg"
-  chmod 755 "$OUT/$ARCH/ffmpeg"
-  echo "wrote $OUT/$ARCH/ffmpeg ($(du -h "$OUT/$ARCH/ffmpeg" | cut -f1))"
+  # Both binaries are required: yt-dlp derives ffprobe's path from ffmpeg's.
+  for PROG in ffmpeg ffprobe; do
+    BIN="$SRC.$TARCH/$PROG"
+    [ -x "$BIN" ] || { echo "no $PROG binary produced"; exit 1; }
+    cp "$BIN" "$OUT/$ARCH/$PROG"
+    chmod 755 "$OUT/$ARCH/$PROG"
+    echo "wrote $OUT/$ARCH/$PROG ($(du -h "$OUT/$ARCH/$PROG" | cut -f1))"
+  done
 done
 
 echo "Done. Register new files in pubspec.yaml flutter.assets:"
 echo "  - assets/bin/android/x86_64/ffmpeg"
+echo "  - assets/bin/android/x86_64/ffprobe"
 echo "  - assets/bin/android/arm64-v8a/ffmpeg"
+echo "  - assets/bin/android/arm64-v8a/ffprobe"

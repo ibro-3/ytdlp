@@ -51,6 +51,7 @@ VideoInfo _video({
   List<Format> audioFormats = const [_audio],
   List<SubtitleTrack> subtitleTracks = const [],
   bool hasFfmpeg = false,
+  bool? canPostprocess,
 }) => VideoInfo(
   id: 'abc123',
   title: 'Sample video',
@@ -59,6 +60,7 @@ VideoInfo _video({
   audioFormats: audioFormats,
   subtitleTracks: subtitleTracks,
   hasFfmpeg: hasFfmpeg,
+  canPostprocess: canPostprocess,
 );
 
 /// Holds the sheet's result so tests can assert on it after the sheet closes.
@@ -314,6 +316,38 @@ void main() {
     expect(cover.value, isFalse);
     expect(cover.onChanged, isNull);
   });
+
+  testWidgets(
+    'embed switches are off when ffmpeg is present but ffprobe is not',
+    (tester) async {
+      // Merging works with ffmpeg alone, but postprocessing probes with
+      // ffprobe. Offering the toggles here is what produced
+      // "Postprocessing: ffprobe not found".
+      await _openSheet(
+        tester,
+        video: _video(
+          subtitleTracks: const [_enSubs],
+          hasFfmpeg: true,
+          canPostprocess: false,
+        ),
+        settings: const AppSettings(
+          defaultEmbedSubs: true,
+          defaultEmbedThumb: true,
+        ),
+      );
+
+      final embed = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, 'Embed in the file'),
+      );
+      final cover = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, 'Embed as cover art'),
+      );
+      expect(embed.value, isFalse, reason: 'seeding must not lie');
+      expect(embed.onChanged, isNull, reason: 'no ffprobe → cannot embed');
+      expect(cover.value, isFalse);
+      expect(cover.onChanged, isNull);
+    },
+  );
 
   testWidgets('audio mode reports embed subs off even if it was toggled', (
     tester,
