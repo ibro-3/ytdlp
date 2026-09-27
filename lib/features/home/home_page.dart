@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import '../../core/models/download_options.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
+import '../../services/sharing/share_intent_service.dart';
 import 'home_controller.dart';
 import 'widgets/format_picker_sheet.dart';
 import 'widgets/video_info_card.dart';
@@ -21,6 +24,7 @@ class HomePage extends ConsumerStatefulWidget {
 class _HomePageState extends ConsumerState<HomePage> {
   final TextEditingController _urlController = TextEditingController();
   String? _lastUrl;
+  StreamSubscription<String>? _shareSub;
 
   void _retry() {
     final url = _lastUrl;
@@ -30,9 +34,27 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    // A link shared from another app's share sheet is treated exactly like a
+    // pasted one: fill the field and fetch immediately.
+    _shareSub = ShareIntentService.instance.urlStream.listen(_onSharedUrl);
+  }
+
+  @override
   void dispose() {
+    _shareSub?.cancel();
     _urlController.dispose();
     super.dispose();
+  }
+
+  /// Fills the URL field from a share intent and fetches it right away.
+  void _onSharedUrl(String url) {
+    if (!mounted) return;
+    _urlController
+      ..text = url
+      ..selection = TextSelection.collapsed(offset: url.length);
+    _submit();
   }
 
   void _submit() {

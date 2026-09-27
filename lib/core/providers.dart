@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../services/downloads/download_manager.dart';
 import '../services/downloads/history_service.dart';
 import '../services/downloads/queue_store.dart';
+import '../services/foreground/foreground_service.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/settings/settings_service.dart';
 import '../services/ytdlp/binary_manager.dart';
@@ -91,6 +92,7 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
     settings: ref.watch(settingsServiceProvider),
     notifications: ref.watch(notificationServiceProvider),
     queueStore: ref.watch(queueStoreProvider),
+    foregroundService: ForegroundService.instance,
     maxConcurrency: maxConcurrency,
   );
   ref.onDispose(manager.dispose);

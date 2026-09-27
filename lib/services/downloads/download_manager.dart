@@ -10,6 +10,7 @@ import '../../core/models/download_options.dart';
 import '../../core/models/download_record.dart';
 import '../../core/models/download_task.dart';
 import '../../core/models/video_info.dart';
+import '../foreground/foreground_service.dart';
 import '../notifications/notification_service.dart';
 import '../settings/settings_service.dart';
 import '../ytdlp/progress_parser.dart';
@@ -32,6 +33,7 @@ class DownloadManager extends ChangeNotifier {
     this.settings,
     this.notifications,
     this.queueStore,
+    this.foregroundService,
     this.maxConcurrency = 1,
   }) {
     if (queueStore != null) unawaited(_restore());
@@ -43,6 +45,7 @@ class DownloadManager extends ChangeNotifier {
   final SettingsService? settings;
   final NotificationService? notifications;
   final QueueStore? queueStore;
+  final ForegroundService? foregroundService;
   final int maxConcurrency;
 
   final List<DownloadTask> _tasks = [];
@@ -55,6 +58,9 @@ class DownloadManager extends ChangeNotifier {
   /// Per-task throttle state for progress notifications (≤ 1 per 2s, and
   /// only when the percentage actually changed).
   final Map<String, ({int pct, DateTime at})> _progressNotification = {};
+
+  /// Throttle state for the single foreground-service notification.
+  ({int pct, DateTime at})? _foregroundNotification;
 
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
 
@@ -166,6 +172,11 @@ class DownloadManager extends ChangeNotifier {
     for (final task in candidates) {
       if (_runningCount >= maxConcurrency) break;
       task.status = DownloadStatus.downloading;
+      // Start the foreground service so the OS doesn't kill us. The throttle is
+      // reset so the very first progress update is never swallowed by a
+      // percentage recorded for a previous task.
+      _foregroundNotification = null;
+      unawaited(_startForeground(task));
       notifyListeners();
       unawaited(_run(task));
     }
@@ -333,6 +344,7 @@ class DownloadManager extends ChangeNotifier {
         unawaited(_cancelNotification(id));
       }
       _maybeNotifyUi();
+      unawaited(_stopForegroundIfIdle());
       _pump();
     }
   }
@@ -511,10 +523,77 @@ class DownloadManager extends ChangeNotifier {
   /// widgets are rebuilt at most ~10×/second.
   void _maybeNotifyUi() {
     _schedulePersist();
+    _updateForegroundNotification();
     final now = DateTime.now();
     if (now.difference(_lastUiNotify).inMilliseconds >= 100) {
       _lastUiNotify = now;
       notifyListeners();
+    }
+  }
+
+  /// Starts the foreground service for a download task.
+  Future<void> _startForeground(DownloadTask task) async {
+    final fg = foregroundService;
+    if (fg == null) return;
+    try {
+      await fg.startService(
+        title: task.video.title,
+        progress: task.progress,
+      );
+    } catch (_) {
+      // Foreground service failure must never break a download.
+    }
+  }
+
+  /// Updates the foreground service notification with the latest progress.
+  ///
+  /// Throttled to a changed percentage and at most one update every 2 seconds.
+  /// `_maybeNotifyUi` runs on every yt-dlp output line (capped at ~10/s), and
+  /// each service update is a platform round trip — pushing all of them
+  /// through floods the channel and makes the service slow to respond. A
+  /// percentage ticking 10 times a second is also unreadable in a notification.
+  void _updateForegroundNotification() {
+    final fg = foregroundService;
+    if (fg == null) return;
+    // The oldest downloading task is the one the service was started for.
+    DownloadTask? task;
+    for (final t in _tasks) {
+      if (t.status == DownloadStatus.downloading) {
+        task = t;
+        break;
+      }
+    }
+    if (task == null) return;
+
+    final pct = (task.progress * 100).round();
+    final now = DateTime.now();
+    final last = _foregroundNotification;
+    if (last != null &&
+        (last.pct == pct || now.difference(last.at).inSeconds < 2)) {
+      return;
+    }
+    _foregroundNotification = (pct: pct, at: now);
+    unawaited(
+      fg.updateService(title: task.video.title, progress: task.progress),
+    );
+  }
+
+  /// Stops the foreground service when no downloads are active.
+  Future<void> _stopForegroundIfIdle() async {
+    final fg = foregroundService;
+    if (fg == null) return;
+    final hasActive = _tasks.any(
+      (t) =>
+          t.status == DownloadStatus.downloading ||
+          t.status == DownloadStatus.queued,
+    );
+    if (!hasActive) {
+      // Clear the throttle too, so a later download's first update is not
+      // suppressed by a percentage left over from the previous one.
+      _foregroundNotification = null;
+      try {
+        await fg.stopService();
+      } catch (_) {}
     }
   }
 

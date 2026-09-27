@@ -1,12 +1,27 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Load signing properties from a local file that is NOT in git.
+// Copy android/key.properties.example to android/key.properties and fill in
+// your keystore details. Never commit the real key.properties.
+val keyPropertiesFile = rootProject.file("key.properties")
+val keyProperties = Properties()
+if (keyPropertiesFile.exists()) {
+    keyPropertiesFile.inputStream().use { keyProperties.load(it) }
+}
+
 android {
-    namespace = "com.example.ytdlp"
-    compileSdk = flutter.compileSdkVersion
+    namespace = "com.github.ytdlp"
+    // Flutter's default is 36, but receive_sharing_intent 1.9.0 compiles
+    // against 37. compileSdk only gates which APIs are visible at compile
+    // time; it does not change the runtime behaviour, which targetSdk drives
+    // (still pinned to 28 below for the bundled CPython runtime).
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -17,10 +32,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.example.ytdlp"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
+        applicationId = "com.github.ytdlp"
         minSdk = flutter.minSdkVersion
         // targetSdk 28 keeps the bundled Termux CPython runtime executable:
         // Android 10+ (API 29+) enforces W^X for apps that target API 29+, so
@@ -43,13 +55,33 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        create("release") {
+            keyAlias = keyProperties.getProperty("keyAlias")
+            keyPassword = keyProperties.getProperty("keyPassword")
+            storePassword = keyProperties.getProperty("storePassword")
+            val storePath = keyProperties.getProperty("storeFile")
+            if (!storePath.isNullOrBlank()) {
+                storeFile = rootProject.file(storePath)
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            // Release APKs are therefore NOT redistributable as-is — create a
-            // real keystore before publishing anywhere.
-            signingConfig = signingConfigs.getByName("debug")
+            // Fail with an actionable message instead of a signing error deep in
+            // the build when the keystore has not been set up yet.
+            if (keyPropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                logger.warn(
+                    "YTDL: android/key.properties not found — falling back to the " +
+                        "debug key for this release build. Copy " +
+                        "android/key.properties.example to android/key.properties " +
+                        "and fill it in to produce a redistributable APK."
+                )
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 

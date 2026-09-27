@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Download arrow -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,28 L54,58 L42,46 L38,50 L54,66 L70,50 L66,46 L54,58 Z"/>
+    <!-- Base line -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,72 L74,72 L74,78 L34,78 Z"/>
+</vector>

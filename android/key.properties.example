@@ -1,0 +1,12 @@
+# Copy this file to key.properties and fill in your keystore details.
+# NEVER commit the real key.properties to git.
+#
+# Generate a keystore with:
+#   keytool -genkey -v -keystore ~/ytdlp-release.keystore -alias ytdlp -keyalg RSA -keysize 2048 -validity 10000
+#
+# Then fill in the values below:
+
+storeFile=/path/to/your/ytdlp-release.keystore
+storePassword=your-keystore-password
+keyAlias=ytdlp
+keyPassword=your-key-password

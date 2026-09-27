@@ -6,7 +6,7 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 
 ## Features
 
-- **Download tab** — M3 `SearchBar` URL input (paste/clear), a clipboard paste FAB that extracts the link out of whatever you shared, `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. Audio quality is offered as named tiers (Best/High/Medium/Low) resolved against the source's actual bitrates — tiers that would deliver the same file are hidden and every row shows the real container + kbps. The sheet also carries **subtitles** (sidecar `.srt`/`.vtt` and/or embed; per-language chips with auto-generated captions marked "(auto)", plus "All available") and **thumbnail** (embed as cover art and/or `.jpg` sidecar) options, with embed gated on ffmpeg. Everything is seeded from the Settings defaults on every open.
+- **Download tab** — M3 `SearchBar` URL input (paste/clear), a clipboard paste FAB that extracts the link out of whatever you shared, **share-sheet intake** (a URL shared from another app lands here, auto-filled and fetched), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. Audio quality is offered as named tiers (Best/High/Medium/Low) resolved against the source's actual bitrates — tiers that would deliver the same file are hidden and every row shows the real container + kbps. The sheet also carries **subtitles** (sidecar `.srt`/`.vtt` and/or embed; per-language chips with auto-generated captions marked "(auto)", plus "All available") and **thumbnail** (embed as cover art and/or `.jpg` sidecar) options, with embed gated on ffmpeg. Everything is seeded from the Settings defaults on every open.
 - **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. One download runs at a time on mobile, two in parallel on desktop. Posts Android progress/completion notifications (foreground-only in v1).
   - **Resumable**: a failed or interrupted download keeps its staging directory and yt-dlp's `.part` file, so Retry continues instead of re-fetching. Engine flags add `--continue`, `--retries 10`, `--fragment-retries 10` and a capped `--retry-sleep linear=1:5:2` backoff.
   - **Restart-safe**: the queue is snapshotted to Hive, including the subtitle/thumbnail options of each task. Work that was running when the process was killed comes back as *failed* ("Interrupted when the app closed — tap Retry to continue") with its partial download intact; staging directories no task refers to are deleted on startup so they can't leak storage.
@@ -27,7 +27,9 @@ Some sites — YouTube in particular — refuse anonymous requests, showing "Sig
 - **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
 - **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlists will group under one folder per playlist inside the matching area. Three Hive boxes: `history` (library), `settings`, `queue` (task snapshots for restart recovery).
 - **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`; app-managed desktop copies re-download the official build; on Android the button replaces the yt-dlp script inside the extracted CPython runtime with the official standalone release — downloaded to a temp file and verified by running `--version` with the runtime's own interpreter before it replaces the working script, so a bad download can never break the engine. There is no URL to configure. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
-- **Notifications:** `flutter_local_notifications`, `downloads` channel, `POST_NOTIFICATIONS` (Android 13+ runtime grant on toggle). Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle. Foreground-only in v1 — background downloads need a Foreground Service (follow-up).
+- **Notifications:** `flutter_local_notifications`, `downloads` channel, `POST_NOTIFICATIONS` (Android 13+ runtime grant on toggle). Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle.
+- **Background downloads (Android):** `flutter_foreground_task` runs a `dataSync` foreground service for as long as the queue is non-empty, so downloads survive the app being backgrounded. It starts with the first task, shows the active download's title + percentage, and stops once the queue drains. A wake lock is held while it runs. Notification updates are throttled to a changed percentage and at most one every 2s — every update is a platform round trip, and the plugin answers redundant start contracts with `ForegroundServiceDidNotStartInTime`.
+- **Share intake (Android):** `receive_sharing_intent` catches `ACTION_SEND` text/plain intents, so YTDL appears in other apps' share sheets. A shared URL is extracted with the same `extractUrl` used for the clipboard (so "check this out https://…" works), auto-fills the Download tab and fetches immediately. The cold-start payload is buffered so sharing into a closed app is not lost, and consumed with `reset()` so a restart does not replay it.
 
 ## Project structure
 
@@ -101,14 +103,43 @@ APK per-ABI splits are recommended (each runtime adds ~16 MB + ~2 MB ffmpeg). A 
 flutter build apk --release --split-per-abi
 ```
 
-## Before publishing anything
+## Release identity
 
-The app still carries Flutter's placeholder identity — these are release blockers that need a human decision (changing `applicationId` later breaks upgrades, so pick once):
+- **App ID:** `com.github.ytdlp` (set in `android/app/build.gradle.kts`)
+- **App label:** `YTDL` (set in `AndroidManifest.xml`)
+- **Launcher icon:** adaptive icon with red background + white download arrow
 
-- `applicationId = "com.example.ytdlp"` in `android/app/build.gradle.kts` → your own reverse-DNS id.
-- `android:label="YTDL"` in the manifest, and the launcher icon is still the default Flutter icon.
-- Release builds are signed with the **debug key** — create a keystore and wire up `signingConfigs` (keep the keystore out of git; use GitHub secrets for CI).
-- Ship with `--split-per-abi` (see above), and add a changelog/version policy if you publish releases.
+### Signing
+
+Release builds are signed with a real keystore (not the debug key). To set up:
+
+1. Generate a keystore:
+   ```bash
+   keytool -genkey -v -keystore ~/ytdlp-release.keystore -alias ytdlp -keyalg RSA -keysize 2048 -validity 10000
+   ```
+
+2. Copy the example properties file and fill in your details:
+   ```bash
+   cp android/key.properties.example android/key.properties
+   # Edit android/key.properties with your keystore path and passwords
+   ```
+
+3. Build a signed release APK:
+   ```bash
+   flutter build apk --release --split-per-abi
+   ```
+
+The `android/key.properties` file is gitignored — never commit it. For CI, use GitHub secrets to inject the keystore and properties file at build time.
+
+### Per-ABI splits
+
+Each ABI adds ~16 MB (CPython runtime) + ~2 MB (ffmpeg). Build split APKs for smaller downloads:
+
+```bash
+flutter build apk --release --split-per-abi
+```
+
+This produces separate APKs for `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86`.
 
 ## Android notes
 
@@ -116,11 +147,12 @@ The app still carries Flutter's placeholder identity — these are release block
 - Downloads go to app-specific external dir on Android 10+ (no storage permission needed). A folder picked in Settings must be a real, writable filesystem path — the bundled yt-dlp child process writes by path, not via SAF `content://` URIs (SD-card picks are rejected with an explanation; on-device folders work).
 - **Android notes (ffmpeg):** on Android the bundled minimal static `ffmpeg` is used so DASH video/audio streams can merge (`--ffmpeg-location`). When ffmpeg is unavailable (desktop without a system `ffmpeg`), video is combined-only (no DASH merge) and audio is `M4A` (`ba[ext=m4a]/ba`).
 - **`targetSdk = 28` is deliberate.** Android 10+ (API 29+) enforces W^X for apps targeting API 29+: `exec()` on files in app-writable storage is denied (`avc: denied { execute_no_trans }`), which breaks the bundled CPython/yt-dlp runtime extracted into the app support dir. Termux ships targetSdk 28 for the same reason. Because that trips Google Play's `ExpiredTargetSdkVersion` lint on release builds, that single check is disabled in `android/app/build.gradle.kts` — every other lint rule still runs. A higher target is still reachable for experiments with `-P ytdlpTargetSdk=33`, but the runtime will not execute under it without repackaging the engine (e.g. shipping it via `jniLibs` into `nativeLibraryDir`) or switching to a pure-JVM yt-dlp.
-- Release builds are signed with the **debug key** (placeholder in `android/app/build.gradle.kts`). Create a real keystore before publishing anywhere.
+- Release builds are signed with the keystore described in **Release identity** above, falling back to the debug key with a warning when `android/key.properties` is absent.
+- **`compileSdk` is 37 while `targetSdk` stays 28.** `receive_sharing_intent` 1.9.0 and `flutter_foreground_task` 11.x compile against 37, so `android/app/build.gradle.kts` pins `compileSdk = 37` instead of following `flutter.compileSdkVersion` (36 in Flutter 3.47). These are independent: `compileSdk` only gates which APIs are visible at compile time, while `targetSdk` drives runtime behaviour — so the W^X requirement that keeps the bundled CPython runtime executable is unaffected. Verified via `aapt2 dump badging`: `compileSdkVersion='37'`, `targetSdkVersion='28'`.
+- **`android.builtInKotlin=true`** in `android/gradle.properties` (the Flutter template default is `false`). Both plugins migrated to Flutter's built-in Kotlin (`flutter_foreground_task` 11.0.0, `receive_sharing_intent` 1.9.0) and no longer apply the Kotlin Gradle Plugin themselves, which is required under AGP 9+ and removes the "applies Kotlin Gradle Plugin" build warning. Keeping it `false` still builds, but Flutter will hard-fail on a future version. Because the plugins are now built-in, the earlier `kotlin.jvm.target.validation.mode=warning` workaround is no longer needed and has been removed.
 - Distribution: Play Store forbids YouTube downloading — intended for sideload/F-Droid/GitHub.
 
 ### Metadata fetch limits
-
 `fetchVideoInfo` runs yt-dlp with a 90s timeout and bounded output capture. The two streams get separate budgets: 16 MB for the JSON payload on stdout (a real single video is ~100 KB), 64 KB for stderr, whose *tail* is kept for diagnostics. The stdout payload is retained **in full** up to its budget — it is what gets parsed, so it is never window-truncated. When stdout exceeds its budget the process is killed immediately instead of buffering a runaway response, and the app says what happened:
 
 - a **playlist link** — yt-dlp returns the whole collection (tens of MB) and still exits 0, so the app reports "that link is a playlist, this app downloads one video at a time" rather than a generic error;
@@ -139,12 +171,10 @@ The integration test boots the real app, fetches a video, picks a format and wai
 
 ## Roadmap
 
-Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source.
+Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source, release identity (app id, adaptive icon, keystore signing), Android foreground service for background downloads, and share-sheet intake.
 
 Still open:
 
 - **YouTube PO tokens + a JS runtime** (`yt-dlp-ejs` or Deno) in the bundled runtime — the main remaining blocker for YouTube reliability (see *Cookies* above).
-- **Android foreground service** so downloads survive the app being backgrounded (currently foreground-only).
 - Playlist downloads (`download_layout.dart` already carries the per-playlist template; the caller always passes `false`).
-- Share intent (`receive_sharing_intent`) — share a link straight into the app.
-- Release identity: app id, icon, signing key, per-ABI splits.
+- Changelog / version policy if releases are published.
