@@ -23,6 +23,33 @@ VideoInfo _video(String id) => VideoInfo(
   ],
 );
 
+/// The action button on the card for the video titled [title].
+Finder _cardAction(String title, String tooltip) => find.descendant(
+  of: find.ancestor(of: find.text(title), matching: find.byType(Card)),
+  matching: find.byTooltip(tooltip),
+);
+
+/// The status line the card for the video titled [title] is showing.
+///
+/// Read by widget text rather than by re-deriving the state, so the assertion
+/// is about what the user sees.
+String _cardState(WidgetTester tester, String title) => tester
+    .widgetList<Text>(
+      find.descendant(
+        of: find.ancestor(of: find.text(title), matching: find.byType(Card)),
+        matching: find.byType(Text),
+      ),
+    )
+    .map((t) => t.data ?? '')
+    .firstWhere(
+      (s) =>
+          s == 'Paused' ||
+          s.startsWith('Paused at') ||
+          s == 'Waiting to start' ||
+          s == 'Canceled',
+      orElse: () => 'other',
+    );
+
 /// Never writes a file, so tasks can be left in any state the UI can show.
 class _StubManager extends DownloadManager {
   _StubManager(HistoryService history, Directory dir)
@@ -36,8 +63,20 @@ class _StubManager extends DownloadManager {
     pause();
   }
 
+  /// Whether the UI is told the queue is paused.
+  ///
+  /// Separate from the real flag because the scheduler must stay blocked in
+  /// every test, while a few of them need to see an *unpaused* queue. `resume`
+  /// is overridden to a counter, so the real flag can never be cleared here.
+  bool reportsPaused = true;
+
+  @override
+  bool get isPaused => reportsPaused && super.isPaused;
+
   final List<String> canceled = [];
   final List<String> dismissed = [];
+  final List<String> paused = [];
+  final List<String> resumed = [];
   int reorderCalls = 0;
   int allCanceled = 0;
   int finishedCleared = 0;
@@ -107,6 +146,35 @@ class _StubManager extends DownloadManager {
     return true;
   }
 
+  /// Counted rather than delegated: the real one cancels the process, which
+  /// does not exist here, and would leave the task in `downloading` forever.
+  @override
+  bool pauseTask(String id) {
+    paused.add(id);
+    tasks.where((t) => t.id == id).firstOrNull?.status = DownloadStatus.paused;
+    notifyListeners();
+    return true;
+  }
+
+  @override
+  bool resumeTask(String id) {
+    resumed.add(id);
+    tasks.where((t) => t.id == id).firstOrNull?.status = DownloadStatus.queued;
+    notifyListeners();
+    return true;
+  }
+
+  @override
+  int resumeAllPaused() {
+    var n = 0;
+    for (final t in tasks) {
+      if (t.status != DownloadStatus.paused) continue;
+      t.status = DownloadStatus.queued;
+      n++;
+    }
+    return n;
+  }
+
   @override
   void resume() => resumeCalls++;
 }
@@ -172,8 +240,10 @@ void main() {
     manager.seed([_task('a')]);
     // The stub starts paused, which is the state the button reports.
     await pump(tester);
-    expect(find.text('Paused'), findsOneWidget);
-    expect(find.byTooltip('Resume the queue'), findsOneWidget);
+    // "All held" rather than "Paused": a card can be held on its own, so the
+    // chip has to say which kind of pause is in force.
+    expect(find.text('All held'), findsOneWidget);
+    expect(find.byTooltip('Resume every held download'), findsOneWidget);
     // Counts stay visible while paused, so the queue does not look empty.
     expect(find.text('1 queued'), findsOneWidget);
   });
@@ -182,8 +252,38 @@ void main() {
     manager.seed([_task('a')]);
     await pump(tester);
 
-    await tester.tap(find.byTooltip('Resume the queue'));
+    await tester.tap(find.byTooltip('Resume every held download'));
     await tester.pumpAndSettle();
+    expect(manager.resumeCalls, 1);
+  });
+
+  testWidgets('a per-task hold is reported separately from the queue pause', (
+    tester,
+  ) async {
+    // Reported as running, so the per-task chip is the one on screen.
+    manager.reportsPaused = false;
+    manager.seed([_task('a'), _task('b')]);
+    await pump(tester);
+    expect(find.text('1 held'), findsNothing, reason: 'nothing is held yet');
+
+    await tester.tap(find.byTooltip('Pause this download').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 held'), findsOneWidget);
+    expect(find.text('All held'), findsNothing);
+  });
+
+  testWidgets('the queue-wide pause also releases a held task', (tester) async {
+    // Otherwise a "hold this one" would survive a global "go" and look stuck.
+    manager.seed([_task('a')]);
+    await pump(tester);
+    await tester.tap(find.byTooltip('Pause this download'));
+    await tester.pumpAndSettle();
+    expect(find.text('Paused'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Resume every held download'));
+    await tester.pumpAndSettle();
+
     expect(manager.resumeCalls, 1);
   });
 
@@ -267,9 +367,116 @@ void main() {
 
     expect(find.text('Canceled'), findsOneWidget);
     final id = manager.tasks.single.id;
-    await tester.tap(find.text('Dismiss'));
+    await tester.tap(find.byTooltip('Remove from the queue'));
     await tester.pumpAndSettle();
     expect(manager.dismissed, contains(id));
+  });
+
+  group('per-task actions', () {
+    testWidgets('a running task offers pause and cancel as icons only', (
+      tester,
+    ) async {
+      manager.seed([_task('a')]);
+      manager.setStatus('a', DownloadStatus.downloading);
+      await pump(tester);
+
+      expect(find.byTooltip('Pause this download'), findsOneWidget);
+      expect(find.byTooltip('Cancel this download'), findsOneWidget);
+      // Icon-only: a labelled button per card turns a long queue into a wall of
+      // buttons, so the names live in the tooltips instead.
+      expect(find.widgetWithText(Text, 'Cancel'), findsNothing);
+    });
+
+    testWidgets('tapping pause holds that task only', (tester) async {
+      manager.seed([_task('a'), _task('b')]);
+      manager.setStatus('a', DownloadStatus.downloading);
+      await pump(tester);
+
+      // Scoped to the card, because both offer a pause and the queue is
+      // newest-first, so `.first` would be the other task.
+      await tester.tap(_cardAction('Video a', 'Pause this download'));
+      await tester.pumpAndSettle();
+
+      expect(manager.paused, hasLength(1));
+      expect(
+        manager.paused.single,
+        manager.tasks.firstWhere((t) => t.video.title == 'Video a').id,
+      );
+      // Progress is kept, so the card names the percentage it stopped at.
+      expect(_cardState(tester, 'Video a'), 'Paused at 50.0%');
+      // The other card is untouched, which is the point of a per-task hold.
+      expect(_cardState(tester, 'Video b'), 'Waiting to start');
+    });
+
+    testWidgets('a held task offers resume and cancel', (tester) async {
+      manager.seed([_task('a')]);
+      await pump(tester);
+      await tester.tap(find.byTooltip('Pause this download'));
+      await tester.pumpAndSettle();
+
+      expect(find.byTooltip('Resume this download'), findsOneWidget);
+      expect(find.byTooltip('Cancel this download'), findsOneWidget);
+      expect(find.byTooltip('Pause this download'), findsNothing);
+    });
+
+    testWidgets('tapping resume releases that task', (tester) async {
+      manager.seed([_task('a')]);
+      await pump(tester);
+      await tester.tap(find.byTooltip('Pause this download'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Resume this download'));
+      await tester.pumpAndSettle();
+
+      expect(manager.resumed, hasLength(1));
+      expect(find.text('Waiting to start'), findsOneWidget);
+    });
+
+    testWidgets('a held task keeps its progress in the label', (tester) async {
+      manager.seed([_task('a')]);
+      manager.setStatus('a', DownloadStatus.downloading);
+      await pump(tester);
+      await tester.tap(find.byTooltip('Pause this download'));
+      await tester.pumpAndSettle();
+
+      // The .part is still on disk, so the percentage is worth showing.
+      expect(find.text('Paused at 50.0%'), findsOneWidget);
+    });
+
+    testWidgets('a held task offers no reorder controls', (tester) async {
+      manager.seed([_task('a')]);
+      await pump(tester);
+      await tester.tap(find.byTooltip('Pause this download'));
+      await tester.pumpAndSettle();
+
+      // Releasing puts it at the back of the queue, so arrows would promise an
+      // ordering the scheduler would not honour.
+      expect(find.byTooltip('Move earlier in the queue'), findsNothing);
+      expect(find.byTooltip('Move later in the queue'), findsNothing);
+    });
+
+    testWidgets('a canceled task offers retry as well as dismiss', (
+      tester,
+    ) async {
+      // Cancel keeps the partial, so retry continues rather than restarting.
+      manager.seed([_task('a')]);
+      manager.setStatus('a', DownloadStatus.canceled);
+      await pump(tester);
+
+      expect(find.byTooltip('Try again'), findsOneWidget);
+      expect(find.byTooltip('Remove from the queue'), findsOneWidget);
+    });
+
+    testWidgets('a completed task offers no retry', (tester) async {
+      // Re-running a finished download is a new download; offering it behind a
+      // retry icon would be a trap.
+      manager.seed([_task('a')]);
+      manager.setStatus('a', DownloadStatus.completed);
+      await pump(tester);
+
+      expect(find.byTooltip('Try again'), findsNothing);
+      expect(find.byTooltip('Open the file'), findsOneWidget);
+    });
   });
 
   testWidgets('the layout is constrained to a readable width', (tester) async {
@@ -299,8 +506,10 @@ void main() {
     await pump(tester);
 
     expect(find.text('Completed'), findsOneWidget);
-    expect(find.text('Open'), findsOneWidget);
-    expect(find.text('Share'), findsOneWidget);
+    // Icon-only here too, matching the other per-task actions.
+    expect(find.byTooltip('Open the file'), findsOneWidget);
+    expect(find.byTooltip('Share the file'), findsOneWidget);
     expect(find.byTooltip('Delete file'), findsOneWidget);
+    expect(find.widgetWithText(Text, 'Open'), findsNothing);
   });
 }

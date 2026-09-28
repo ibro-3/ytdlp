@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive/hive.dart';
 import 'package:ytdlp/core/models/download_options.dart';
+import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/download_task.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
 import 'package:ytdlp/core/models/video_info.dart';
@@ -93,10 +94,21 @@ void main() {
     } catch (_) {}
   });
 
-  Future<void> pump(WidgetTester tester, PlaylistInfo playlist) async {
+  Future<void> pump(
+    WidgetTester tester,
+    PlaylistInfo playlist, {
+    AppSettings settings = const AppSettings(),
+  }) async {
     tester.view.physicalSize = const Size(500, 1400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    // Written to the box rather than overridden in the provider, so the page
+    // seeds itself through the same path it uses in the app. `runAsync` because
+    // a Hive write is real I/O, which the test's fake-async zone will not drive.
+    await tester.runAsync(() async {
+      await settingsBox.clear();
+      await settingsBox.put('app_settings', settings.toMap());
+    });
     // A real router, because submitting navigates to the queue tab. The picker
     // is built directly here; the `/download/playlist` route and its `extra`
     // handoff are covered by the router tests.
@@ -257,14 +269,8 @@ void main() {
       expect(format.selector, 'ba[ext=m4a][abr<=128]/ba[ext=m4a]');
     });
 
-    testWidgets('embed switches are disabled without ffprobe', (tester) async {
+    testWidgets('embed subs is disabled without ffprobe', (tester) async {
       await pump(tester, _playlist(count: 1, canPostprocess: false));
-
-      final embedThumb = tester.widget<SwitchListTile>(
-        find.widgetWithText(SwitchListTile, 'Embed thumbnail'),
-      );
-      expect(embedThumb.onChanged, isNull);
-      expect(embedThumb.value, isFalse);
 
       final embedSubs = tester.widget<SwitchListTile>(
         find.widgetWithText(SwitchListTile, 'Embed subtitles'),
@@ -272,15 +278,53 @@ void main() {
       expect(embedSubs.onChanged, isNull);
     });
 
-    testWidgets('embed switches are available with ffprobe', (tester) async {
+    testWidgets('embed subs is available with ffprobe', (tester) async {
       await pump(tester, _playlist(count: 1, canPostprocess: true));
 
-      for (final label in ['Embed thumbnail', 'Embed subtitles']) {
-        final tile = tester.widget<SwitchListTile>(
-          find.widgetWithText(SwitchListTile, label),
-        );
-        expect(tile.onChanged, isNotNull, reason: label);
-      }
+      final tile = tester.widget<SwitchListTile>(
+        find.widgetWithText(SwitchListTile, 'Embed subtitles'),
+      );
+      expect(tile.onChanged, isNotNull);
+    });
+
+    testWidgets('no thumbnail switch is offered, and cover art is derived', (
+      tester,
+    ) async {
+      // A batch has no per-entry format data, so a toggle would only be
+      // guessing; the derived value is stated instead.
+      await pump(tester, _playlist(count: 1, canPostprocess: true));
+      expect(
+        find.widgetWithText(SwitchListTile, 'Embed thumbnail'),
+        findsNothing,
+      );
+      expect(
+        find.widgetWithText(SwitchListTile, 'Save thumbnail .jpg'),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('not embedded in video files'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('an audio batch embeds cover art', (tester) async {
+      await pump(
+        tester,
+        _playlist(count: 1, canPostprocess: true),
+        settings: const AppSettings(defaultAudioOnly: true),
+      );
+      expect(find.textContaining('embedded as cover art'), findsOneWidget);
+    });
+
+    testWidgets('a batch says so when cover art cannot be embedded', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        _playlist(count: 1, canPostprocess: false),
+        settings: const AppSettings(defaultAudioOnly: true),
+      );
+      expect(find.textContaining('Needs ffmpeg and ffprobe'), findsOneWidget);
     });
   });
 }

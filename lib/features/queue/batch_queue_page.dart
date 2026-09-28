@@ -220,7 +220,6 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
   late FormatKind _kind;
   late int? _tier;
   late bool _writeSubs;
-  late bool _embedThumb;
 
   @override
   void initState() {
@@ -232,7 +231,6 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
         ? widget.settings.defaultAudioTier
         : widget.settings.defaultVideoTier;
     _writeSubs = widget.settings.defaultWriteSubs;
-    _embedThumb = widget.settings.defaultEmbedThumb;
   }
 
   String _tierLabel(int? tier) => tier == null
@@ -300,13 +298,6 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
               value: _writeSubs,
               onChanged: (v) => setState(() => _writeSubs = v),
             ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Save thumbnail (.jpg)'),
-              value: _embedThumb,
-              onChanged: (v) => setState(() => _embedThumb = v),
-            ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
@@ -317,7 +308,9 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
                     format: format,
                     options: DownloadOptions(
                       writeSubs: _writeSubs,
-                      writeThumb: _embedThumb,
+                      // Derived, matching the single-video sheet: audio links
+                      // get cover art, video links do not.
+                      embedThumb: DownloadOptions.coverArtDefault(_kind),
                     ),
                   ),
                 ),

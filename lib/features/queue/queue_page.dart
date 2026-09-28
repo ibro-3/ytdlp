@@ -18,9 +18,15 @@ class QueuePage extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Queue'),
         actions: [
-          AnimatedBuilder(
-            animation: manager,
-            builder: (context, _) => _QueueMenu(manager: manager),
+          // Flexible, so the menu yields width to the title on a narrow screen
+          // instead of the toolbar overflowing. App bar actions are laid out at
+          // their intrinsic width, so without this the counts plus two chips and
+          // two buttons can exceed the bar.
+          Flexible(
+            child: AnimatedBuilder(
+              animation: manager,
+              builder: (context, _) => _QueueMenu(manager: manager),
+            ),
           ),
         ],
       ),
@@ -41,7 +47,9 @@ class QueuePage extends ConsumerWidget {
                 itemBuilder: (context, i) {
                   final task = tasks[i];
                   // Reordering only means something for a task that is
-                  // waiting, so the handles are offered only for those.
+                  // waiting. A held one is not: releasing it puts it at the
+                  // back of the queue, so its arrows would promise an ordering
+                  // the scheduler would not honour.
                   final canReorder = task.status == DownloadStatus.queued;
                   return _TaskCard(
                     task: task,
@@ -80,29 +88,48 @@ class _QueueMenu extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // The counts stay visible while paused — a paused queue still has
-        // running work, and hiding the numbers would make it look empty.
+        // Flexible so the counts yield first on a narrow screen rather than
+        // overflowing the app bar: the counts are the least urgent thing here.
         if (parts.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Text(
-              parts.join(' · '),
-              style: Theme.of(context).textTheme.labelMedium,
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Text(
+                parts.join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
             ),
           ),
+        // Queue-wide and per-task holds are different things, so the chips say
+        // which is in force rather than both just reading "Paused".
         if (manager.isPaused)
           const Padding(
             padding: EdgeInsets.only(right: 8),
             child: Chip(
               avatar: Icon(Icons.pause, size: 16),
-              label: Text('Paused'),
+              label: Text('All held'),
+              visualDensity: VisualDensity.compact,
+            ),
+          )
+        else if (manager.pausedCount > 0)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: Chip(
+              avatar: const Icon(Icons.pause, size: 16),
+              label: Text('${manager.pausedCount} held'),
               visualDensity: VisualDensity.compact,
             ),
           ),
         IconButton(
           onPressed: manager.tasks.isEmpty ? null : manager.togglePause,
           icon: Icon(manager.isPaused ? Icons.play_arrow : Icons.pause),
-          tooltip: manager.isPaused ? 'Resume the queue' : 'Pause the queue',
+          // Named as the *queue* explicitly, because each card now has its own
+          // pause and the two are easy to confuse.
+          tooltip: manager.isPaused
+              ? 'Resume every held download'
+              : 'Hold back everything still waiting',
         ),
         PopupMenuButton<String>(
           icon: const Icon(Icons.more_vert),
@@ -143,11 +170,10 @@ class _QueueMenu extends StatelessWidget {
       builder: (context) => AlertDialog(
         title: const Text('Cancel all downloads?'),
         content: Text(
-          manager.activeCount > 0
-              ? '${manager.activeCount} running and '
-                    '${manager.queuedCount} queued will be canceled. '
-                    'Partial downloads are kept so you can retry them.'
-              : '${manager.queuedCount} queued will be canceled.',
+          // Paused tasks are included in the count, since cancelAll takes them
+          // too — leaving them out would make the dialog understate the effect.
+          '${[if (manager.activeCount > 0) '${manager.activeCount} running', if (manager.queuedCount > 0) '${manager.queuedCount} queued', if (manager.pausedCount > 0) '${manager.pausedCount} held'].join(' and ')} will be canceled. Partial downloads are kept so you '
+          'can retry them.',
         ),
         actions: [
           TextButton(
@@ -220,8 +246,10 @@ class _TaskCard extends ConsumerWidget {
     final isQueued = task.status == DownloadStatus.queued;
     final isRunning = task.status == DownloadStatus.downloading;
     final isDownloading = isQueued || isRunning;
+    final isPaused = task.status == DownloadStatus.paused;
     final isDone = task.status == DownloadStatus.completed;
     final isFailed = task.status == DownloadStatus.failed;
+    final isCanceled = task.status == DownloadStatus.canceled;
 
     return Card(
       child: Padding(
@@ -292,7 +320,27 @@ class _TaskCard extends ConsumerWidget {
             // "Waiting" label rather than an indeterminate bar — an animating
             // spinner on a dozen queued items reads as twelve active
             // downloads, and it never settles.
-            if (isQueued)
+            if (isPaused)
+              Row(
+                children: [
+                  Icon(Icons.pause, size: 14, color: scheme.onSurfaceVariant),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      // A held download keeps its progress: the .part file is
+                      // still on disk, so resuming continues rather than
+                      // starting over.
+                      task.progress > 0
+                          ? 'Paused at ${(task.progress * 100).toStringAsFixed(1)}%'
+                          : 'Paused',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            else if (isQueued)
               Row(
                 children: [
                   Icon(
@@ -393,7 +441,7 @@ class _TaskCard extends ConsumerWidget {
                   ),
                 ],
               ),
-            ] else if (task.status == DownloadStatus.canceled) ...[
+            ] else if (isCanceled) ...[
               Text(
                 'Canceled',
                 style: theme.textTheme.labelSmall?.copyWith(
@@ -402,46 +450,70 @@ class _TaskCard extends ConsumerWidget {
               ),
             ],
             const SizedBox(height: 10),
+            // Icon-only from here down: these are per-task actions on a card
+            // that may be one of dozens in a list, and labelled buttons make a
+            // long queue mostly buttons. The tooltips carry the names, and the
+            // icons are distinct enough to read at a glance.
             Wrap(
-              spacing: 8,
-              runSpacing: 8,
+              spacing: 4,
+              runSpacing: 4,
               children: [
-                if (isDownloading)
-                  FilledButton.tonalIcon(
-                    onPressed: () => manager.cancel(task.id),
-                    icon: const Icon(Icons.close, size: 18),
-                    label: const Text('Cancel'),
-                  )
-                else if (isDone) ...[
-                  FilledButton.tonalIcon(
-                    onPressed: () => _open(context, manager, task),
-                    icon: const Icon(Icons.play_arrow, size: 18),
-                    label: const Text('Open'),
+                if (isDownloading) ...[
+                  IconButton(
+                    onPressed: () => manager.pauseTask(task.id),
+                    icon: const Icon(Icons.pause),
+                    tooltip: 'Pause this download',
                   ),
-                  OutlinedButton.icon(
+                  IconButton(
+                    onPressed: () => manager.cancel(task.id),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Cancel this download',
+                  ),
+                ] else if (isPaused) ...[
+                  IconButton.filledTonal(
+                    onPressed: () => manager.resumeTask(task.id),
+                    icon: const Icon(Icons.play_arrow),
+                    tooltip: 'Resume this download',
+                  ),
+                  IconButton(
+                    onPressed: () => manager.cancel(task.id),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Cancel this download',
+                  ),
+                ] else if (isDone) ...[
+                  IconButton.filledTonal(
+                    onPressed: () => _open(context, manager, task),
+                    icon: const Icon(Icons.play_arrow),
+                    tooltip: 'Open the file',
+                  ),
+                  IconButton(
                     onPressed: () => _share(context, manager, task),
-                    icon: const Icon(Icons.share_outlined, size: 18),
-                    label: const Text('Share'),
+                    icon: const Icon(Icons.share_outlined),
+                    tooltip: 'Share the file',
                   ),
                   IconButton(
                     onPressed: () => _delete(context, manager, task),
                     icon: const Icon(Icons.delete_outline),
                     tooltip: 'Delete file',
                   ),
-                ] else if (isFailed) ...[
-                  FilledButton.tonalIcon(
+                ] else if (isFailed || isCanceled) ...[
+                  // Retry covers a canceled download too: its partial is kept,
+                  // so this continues rather than re-downloading.
+                  IconButton.filledTonal(
                     onPressed: () => manager.retry(task),
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Retry'),
+                    icon: const Icon(Icons.refresh),
+                    tooltip: 'Try again',
                   ),
-                  OutlinedButton(
+                  IconButton(
                     onPressed: () => manager.dismiss(task.id),
-                    child: const Text('Dismiss'),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Remove from the queue',
                   ),
                 ] else ...[
-                  OutlinedButton(
+                  IconButton(
                     onPressed: () => manager.dismiss(task.id),
-                    child: const Text('Dismiss'),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Remove from the queue',
                   ),
                 ],
                 // Reorder is only meaningful while a task is still waiting;

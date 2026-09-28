@@ -3,7 +3,10 @@ import 'video_info.dart';
 import 'youtube_prefs.dart';
 import 'yt_prefs.dart';
 
-enum DownloadStatus { queued, downloading, completed, failed, canceled }
+/// [paused] is a task the user held back: the download is not running and the
+/// scheduler will not start it until it is released, but unlike
+/// [DownloadStatus.canceled] it still has a resumable partial file.
+enum DownloadStatus { queued, downloading, paused, completed, failed, canceled }
 
 class DownloadTask {
   DownloadTask({
@@ -194,6 +197,7 @@ class DownloadTask {
     'downloading' => DownloadStatus.downloading,
     'completed' => DownloadStatus.completed,
     'failed' => DownloadStatus.failed,
+    'paused' => DownloadStatus.paused,
     'canceled' => DownloadStatus.canceled,
     _ => DownloadStatus.failed,
   };

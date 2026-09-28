@@ -17,8 +17,6 @@ class AppSettings {
     this.defaultEmbedSubs = false,
     this.defaultWriteSubs = false,
     this.defaultIncludeAutoSubs = false,
-    this.defaultEmbedThumb = false,
-    this.defaultWriteThumb = false,
     this.cookiesPath = '',
     this.downloadRoot = '',
     this.extraArgs = '',
@@ -116,11 +114,13 @@ class AppSettings {
 
   /// Defaults seeded into the download sheet. Embed options are only honored
   /// when ffmpeg is available (bundled on Android, inferred on desktop).
+  ///
+  /// There is no thumbnail default here: cover art is derived from the download
+  /// kind by `DownloadOptions.coverArtDefault` rather than offered as a toggle,
+  /// so a stored `defaultEmbedThumb` from an older build is simply ignored.
   final bool defaultEmbedSubs;
   final bool defaultWriteSubs;
   final bool defaultIncludeAutoSubs;
-  final bool defaultEmbedThumb;
-  final bool defaultWriteThumb;
 
   Color get seed => Color(seedColor);
 
@@ -137,8 +137,6 @@ class AppSettings {
     bool? defaultEmbedSubs,
     bool? defaultWriteSubs,
     bool? defaultIncludeAutoSubs,
-    bool? defaultEmbedThumb,
-    bool? defaultWriteThumb,
     String? cookiesPath,
     String? downloadRoot,
     String? extraArgs,
@@ -163,8 +161,6 @@ class AppSettings {
       defaultWriteSubs: defaultWriteSubs ?? this.defaultWriteSubs,
       defaultIncludeAutoSubs:
           defaultIncludeAutoSubs ?? this.defaultIncludeAutoSubs,
-      defaultEmbedThumb: defaultEmbedThumb ?? this.defaultEmbedThumb,
-      defaultWriteThumb: defaultWriteThumb ?? this.defaultWriteThumb,
       cookiesPath: cookiesPath ?? this.cookiesPath,
       downloadRoot: downloadRoot ?? this.downloadRoot,
       extraArgs: extraArgs ?? this.extraArgs,
@@ -196,8 +192,6 @@ class AppSettings {
     'defaultEmbedSubs': defaultEmbedSubs,
     'defaultWriteSubs': defaultWriteSubs,
     'defaultIncludeAutoSubs': defaultIncludeAutoSubs,
-    'defaultEmbedThumb': defaultEmbedThumb,
-    'defaultWriteThumb': defaultWriteThumb,
     'cookiesPath': cookiesPath,
     'downloadRoot': downloadRoot,
     'extraArgs': extraArgs,
@@ -223,8 +217,6 @@ class AppSettings {
       defaultEmbedSubs: (m['defaultEmbedSubs'] as bool?) ?? false,
       defaultWriteSubs: (m['defaultWriteSubs'] as bool?) ?? false,
       defaultIncludeAutoSubs: (m['defaultIncludeAutoSubs'] as bool?) ?? false,
-      defaultEmbedThumb: (m['defaultEmbedThumb'] as bool?) ?? false,
-      defaultWriteThumb: (m['defaultWriteThumb'] as bool?) ?? false,
       cookiesPath: (m['cookiesPath'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
       extraArgs: (m['extraArgs'] as String?) ?? '',

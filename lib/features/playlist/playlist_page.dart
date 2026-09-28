@@ -41,8 +41,6 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   late bool _writeSubs;
   late bool _includeAuto;
   late bool _embedSubs;
-  late bool _embedThumb;
-  late bool _writeThumb;
 
   @override
   void initState() {
@@ -60,8 +58,6 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
     _includeAuto = settings.defaultIncludeAutoSubs;
     // Embedding needs ffprobe, not just ffmpeg — see VideoInfo.canPostprocess.
     _embedSubs = widget.playlist.canPostprocess && settings.defaultEmbedSubs;
-    _embedThumb = widget.playlist.canPostprocess && settings.defaultEmbedThumb;
-    _writeThumb = settings.defaultWriteThumb;
   }
 
   @override
@@ -128,8 +124,8 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
       writeSubs: _writeSubs,
       includeAutoSubs: _includeAuto,
       embedSubs: _kind == FormatKind.video && _embedSubs,
-      embedThumb: _embedThumb,
-      writeThumb: _writeThumb,
+      // One derived value for the whole batch, since every entry shares a kind.
+      embedThumb: DownloadOptions.coverArtDefault(_kind),
     );
     final count = chosen.length;
     ref
@@ -332,35 +328,19 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
             ],
           ),
           const SizedBox(height: 4),
-          if (isAudio && !canEmbed)
-            Text(
-              'Audio downloads keep the source container — no remuxing, so '
-              'there is no thumbnail to embed.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            )
-          else
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              value: _embedThumb,
-              onChanged: canEmbed
-                  ? (v) => setState(() => _embedThumb = v)
-                  : null,
-              title: const Text('Embed thumbnail'),
-              subtitle: Text(
-                canEmbed
-                    ? 'Cover art from the source thumbnail'
-                    : 'Needs ffmpeg and ffprobe, which are not both available',
-              ),
+          // Cover art has no toggle: audio batches embed it, video batches do
+          // not. Said here because a video batch that *looks* like it is losing
+          // the thumbnail would otherwise be a silent surprise.
+          Text(
+            isAudio
+                ? canEmbed
+                      ? 'The thumbnail is embedded as cover art.'
+                      : 'Needs ffmpeg and ffprobe to embed the thumbnail as '
+                            'cover art.'
+                : 'The thumbnail is not embedded in video files.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
             ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            value: _writeThumb,
-            onChanged: (v) => setState(() => _writeThumb = v),
-            title: const Text('Save thumbnail .jpg'),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,

@@ -102,6 +102,10 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> patch(AppSettings next) async {
     await ref.read(settingsServiceProvider).update(next);
+    // The write is asynchronous, so this controller can be disposed while it
+    // is in flight — navigating away from Settings mid-save is enough. Setting
+    // state after that throws, turning an ordinary save into a crash.
+    if (!ref.mounted) return;
     state = next;
   }
 }

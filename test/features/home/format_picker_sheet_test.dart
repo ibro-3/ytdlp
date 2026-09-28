@@ -284,9 +284,7 @@ void main() {
     expect(result.picked?.format.selector, _audioMedium.selector);
   });
 
-  testWidgets('settings seed the subtitle and thumbnail switches', (
-    tester,
-  ) async {
+  testWidgets('settings seed the subtitle switches', (tester) async {
     await _openSheet(
       tester,
       video: _video(subtitleTracks: const [_enSubs], hasFfmpeg: true),
@@ -294,8 +292,6 @@ void main() {
         defaultWriteSubs: true,
         defaultEmbedSubs: true,
         defaultIncludeAutoSubs: true,
-        defaultEmbedThumb: true,
-        defaultWriteThumb: true,
       ),
     );
 
@@ -308,19 +304,69 @@ void main() {
     final auto = tester.widget<SwitchListTile>(
       find.widgetWithText(SwitchListTile, 'Include auto-generated'),
     );
-    final cover = tester.widget<SwitchListTile>(
-      find.widgetWithText(SwitchListTile, 'Embed as cover art'),
-    );
-    final jpg = tester.widget<SwitchListTile>(
-      find.widgetWithText(SwitchListTile, 'Save .jpg next to the file'),
-    );
     expect(write.value, isTrue);
     expect(embed.value, isTrue);
     expect(embed.onChanged, isNotNull);
     expect(auto.value, isTrue);
-    expect(cover.value, isTrue);
-    expect(cover.onChanged, isNotNull);
-    expect(jpg.value, isTrue);
+  });
+
+  testWidgets('no thumbnail switch is offered in either mode', (tester) async {
+    // Cover art is derived from the mode, so a toggle would be a lie: it could
+    // only ever be turned off for video, which is already the derived value.
+    await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_enSubs], hasFfmpeg: true),
+    );
+
+    expect(find.text('Thumbnail'), findsNothing);
+    expect(find.text('Embed as cover art'), findsNothing);
+    expect(find.text('Save .jpg next to the file'), findsNothing);
+
+    await tester.tap(find.text('Audio'));
+    await tester.pumpAndSettle();
+    expect(find.text('Embed as cover art'), findsNothing);
+  });
+
+  testWidgets('video mode does not embed cover art', (tester) async {
+    final result = await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_enSubs], hasFfmpeg: true),
+    );
+    await _tapDownload(tester);
+
+    expect(
+      result.picked?.options.embedThumb,
+      isFalse,
+      reason: 'a video file has no use for an embedded cover',
+    );
+  });
+
+  testWidgets('audio mode embeds cover art', (tester) async {
+    final result = await _openSheet(
+      tester,
+      video: _video(subtitleTracks: const [_enSubs], hasFfmpeg: true),
+    );
+    await tester.tap(find.text('Audio'));
+    await tester.pumpAndSettle();
+    await _tapDownload(tester);
+
+    expect(
+      result.picked?.options.embedThumb,
+      isTrue,
+      reason: 'a music player shows the album art',
+    );
+  });
+
+  testWidgets('audio mode says out loud when cover art is dropped', (
+    tester,
+  ) async {
+    // Derived or not, a download that quietly loses its cover art looks like a
+    // bug — so the sheet states it when ffmpeg/ffprobe are missing.
+    await _openSheet(tester, video: _video(subtitleTracks: const [_enSubs]));
+    await tester.tap(find.text('Audio'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('needs ffmpeg and ffprobe'), findsOneWidget);
   });
 
   testWidgets('embed switches are forced off and disabled without ffmpeg', (
@@ -329,22 +375,14 @@ void main() {
     await _openSheet(
       tester,
       video: _video(subtitleTracks: const [_enSubs]),
-      settings: const AppSettings(
-        defaultEmbedSubs: true,
-        defaultEmbedThumb: true,
-      ),
+      settings: const AppSettings(defaultEmbedSubs: true),
     );
 
     final embed = tester.widget<SwitchListTile>(
       find.widgetWithText(SwitchListTile, 'Embed in the file'),
     );
-    final cover = tester.widget<SwitchListTile>(
-      find.widgetWithText(SwitchListTile, 'Embed as cover art'),
-    );
     expect(embed.value, isFalse, reason: 'seeding must not lie');
     expect(embed.onChanged, isNull, reason: 'no ffmpeg → cannot embed');
-    expect(cover.value, isFalse);
-    expect(cover.onChanged, isNull);
   });
 
   testWidgets(
@@ -360,22 +398,14 @@ void main() {
           hasFfmpeg: true,
           canPostprocess: false,
         ),
-        settings: const AppSettings(
-          defaultEmbedSubs: true,
-          defaultEmbedThumb: true,
-        ),
+        settings: const AppSettings(defaultEmbedSubs: true),
       );
 
       final embed = tester.widget<SwitchListTile>(
         find.widgetWithText(SwitchListTile, 'Embed in the file'),
       );
-      final cover = tester.widget<SwitchListTile>(
-        find.widgetWithText(SwitchListTile, 'Embed as cover art'),
-      );
       expect(embed.value, isFalse, reason: 'seeding must not lie');
       expect(embed.onChanged, isNull, reason: 'no ffprobe → cannot embed');
-      expect(cover.value, isFalse);
-      expect(cover.onChanged, isNull);
     },
   );
 

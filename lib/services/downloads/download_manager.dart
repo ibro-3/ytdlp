@@ -115,11 +115,28 @@ class DownloadManager extends ChangeNotifier {
   void resume() {
     if (!_paused) return;
     _paused = false;
+    resumeAllPaused();
     _pump();
     notifyListeners();
   }
 
+  /// Resumes the queue. Also releases anything held by [pauseTask], so a
+  /// global "go" cannot leave an individual task stranded behind a
+  /// per-card pause the user has since forgotten about.
   void togglePause() => _paused ? resume() : pause();
+
+  /// Tasks whose process is being stopped by [pauseTask] and whose `_run` is
+  /// still unwinding.
+  ///
+  /// Needed because the run loop has to distinguish "stopped because the user
+  /// paused this one task" from "stopped because the download failed": the
+  /// first keeps its staging directory and lands in [DownloadStatus.paused], the
+  /// second is a failure.
+  final Set<String> _pausing = {};
+
+  /// Set by [dispose], so a run loop that wakes up afterwards (because
+  /// disposing killed its process) stays silent.
+  bool _disposed = false;
 
   /// Per-task throttle state for progress notifications (≤ 1 per 2s, and
   /// only when the percentage actually changed).
@@ -206,7 +223,10 @@ class DownloadManager extends ChangeNotifier {
       final restored = store.load();
       for (final task in restored) {
         if (task.status == DownloadStatus.queued ||
-            task.status == DownloadStatus.downloading) {
+            task.status == DownloadStatus.downloading ||
+            // A hold was a decision about the session that just ended, the same
+            // as the global pause, so it is not silently restored either.
+            task.status == DownloadStatus.paused) {
           task.status = DownloadStatus.failed;
           task.error =
               'Interrupted when the app closed — tap Retry to continue.';
@@ -355,6 +375,7 @@ class DownloadManager extends ChangeNotifier {
     for (final task in _tasks.toList()) {
       final status = task.status;
       if (status != DownloadStatus.queued &&
+          status != DownloadStatus.paused &&
           status != DownloadStatus.downloading) {
         continue;
       }
@@ -366,6 +387,9 @@ class DownloadManager extends ChangeNotifier {
 
   /// Removes every finished task — completed, failed or canceled — from the
   /// queue without touching downloaded files. Returns how many were removed.
+  ///
+  /// Paused tasks are left alone: they still have work to do, and silently
+  /// dropping a held download would be the opposite of what the user asked for.
   ///
   /// Staging directories kept for a resume are reclaimed, so a long-lived
   /// queue cannot accumulate them after a batch of failures.
@@ -407,6 +431,7 @@ class DownloadManager extends ChangeNotifier {
     for (final task in _tasks.toList()) {
       if (task.playlistId != playlistId) continue;
       if (task.status != DownloadStatus.queued &&
+          task.status != DownloadStatus.paused &&
           task.status != DownloadStatus.downloading) {
         continue;
       }
@@ -419,6 +444,8 @@ class DownloadManager extends ChangeNotifier {
   /// Starts as many waiting downloads as the concurrency limit and pause state
   /// allow, oldest queued first.
   void _pump() {
+    // A run loop calls this from its `finally`, which can happen after dispose.
+    if (_disposed) return;
     // A paused queue holds everything until resumed; running tasks are
     // untouched.
     if (_paused) return;
@@ -444,6 +471,10 @@ class DownloadManager extends ChangeNotifier {
       _tasks.where((t) => t.status == DownloadStatus.downloading).length;
 
   bool _isCanceled(DownloadTask task) => task.status == DownloadStatus.canceled;
+
+  /// Whether [task] is mid-pause: its process is being stopped so it can be
+  /// released later, rather than having genuinely failed.
+  bool _isPausing(DownloadTask task) => _pausing.contains(task.id);
 
   Future<void> _run(DownloadTask task) async {
     final id = task.id;
@@ -529,6 +560,16 @@ class DownloadManager extends ChangeNotifier {
 
       final code = await dl.exitCode;
       _processes.remove(id);
+      if (_isPausing(task)) {
+        // Stopped on purpose by pauseTask. A non-zero exit is just the kill, so
+        // it is not treated as a failure: the task is held with its .part
+        // intact and releasing it continues from there.
+        _pausing.remove(id);
+        task.status = DownloadStatus.paused;
+        task.speed = null;
+        task.eta = null;
+        return;
+      }
       if (code != 0) {
         return _fail(task, task.error ?? 'yt-dlp exited with code $code');
       }
@@ -587,10 +628,15 @@ class DownloadManager extends ChangeNotifier {
     } finally {
       _processes.remove(id);
       _progressNotification.remove(id);
-      // A failed task keeps its staging directory (and yt-dlp's .part file)
-      // so Retry can continue instead of re-downloading from the start.
-      // Completed and canceled tasks clean up after themselves.
-      final keepForResume = task.status == DownloadStatus.failed;
+      // An interrupted task keeps its staging directory (and yt-dlp's .part
+      // file) so Retry can continue instead of re-downloading from the start:
+      // a failure, a pause, and a cancel all qualify, since the "Cancel all"
+      // dialog and the per-card retry both promise the partial survives. A
+      // completed task has nothing left to resume, so it cleans up.
+      final keepForResume =
+          task.status == DownloadStatus.failed ||
+          task.status == DownloadStatus.paused ||
+          task.status == DownloadStatus.canceled;
       if (!keepForResume) {
         final stagingPath = staging?.path ?? task.stagingPath;
         if (stagingPath != null) {
@@ -871,6 +917,10 @@ class DownloadManager extends ChangeNotifier {
   /// UI-driven throttling: task fields update on every stream line, but
   /// widgets are rebuilt at most ~10×/second.
   void _maybeNotifyUi() {
+    // A run loop can wake up after dispose: disposing cancels the processes,
+    // which makes them exit, which unwinds the loop. Notifying then would throw
+    // from a disposed ChangeNotifier, so every exit is dropped.
+    if (_disposed) return;
     _schedulePersist();
     _updateForegroundNotification();
     final now = DateTime.now();
@@ -1000,12 +1050,13 @@ class DownloadManager extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Cancels a queued or running task. A canceled task can never resume.
+  /// Cancels a queued, paused or running task. A canceled task can never resume.
   void cancel(String id) {
     final task = _tasks.where((t) => t.id == id).firstOrNull;
     if (task == null) return;
     switch (task.status) {
       case DownloadStatus.queued:
+      case DownloadStatus.paused:
       case DownloadStatus.downloading:
         task.status = DownloadStatus.canceled;
         _processes[id]?.cancel();
@@ -1019,10 +1070,85 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// Re-enqueues a failed task with a fresh id, reusing its staging directory
-  /// so yt-dlp continues the partial download.
+  /// Holds a task back without stopping the rest of the queue.
+  ///
+  /// A waiting task simply stops being a scheduler candidate. A running one
+  /// cannot be suspended — dart:io exposes no way to signal a child process —
+  /// so its process is stopped, its staging directory and `.part` file are
+  /// kept, and it is re-queued as [DownloadStatus.paused]. Releasing it restarts
+  /// yt-dlp, which continues from the partial because `--continue` is on by
+  /// default and the same staging directory is reused.
+  ///
+  /// Returns false for a task that is not running or waiting.
+  bool pauseTask(String id) {
+    final task = _tasks.where((t) => t.id == id).firstOrNull;
+    if (task == null) return false;
+    switch (task.status) {
+      case DownloadStatus.queued:
+        task.status = DownloadStatus.paused;
+        notifyListeners();
+        // A slot may have just freed up for a task further back in the queue.
+        _pump();
+        return true;
+      case DownloadStatus.downloading:
+        // Stopping the process unwinds _run, which leaves the staging
+        // directory alone for a paused task and then sets the status here.
+        _pausing.add(id);
+        _processes[id]?.cancel();
+        return true;
+      case DownloadStatus.paused:
+      case DownloadStatus.completed:
+      case DownloadStatus.failed:
+      case DownloadStatus.canceled:
+        return false;
+    }
+  }
+
+  /// Releases a paused task so the scheduler can start it again.
+  ///
+  /// Goes back to the *back* of the queue rather than to where it was before,
+  /// since anything that was waiting behind it may since have started.
+  bool resumeTask(String id) {
+    final task = _tasks.where((t) => t.id == id).firstOrNull;
+    if (task == null || task.status != DownloadStatus.paused) return false;
+    task.status = DownloadStatus.queued;
+    notifyListeners();
+    _pump();
+    return true;
+  }
+
+  /// Releases every paused task. Wired to the app's global resume, so a
+  /// "Paused" chip never leaves work held when the user says go.
+  int resumeAllPaused() {
+    final held = _tasks
+        .where((t) => t.status == DownloadStatus.paused)
+        .map((t) => t.id)
+        .toList();
+    for (final id in held) {
+      _tasks.where((t) => t.id == id).firstOrNull?.status =
+          DownloadStatus.queued;
+    }
+    if (held.isNotEmpty) {
+      notifyListeners();
+      _pump();
+    }
+    return held.length;
+  }
+
+  /// How many tasks are held back by [pauseTask].
+  int get pausedCount =>
+      _tasks.where((t) => t.status == DownloadStatus.paused).length;
+
+  /// Re-enqueues a failed or canceled task with a fresh id, reusing its
+  /// staging directory so yt-dlp continues the partial download.
+  ///
+  /// Completed tasks are refused: re-running a finished download is a new
+  /// download, and silently offering it behind a retry icon would be a trap.
   DownloadTask? retry(DownloadTask task) {
-    if (task.status != DownloadStatus.failed) return null;
+    if (task.status != DownloadStatus.failed &&
+        task.status != DownloadStatus.canceled) {
+      return null;
+    }
     _tasks.removeWhere((t) => t.id == task.id);
     final next = enqueue(
       video: task.video,
@@ -1050,6 +1176,8 @@ class DownloadManager extends ChangeNotifier {
   bool dismiss(String id) {
     final task = _tasks.where((t) => t.id == id).firstOrNull;
     if (task == null) return false;
+    // A paused task is safe to drop: its process is already stopped, so
+    // nothing is left running behind the removal.
     if (task.status == DownloadStatus.queued ||
         task.status == DownloadStatus.downloading) {
       return false;
@@ -1114,6 +1242,7 @@ class DownloadManager extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     _persistDebounce?.cancel();
     for (final dl in _processes.values) {
       try {
@@ -1123,6 +1252,7 @@ class DownloadManager extends ChangeNotifier {
     _processes.clear();
     for (final t in _tasks) {
       if (t.status == DownloadStatus.queued ||
+          t.status == DownloadStatus.paused ||
           t.status == DownloadStatus.downloading) {
         t.status = DownloadStatus.canceled;
       }

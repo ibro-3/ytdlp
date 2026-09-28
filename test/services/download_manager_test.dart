@@ -20,11 +20,20 @@ import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
 /// A fake yt-dlp process for deterministic manager tests.
 class _FakeProcess implements DownloadProcess {
-  _FakeProcess({this._lines = const [], Future<int>? exitCode})
-    : _exitCode = exitCode ?? Future<int>.value(0);
+  _FakeProcess({
+    this._lines = const [],
+    Future<int>? exitCode,
+    bool exitOnCancel = false,
+  }) : _exitCode = exitCode ?? Future<int>.value(0) {
+    if (exitOnCancel) _killed = Completer<int>();
+  }
 
   final List<String> _lines;
   final Future<int> _exitCode;
+
+  /// Completed with a non-zero code when [cancel] is called, so a run loop that
+  /// is blocked on [exitCode] unwinds the way a real killed process would.
+  Completer<int>? _killed;
   int cancelCount = 0;
 
   @override
@@ -35,10 +44,13 @@ class _FakeProcess implements DownloadProcess {
   }
 
   @override
-  Future<int> get exitCode => _exitCode;
+  Future<int> get exitCode => _killed?.future ?? _exitCode;
 
   @override
-  void cancel() => cancelCount++;
+  void cancel() {
+    cancelCount++;
+    if (!(_killed?.isCompleted ?? true)) _killed!.complete(1);
+  }
 }
 
 class _EngineCall {
@@ -105,11 +117,19 @@ class _FakeEngine implements DownloadEngine {
     this.exitCode,
     this.sidecars = false,
     this.destinationIsSidecar = false,
+    this.exitOnCancel = false,
   });
 
   final Future<int>? exitCode;
   final bool sidecars;
   final bool destinationIsSidecar;
+
+  /// Make cancelling actually end the process.
+  ///
+  /// Needed by anything that stops a *running* download — cancel or hold —
+  /// because [exitCode] is then awaited and must resolve for the run loop to
+  /// finish and free its slot.
+  final bool exitOnCancel;
   final List<_EngineCall> calls = [];
   int started = 0;
 
@@ -151,7 +171,11 @@ class _FakeEngine implements DownloadEngine {
     final call = _EngineCall(
       url,
       outputDir,
-      _FakeProcess(lines: lines, exitCode: exitCode ?? Future<int>.value(0)),
+      _FakeProcess(
+        lines: lines,
+        exitCode: exitCode ?? Future<int>.value(0),
+        exitOnCancel: exitOnCancel,
+      ),
     );
     calls.add(call);
     return call.process;
@@ -659,6 +683,244 @@ void main() {
       expect(m.reorder(b.id, 5), isFalse);
       expect(m.queueInStartOrder.map((t) => t.video.id), ['b']);
     });
+  });
+
+  group('DownloadManager per-task hold', () {
+    test(
+      'a waiting task is held and the rest of the queue keeps going',
+      () async {
+        final engine = _FakeEngine(
+          exitCode: Completer<int>().future,
+          exitOnCancel: true,
+        );
+        final m = manager(engine, maxConcurrency: 1);
+        addTearDown(m.dispose);
+
+        for (final id in ['a', 'b', 'c']) {
+          m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+        }
+        await waitUntil(() => engine.started == 1);
+
+        // 'a' runs; hold the next one waiting, so 'c' may take the freed slot.
+        final b = m.tasks.firstWhere((t) => t.video.id == 'b');
+        expect(m.pauseTask(b.id), isTrue);
+        expect(b.status, DownloadStatus.paused);
+        expect(m.pausedCount, 1);
+
+        final a = m.tasks.firstWhere((t) => t.video.id == 'a');
+        m.cancel(a.id);
+        await waitUntil(() => engine.started == 2);
+        expect(
+          m.tasks.firstWhere((t) => t.video.id == 'c').status,
+          DownloadStatus.downloading,
+          reason: 'holding one task must not stall the rest of the queue',
+        );
+      },
+    );
+
+    test('a held task goes back to waiting on release, at the back', () async {
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      for (final id in ['a', 'b', 'c']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => engine.started == 1);
+
+      final c = m.tasks.firstWhere((t) => t.video.id == 'c');
+      expect(m.pauseTask(c.id), isTrue);
+      expect(m.resumeTask(c.id), isTrue);
+      expect(c.status, DownloadStatus.queued);
+
+      // Back of the queue, not where it was: 'b' was waiting behind it and may
+      // have started, so restoring the old position would be a lie.
+      expect(m.queueInStartOrder.map((t) => t.video.id), ['b', 'c']);
+    });
+
+    test('holding a running download stops it and keeps its staging', () async {
+      // dart:io cannot suspend a child process, so this stops yt-dlp and relies
+      // on --continue picking the .part back up on release.
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(() => engine.started == 1);
+      final task = m.tasks.single;
+      final staging = task.stagingPath!;
+      await File(p.join(staging, 'Title [abc123].mp4.part'))
+          .writeAsString('half');
+
+      expect(m.pauseTask(task.id), isTrue);
+      await waitUntil(() => task.status == DownloadStatus.paused);
+      expect(engine.calls.first.process.cancelCount, 1);
+
+      // The partial is what makes a release a resume rather than a restart, so
+      // it must survive — and the task must not be reported as failed.
+      expect(task.status, isNot(DownloadStatus.failed));
+      expect(task.error, isNull);
+      expect(
+        File(p.join(staging, 'Title [abc123].mp4.part')).existsSync(),
+        isTrue,
+      );
+
+      // Released, it reuses the same staging directory.
+      expect(m.resumeTask(task.id), isTrue);
+      await waitUntil(() => engine.started == 2);
+      expect(engine.calls.last.outputDir, staging);
+    });
+
+    test('resumeAllPaused releases every held task', () async {
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      for (final id in ['a', 'b', 'c', 'd']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => engine.started == 1);
+
+      for (final id in ['b', 'c', 'd']) {
+        m.pauseTask(m.tasks.firstWhere((t) => t.video.id == id).id);
+      }
+      expect(m.pausedCount, 3);
+
+      expect(m.resumeAllPaused(), 3);
+      expect(m.pausedCount, 0);
+    });
+
+    test('the queue-wide resume also releases held tasks', () async {
+      // Otherwise a global "go" could leave a per-card hold stranded.
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      m.pauseTask(m.tasks.firstWhere((t) => t.video.id == 'b').id);
+      expect(m.pausedCount, 1);
+
+      m.pause();
+      m.resume();
+      expect(m.pausedCount, 0);
+    });
+
+    test('clearFinished keeps held work', () async {
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      m.enqueue(video: _video('b'), format: _video('a').videoFormats.first);
+      m.pauseTask(m.tasks.firstWhere((t) => t.video.id == 'b').id);
+
+      expect(m.clearFinished(), 0, reason: 'a held task still has work to do');
+      expect(m.tasks, hasLength(2));
+    });
+
+    test('cancelAll and cancel take a held task', () async {
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      m.enqueue(video: _video('b'), format: _video('a').videoFormats.first);
+      m.pauseTask(m.tasks.firstWhere((t) => t.video.id == 'b').id);
+      m.cancelAll();
+
+      await waitUntil(
+        () => m.tasks.every(
+          (t) =>
+              t.status == DownloadStatus.canceled ||
+              t.status == DownloadStatus.completed,
+        ),
+      );
+      expect(m.pausedCount, 0);
+    });
+
+    test('pausing refuses a task that is not active', () async {
+      final m = manager(_FakeEngine(exitCode: Future<int>.value(1)));
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.failed),
+      );
+      final failed = m.tasks.single;
+      expect(m.pauseTask(failed.id), isFalse);
+      expect(m.resumeTask(failed.id), isFalse);
+      expect(m.pauseTask('no-such-id'), isFalse);
+    });
+
+    test(
+      'retry is offered for a canceled download but not a finished one',
+      () async {
+        final engine = _FakeEngine(
+          exitCode: Completer<int>().future,
+          exitOnCancel: true,
+        );
+        final m = manager(engine, maxConcurrency: 1);
+        addTearDown(m.dispose);
+
+        m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+        await waitUntil(() => engine.started == 1);
+        final canceled = m.tasks.single;
+        final staging = canceled.stagingPath!;
+        m.cancel(canceled.id);
+        await waitUntil(() => canceled.status == DownloadStatus.canceled);
+
+        // Cancel keeps the partial, so this continues rather than restarting.
+        final retried = m.retry(canceled);
+        expect(retried, isNotNull);
+        expect(
+          retried!.status,
+          anyOf(DownloadStatus.queued, DownloadStatus.downloading),
+        );
+        expect(
+          engine.calls.last.outputDir,
+          staging,
+          reason: 'a retry must reuse the staging directory to continue',
+        );
+
+        m.cancel(retried.id);
+        await waitUntil(() => retried.status == DownloadStatus.canceled);
+        m.pauseTask(retried.id);
+        expect(m.pauseTask(retried.id), isFalse, reason: 'canceled twice');
+
+        // A completed download is refused: re-running it is a new download, and
+        // offering it behind a retry icon would be a trap.
+        final other = _FakeEngine();
+        final done = manager(other);
+        addTearDown(done.dispose);
+        done.enqueue(
+          video: _video('z'),
+          format: _video('z').videoFormats.first,
+        );
+        await waitUntil(
+          () => done.tasks.every((t) => t.status == DownloadStatus.completed),
+        );
+        expect(done.retry(done.tasks.single), isNull);
+      },
+    );
   });
 
   group('DownloadManager output template', () {

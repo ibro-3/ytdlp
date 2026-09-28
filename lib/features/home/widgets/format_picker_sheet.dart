@@ -80,8 +80,6 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   late bool _writeSubs;
   late bool _includeAuto;
   final Set<String> _subLangs = {};
-  late bool _embedThumb;
-  late bool _writeThumb;
 
   /// One-off extra arguments for this download, seeded from Settings and
   /// pre-filled with the arguments of the chosen template when there is one.
@@ -124,16 +122,10 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   /// preferences ask for.
   ///
   /// `--extract-audio` into WAV, for instance, has nowhere to put cover art, so
-  /// yt-dlp would drop it without reporting anything. Gating the toggle means
-  /// the user picks the sidecar instead rather than losing the image.
+  /// yt-dlp would drop it without reporting anything. Not a toggle any more —
+  /// this decides whether to say so, because an audio download that silently
+  /// loses its cover art looks like a bug.
   bool get _canTargetEmbedThumb => widget.settings.ytPrefs.canEmbedThumbnail;
-
-  /// The conversion that blocks an embed, for the subtitle text.
-  String get _thumbBlockedBy {
-    final p = widget.settings.ytPrefs;
-    final target = p.extractAudio ? p.audioFormat : p.remuxVideo;
-    return target.toUpperCase();
-  }
 
   @override
   void initState() {
@@ -154,8 +146,6 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
     _embedSubs = _canEmbed && settings.defaultEmbedSubs;
     _writeSubs = settings.defaultWriteSubs;
     _includeAuto = settings.defaultIncludeAutoSubs;
-    _embedThumb = _canEmbed && settings.defaultEmbedThumb;
-    _writeThumb = settings.defaultWriteThumb;
   }
 
   /// Picks the video format matching the saved default tier, falling back to
@@ -186,8 +176,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
     writeSubs: _writeSubs,
     includeAutoSubs: _includeAuto,
     subLanguages: _subLangs.toList()..sort(),
-    embedThumb: _embedThumb,
-    writeThumb: _writeThumb,
+    // Derived, not offered: audio tracks get cover art, video files do not.
+    embedThumb: DownloadOptions.coverArtDefault(_mode),
   );
 
   @override
@@ -371,33 +361,25 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                         ),
                       ],
                     ],
-                    const SizedBox(height: 20),
-                    _sectionLabel(theme, 'Thumbnail'),
-                    const SizedBox(height: 4),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      title: const Text('Embed as cover art'),
-                      subtitle: Text(
+                    // Cover art is derived from the mode rather than offered as
+                    // a toggle, but it is conditional on ffmpeg and on the
+                    // target container, so it is still worth saying out loud
+                    // when it will not happen.
+                    if (!isVideoMode) ...[
+                      const SizedBox(height: 8),
+                      Text(
                         !_canEmbed
-                            ? 'Needs ffmpeg and ffprobe (not available)'
+                            ? 'The thumbnail is not embedded: this needs ffmpeg '
+                                  'and ffprobe.'
                             : !_canTargetEmbedThumb
-                            ? 'The chosen conversion ($_thumbBlockedBy) '
-                                  'cannot hold a cover image'
-                            : 'Shown in music apps and galleries',
+                            ? 'The chosen conversion cannot hold cover art, so '
+                                  'the thumbnail is left out.'
+                            : 'The thumbnail is embedded as cover art.',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
-                      value: _canTargetEmbedThumb && _embedThumb,
-                      onChanged: _canEmbed && _canTargetEmbedThumb
-                          ? (v) => _patch(() => _embedThumb = v)
-                          : null,
-                    ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      dense: true,
-                      title: const Text('Save .jpg next to the file'),
-                      value: _writeThumb,
-                      onChanged: (v) => _patch(() => _writeThumb = v),
-                    ),
+                    ],
                     const SizedBox(height: 20),
                     _sectionLabel(theme, 'Advanced'),
                     const SizedBox(height: 8),

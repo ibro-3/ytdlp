@@ -562,24 +562,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           settings.copyWith(defaultIncludeAutoSubs: v),
                         ),
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        title: const Text('Embed thumbnail as cover art'),
-                        subtitle: const Text('Only when ffmpeg is available'),
-                        value: settings.defaultEmbedThumb,
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(defaultEmbedThumb: v)),
-                      ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        dense: true,
-                        title: const Text('Save thumbnail (.jpg)'),
-                        subtitle: const Text('Next to the media file'),
-                        value: settings.defaultWriteThumb,
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(defaultWriteThumb: v)),
-                      ),
                       const SizedBox(height: 16),
                       Text(
                         'Queue',
@@ -837,10 +819,37 @@ class _AdvancedSettings extends ConsumerStatefulWidget {
   ConsumerState<_AdvancedSettings> createState() => _AdvancedSettingsState();
 }
 
-class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
+class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _args = TextEditingController();
   final TextEditingController _template = TextEditingController();
   bool _loaded = false;
+
+  /// The carousel's pages: the yt-dlp flags, then the file name template.
+  static const List<String> _pages = ['Flags', 'File name'];
+  final PageController _pageController = PageController();
+
+  /// Drives the [TabBar] strip, and is moved by a page swipe so the strip
+  /// always shows which page is up.
+  late final TabController _tabController = TabController(
+    length: _pages.length,
+    vsync: this,
+  );
+
+  /// Height each carousel page wants, by index. The carousel resizes itself as
+  /// pages report in, so nothing here needs to be recomputed.
+  final Map<int, double> _pageHeights = {};
+
+  /// Grows the carousel when a page reports a height taller than any seen.
+  ///
+  /// Called from a post-frame callback during layout, so the state change is
+  /// deferred to the next frame rather than applied mid-layout.
+  void _onPageHeight(int index, double height) {
+    if (height <= 0 || !height.isFinite) return;
+    final known = _pageHeights[index];
+    if (known != null && (known - height).abs() < 0.5) return;
+    setState(() => _pageHeights[index] = height);
+  }
 
   @override
   void initState() {
@@ -863,6 +872,8 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
   void dispose() {
     _args.dispose();
     _template.dispose();
+    _pageController.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -887,10 +898,6 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final store = ref.watch(templateStoreProvider);
-    final issues = _issues;
-    final templateErrors = _templateIssues;
-
     return ExpansionTile(
       tilePadding: EdgeInsets.zero,
       childrenPadding: EdgeInsets.zero,
@@ -904,6 +911,70 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
           color: scheme.onSurfaceVariant,
         ),
       ),
+      children: [
+        // A TabBar rather than a bare swipe: a carousel with no visible tab
+        // strip is undiscoverable, and the strip is also what makes it obvious
+        // that the template moved rather than disappeared.
+        TabBar(
+          controller: _tabController,
+          tabs: [for (final title in _pages) Tab(text: title)],
+          onTap: (i) => _pageController.animateToPage(
+            i,
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOut,
+          ),
+        ),
+        const SizedBox(height: 12),
+        // Sized from the pages' own laid-out heights, because a PageView is
+        // unbounded vertically and these two pages differ by roughly 3x: the
+        // flags page carries two whole capability sections. See [_PageCarousel]
+        // for why the height is measured rather than hard-coded.
+        _PageCarousel(
+          controller: _pageController,
+          pages: [
+            for (var i = 0; i < _pages.length; i++)
+              _buildPage(i, theme, scheme),
+          ],
+          fallbackHeight: _fallbackHeight,
+          onPageHeight: _onPageHeight,
+          onPageChanged: (i) => _tabController.index = i,
+        ),
+        const SizedBox(height: 8),
+        FilledButton.tonalIcon(
+          onPressed: _valid
+              ? () => widget.onPatch(
+                  widget.settings.copyWith(
+                    extraArgs: _args.text,
+                    outputTemplate: _template.text,
+                  ),
+                )
+              : null,
+          icon: const Icon(Icons.save_outlined),
+          // Names the other page too, since one button now commits both.
+          label: const Text('Save advanced settings'),
+        ),
+      ],
+    );
+  }
+
+  /// Height used until a page reports its own, and if one never does.
+  ///
+  /// Deliberately generous: on the first frame this is all the carousel has, so
+  /// too small a value would briefly clip a page. Once measured it is replaced
+  /// by the real content height, and a short page simply has space under it.
+  static const double _fallbackHeight = 1200;
+
+  Widget _buildPage(int index, ThemeData theme, ColorScheme scheme) =>
+      switch (index) {
+        1 => _buildTemplatePage(theme, scheme),
+        _ => _buildFlagsPage(theme, scheme),
+      };
+
+  Widget _buildFlagsPage(ThemeData theme, ColorScheme scheme) {
+    final store = ref.watch(templateStoreProvider);
+    final issues = _issues;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Align(
           alignment: Alignment.centerLeft,
@@ -999,7 +1070,17 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
         _YtPrefsSection(settings: widget.settings, onPatch: widget.onPatch),
         const SizedBox(height: 24),
         _YoutubeSection(settings: widget.settings, onPatch: widget.onPatch),
-        const SizedBox(height: 24),
+      ],
+    );
+  }
+
+  /// The file name page: everything about the output template, and nothing
+  /// else, so it is short enough not to need scrolling on most screens.
+  Widget _buildTemplatePage(ThemeData theme, ColorScheme scheme) {
+    final templateErrors = _templateIssues;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
         Align(
           alignment: Alignment.centerLeft,
           child: Text('File name template', style: theme.textTheme.labelMedium),
@@ -1063,19 +1144,6 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
             ),
           ],
         ),
-        const SizedBox(height: 8),
-        FilledButton.tonalIcon(
-          onPressed: _valid
-              ? () => widget.onPatch(
-                  widget.settings.copyWith(
-                    extraArgs: _args.text,
-                    outputTemplate: _template.text,
-                  ),
-                )
-              : null,
-          icon: const Icon(Icons.save_outlined),
-          label: const Text('Save advanced settings'),
-        ),
       ],
     );
   }
@@ -1088,6 +1156,149 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
     _template.selection = TextSelection.collapsed(
       offset: _template.text.length,
     );
+  }
+}
+
+/// Gives a [PageView] the height of its tallest page.
+///
+/// A `PageView` is unbounded vertically unless told otherwise, and a
+/// carousel whose pages differ in height has no single right answer: a fixed
+/// height either clips the tall page or leaves a gap under the short one. So
+/// the pages are also laid out once in a hidden, zero-opacity copy, and the
+/// taller measurement is used.
+///
+/// Deliberately not a `LayoutBuilder`: that only reports the space *available*,
+/// not how tall the child *wants* to be, which is the number that matters here.
+/// A [PageView] that is exactly as tall as the tallest page it has shown.
+///
+/// A `PageView` is unbounded vertically unless told otherwise, and this
+/// carousel's pages differ in height: the flags page carries two whole
+/// capability sections, the template page is short. A fixed height either clips
+/// the tall page or leaves a gap under the short one, so the height is taken
+/// from the pages themselves.
+///
+/// The measurement rides on the *real* pages rather than on a hidden copy of
+/// them. A copy would be simpler to lay out, but it would double the page
+/// subtree — including a second copy of the YouTube section, which would start
+/// a second probe of the JS runtime, and duplicate nodes a screen reader would
+/// read twice. Instead each page is wrapped in a scroll view whose child is
+/// unbounded, so the child's laid-out size is its natural height.
+///
+/// A page that has not been shown yet is not measured, so the height is the
+/// tallest page *visited*. That is enough in practice — the flags page is both
+/// first and tallest — and it degrades to a small jump rather than a clipped
+/// page, which is the failure that actually loses settings.
+class _PageCarousel extends StatefulWidget {
+  const _PageCarousel({
+    required this.pages,
+    required this.fallbackHeight,
+    required this.onPageHeight,
+    required this.controller,
+    required this.onPageChanged,
+  });
+
+  /// One entry per page, in order.
+  final List<Widget> pages;
+
+  /// Used until a page has been measured, so the first frame is not a
+  /// zero-height box that then jumps.
+  final double fallbackHeight;
+
+  /// Reports a page's natural height, so the carousel can grow to fit it.
+  final void Function(int index, double height) onPageHeight;
+
+  final PageController controller;
+
+  final ValueChanged<int> onPageChanged;
+
+  @override
+  State<_PageCarousel> createState() => _PageCarouselState();
+}
+
+class _PageCarouselState extends State<_PageCarousel> {
+  /// Natural height per page, from the pages that have been laid out.
+  final Map<int, double> _heights = {};
+
+  /// Key on each page's content, which is unbounded inside its scroll view.
+  final List<GlobalKey> _keys = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _keys.addAll(List.generate(widget.pages.length, (_) => GlobalKey()));
+  }
+
+  double get _height {
+    var tallest = 0.0;
+    for (final h in _heights.values) {
+      if (h > tallest) tallest = h;
+    }
+    return tallest > 0 ? tallest : widget.fallbackHeight;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: _height,
+      child: PageView(
+        controller: widget.controller,
+        // A swipe moves the tab highlight, so the strip always shows which page
+        // is up. Swiping stays enabled because on a phone it is the natural
+        // gesture, and the strip is the discoverable fallback.
+        onPageChanged: widget.onPageChanged,
+        children: [
+          for (var i = 0; i < widget.pages.length; i++)
+            // Each page scrolls itself rather than dragging the whole settings
+            // list, which is what makes a fixed-height carousel usable inside a
+            // scrolling page. The child is unbounded here, so its laid-out
+            // height is the content's real height.
+            SingleChildScrollView(
+              child: _MeasuredHeight(
+                key: _keys[i],
+                onHeight: (h) {
+                  if (h <= 0 || !h.isFinite) return;
+                  final known = _heights[i];
+                  // Sub-pixel changes are layout noise, not content.
+                  if (known != null && (known - h).abs() < 0.5) return;
+                  setState(() => _heights[i] = h);
+                },
+                child: widget.pages[i],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Reports its child's laid-out height after each frame.
+///
+/// A post-frame callback rather than a build-time read, because a size is only
+/// known after layout, and calling back during build would set state in the
+/// middle of a build.
+class _MeasuredHeight extends StatefulWidget {
+  const _MeasuredHeight({
+    required this.child,
+    required this.onHeight,
+    super.key,
+  });
+
+  final Widget child;
+  final ValueChanged<double> onHeight;
+
+  @override
+  State<_MeasuredHeight> createState() => _MeasuredHeightState();
+}
+
+class _MeasuredHeightState extends State<_MeasuredHeight> {
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final h = context.size?.height ?? 0;
+      if (h > 0) widget.onHeight(h);
+    });
+    return widget.child;
   }
 }
 
