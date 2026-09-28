@@ -120,6 +120,21 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   /// ffprobe — offering them without it yields "ffprobe not found".
   bool get _canEmbed => widget.video.canPostprocess;
 
+  /// Whether a cover image survives the postprocessing the user's yt-dlp
+  /// preferences ask for.
+  ///
+  /// `--extract-audio` into WAV, for instance, has nowhere to put cover art, so
+  /// yt-dlp would drop it without reporting anything. Gating the toggle means
+  /// the user picks the sidecar instead rather than losing the image.
+  bool get _canTargetEmbedThumb => widget.settings.ytPrefs.canEmbedThumbnail;
+
+  /// The conversion that blocks an embed, for the subtitle text.
+  String get _thumbBlockedBy {
+    final p = widget.settings.ytPrefs;
+    final target = p.extractAudio ? p.audioFormat : p.remuxVideo;
+    return target.toUpperCase();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -364,12 +379,15 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                       dense: true,
                       title: const Text('Embed as cover art'),
                       subtitle: Text(
-                        _canEmbed
-                            ? 'Shown in music apps and galleries'
-                            : 'Needs ffmpeg (not available)',
+                        !_canEmbed
+                            ? 'Needs ffmpeg and ffprobe (not available)'
+                            : !_canTargetEmbedThumb
+                            ? 'The chosen conversion ($_thumbBlockedBy) '
+                                  'cannot hold a cover image'
+                            : 'Shown in music apps and galleries',
                       ),
-                      value: _embedThumb,
-                      onChanged: _canEmbed
+                      value: _canTargetEmbedThumb && _embedThumb,
+                      onChanged: _canEmbed && _canTargetEmbedThumb
                           ? (v) => _patch(() => _embedThumb = v)
                           : null,
                     ),

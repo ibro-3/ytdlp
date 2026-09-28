@@ -9,6 +9,7 @@ import 'package:ytdlp/core/models/download_options.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
 import 'package:ytdlp/core/models/video_info.dart';
+import 'package:ytdlp/core/models/yt_prefs.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
 import 'package:ytdlp/services/downloads/download_layout.dart';
@@ -53,6 +54,8 @@ class _RecordingArgsEngine extends _FakeEngine {
 
   List<String> extraArgs = const [];
   String template = '';
+  YtPrefs prefs = const YtPrefs();
+  String? archivePath;
 
   @override
   Future<_FakeProcess> startDownload({
@@ -63,9 +66,13 @@ class _RecordingArgsEngine extends _FakeEngine {
     required String template,
     String? cookiesPath,
     List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
   }) {
     this.extraArgs = extraArgs;
     this.template = template;
+    this.prefs = prefs;
+    this.archivePath = archivePath;
     return super.startDownload(
       url: url,
       format: format,
@@ -74,6 +81,8 @@ class _RecordingArgsEngine extends _FakeEngine {
       template: template,
       cookiesPath: cookiesPath,
       extraArgs: extraArgs,
+      prefs: prefs,
+      archivePath: archivePath,
     );
   }
 }
@@ -108,6 +117,8 @@ class _FakeEngine implements DownloadEngine {
     required String template,
     String? cookiesPath,
     List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
   }) async {
     started++;
     final file = File(p.join(outputDir, 'Title [abc123].mp4'));
@@ -153,6 +164,8 @@ class _NoFileEngine implements DownloadEngine {
     required String template,
     String? cookiesPath,
     List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
   }) async {
     return _FakeProcess(lines: const ['[download] Destination: missing.mp4']);
   }
@@ -174,6 +187,8 @@ class _FailingAfterPartEngine implements DownloadEngine {
     required String template,
     String? cookiesPath,
     List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
   }) async {
     final part = File(p.join(outputDir, 'Title [abc123].mp4.part'));
     await part.parent.create(recursive: true);
@@ -553,6 +568,87 @@ void main() {
       );
 
       expect(engine.extraArgs, ['--concurrent-fragments', '4']);
+    });
+
+    test('yt prefs reach the engine and default from Settings', () async {
+      final engine = _RecordingArgsEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(
+          ytPrefs: YtPrefs(
+            concurrentFragments: 3,
+            limitRate: '2M',
+            extractAudio: true,
+            audioFormat: 'opus',
+          ),
+        ),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      expect(engine.prefs.concurrentFragments, 3);
+      expect(engine.prefs.audioFormat, 'opus');
+      // Captured on the task as well, so a retry repeats the same command.
+      expect(m.tasks.single.prefs.concurrentFragments, 3);
+    });
+
+    test('the archive path is optional and never breaks a download', () async {
+      // path_provider has no implementation in a plain unit test, so the
+      // manager cannot resolve the support dir. The download must still
+      // succeed with the archive simply omitted — the flag is an optimisation,
+      // not a requirement.
+      final engine = _RecordingArgsEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        prefs: const YtPrefs(downloadArchive: true),
+      );
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+      expect(
+        m.tasks.single.status,
+        DownloadStatus.completed,
+        reason: 'an unresolvable archive path must not fail the download',
+      );
+    });
+
+    test('a per-task prefs override beats the Settings default', () async {
+      final engine = _RecordingArgsEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(ytPrefs: YtPrefs(concurrentFragments: 3)),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        prefs: const YtPrefs(concurrentFragments: 1),
+      );
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+      expect(engine.prefs.concurrentFragments, 1);
     });
 
     test('a per-task template override beats the Settings default', () async {
@@ -1087,6 +1183,39 @@ void main() {
       expect(back.options.embedThumb, isTrue);
       expect(back.options.includeAutoSubs, isTrue);
       expect(back.options.subLanguages, ['en', 'de']);
+    });
+
+    test('prefs round-trip on a task', () {
+      const prefs = YtPrefs(concurrentFragments: 4, audioFormat: 'flac');
+      final task = DownloadTask(
+        id: 't1',
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        createdAt: DateTime.now(),
+        prefs: prefs,
+      );
+      expect(DownloadTask.fromMap(task.toMap()).prefs, prefs);
+    });
+
+    test('a task from an older snapshot gets neutral prefs', () {
+      final back = DownloadTask.fromMap({
+        'id': 'old',
+        'createdAt': DateTime.now().toIso8601String(),
+        'video': const <String, dynamic>{},
+        'format': const <String, dynamic>{},
+      });
+      expect(back.prefs, const YtPrefs());
+    });
+
+    test('a corrupt prefs map still restores the task', () {
+      final back = DownloadTask.fromMap({
+        'id': 't',
+        'createdAt': DateTime.now().toIso8601String(),
+        'video': const <String, dynamic>{},
+        'format': const <String, dynamic>{},
+        'prefs': 'not a map',
+      });
+      expect(back.prefs, const YtPrefs());
     });
 
     test('extraArgs and outputTemplate round-trip on a task', () {

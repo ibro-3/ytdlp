@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../../core/models/download_options.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
+import '../../core/models/yt_prefs.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
 import 'json_payload.dart';
@@ -29,6 +30,8 @@ List<String> buildDownloadArgs({
   bool hasFfmpeg = true,
   String? androidFfmpegPath,
   List<String> extraArgs = const [],
+  YtPrefs prefs = const YtPrefs(),
+  String? archivePath,
 }) {
   final args = <String>[
     '--newline',
@@ -49,18 +52,23 @@ List<String> buildDownloadArgs({
     '--force-overwrites',
   ];
 
-  // User flags go in *between* the app's two groups.
+  // User flags go in *between* the app's groups.
   //
   // For a single-valued option yt-dlp lets the last occurrence win, so every
   // flag the app owns has to be stated after this block: a user-supplied -o
   // or -f would otherwise redirect the staging path and break the
   // finalise/move step, and --yes-playlist would expand one task into a whole
-  // collection. Nothing above can be overridden in a way that matters, so
-  // putting them first keeps the user's flags from displacing the managed ones.
+  // collection. The first-class preference flags are part of the managed group
+  // for the same reason — a raw `-x --audio-format wav` in the extra-args
+  // field must not silently outrank the picker.
   //
   // validateExtraArgs reports the conflicting flags in the UI rather than
   // dropping them silently.
   args.addAll(extraArgs);
+
+  args.addAll(
+    _prefsArgs(prefs, hasFfmpeg: hasFfmpeg, archivePath: archivePath),
+  );
 
   args.addAll([
     '--no-playlist',
@@ -94,7 +102,11 @@ List<String> buildDownloadArgs({
   if (options.writeThumb) {
     args.addAll(['--write-thumbnail', '--convert-thumbnails', 'jpg']);
   }
-  if (options.embedThumb) {
+  // Embedding is skipped when the postprocessing the user configured cannot
+  // hold a cover image (e.g. `--extract-audio` into WAV), which yt-dlp would
+  // otherwise drop silently. The format sheet disables the toggle in that
+  // case; this is the backstop for a task that was queued before the change.
+  if (options.embedThumb && prefs.canEmbedThumbnail) {
     args.add('--embed-thumbnail');
   }
 
@@ -102,6 +114,65 @@ List<String> buildDownloadArgs({
     args.insertAll(0, ['--ffmpeg-location', androidFfmpegPath]);
   }
   args.add(url);
+  return args;
+}
+
+/// The flags implied by the first-class preference controls.
+///
+/// Split out from [buildDownloadArgs] so the mapping is unit-testable on its
+/// own, and emitted in the app-owned group so a raw `-x` or `-r` typed into the
+/// extra-args field cannot outrank the picker for the last-word-wins rule.
+List<String> _prefsArgs(
+  YtPrefs prefs, {
+  required bool hasFfmpeg,
+  String? archivePath,
+}) {
+  final args = <String>[];
+
+  // Throughput. Left at 1 (yt-dlp's default) unless asked, so nothing changes
+  // for a user who never touches the control.
+  if (prefs.concurrentFragments > 1) {
+    args.addAll(['-N', '${prefs.concurrentFragments}']);
+  }
+  if (prefs.limitRate.trim().isNotEmpty) {
+    args.addAll(['-r', prefs.limitRate.trim()]);
+  }
+  if (prefs.sleepRequests > 0) {
+    args.addAll(['--sleep-requests', '${prefs.sleepRequests}']);
+  }
+  if (prefs.proxy.trim().isNotEmpty) {
+    args.addAll(['--proxy', prefs.proxy.trim()]);
+  }
+  if (prefs.referer.trim().isNotEmpty) {
+    args.addAll(['--referer', prefs.referer.trim()]);
+  }
+  if (prefs.liveFromStart) args.add('--live-from-start');
+
+  // --no-part opts out of the .part file the manager relies on to resume a
+  // failed download, so it is only passed when explicitly requested.
+  if (prefs.noPart) args.add('--no-part');
+
+  if (prefs.downloadArchive && archivePath != null && archivePath.isNotEmpty) {
+    args.addAll(['--download-archive', archivePath]);
+  }
+
+  // Everything below runs through yt-dlp's postprocessor, which needs ffmpeg
+  // to remux or re-encode and ffprobe to inspect the output. Without them
+  // yt-dlp fails with "Postprocessing: ffprobe not found", so the flags are
+  // omitted rather than passed through to fail late.
+  if (prefs.extractAudio && hasFfmpeg) {
+    args.add('-x');
+    args.addAll(['--audio-format', prefs.audioFormat]);
+  }
+  if (prefs.remuxVideo.trim().isNotEmpty && hasFfmpeg) {
+    args.addAll(['--remux-video', prefs.remuxVideo.trim()]);
+  }
+  if (prefs.embedMetadata && hasFfmpeg) args.add('--embed-metadata');
+  if (prefs.embedChapters && hasFfmpeg) args.add('--embed-chapters');
+  if (prefs.sponsorblockRemove && hasFfmpeg) {
+    args.addAll(['--sponsorblock-remove', 'default']);
+  }
+
   return args;
 }
 
@@ -131,6 +202,8 @@ abstract interface class DownloadEngine {
     required String template,
     String? cookiesPath,
     List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
   });
 }
 
@@ -488,6 +561,8 @@ class YtdlpService implements DownloadEngine {
     required String template,
     String? cookiesPath,
     List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
   }) async {
     final bin = await _binary.ensureRunner();
     final ffmpeg = await _binary.androidFfmpegLocation();
@@ -504,6 +579,8 @@ class YtdlpService implements DownloadEngine {
       hasFfmpeg: await _binary.hasFfmpeg(),
       androidFfmpegPath: ffmpeg,
       extraArgs: extraArgs,
+      prefs: prefs,
+      archivePath: archivePath,
     );
 
     final YtdlpProcess process;

@@ -22,6 +22,13 @@ Settings → **Advanced** (collapsed by default) and the per-download Advanced s
 - **Extra yt-dlp flags** — applied to every download, overridable per download. Text is split with a shell-*word-splitting* scanner (quotes and backslash escapes honoured) but **never passed through a shell**, so nothing in the field can chain a command. The flags the app sets itself are detected and reported as ignored rather than silently accepted: `-o`/`--output`, `-f`/`--format`, `--no-playlist`/`--yes-playlist` and `--ffmpeg-location`. That is enforced by *ordering* — user flags are inserted before the app's own group, because yt-dlp lets the last occurrence of a single-valued option win, so a user `-o` placed after ours would redirect the staging path and break the finalise/move step. An unterminated quote is a hard error that disables the Download button instead of being passed on half-closed.
 - **Output template** (`-o`) — the file name, with a live preview. Must resolve to an extension (via `%(ext)s` or a literal one) because the manager decides which file is the media file by extension, telling a `.mkv` from a `.srt` sidecar or a `.part` leftover. A `%(playlist_title)s/` prefix is stripped from the *staging* template and applied by the app when the finished file is moved, so a playlist grouping still lands correctly.
 - **Saved argument templates** — named flag sets, stored in the settings box under their own key prefix (capped at 30, keyed by name so saving twice replaces). Offered as chips in the format sheet and as removable chips in Settings.
+- **yt-dlp capabilities** — first-class controls for the flags most worth having a real UI for: parallel fragments, rate limit, request delay, proxy, `Referer`, audio extraction + container, remux without re-encoding, embedded metadata/chapters, SponsorBlock removal, livestream-from-start, a download archive, and `--no-part`. Every one of them is *also* reachable as a raw flag, but a typed value cannot be right on its own — a fragment count high enough to fail a download, a container that silently drops the cover art you asked to embed — so the controls validate their own inputs.
+
+  Three behaviours worth knowing:
+
+  - **Defaults change nothing.** Fragment parallelism defaults to 1, which is yt-dlp's own `-N` default, so an untouched app produces a byte-identical command line to before these controls existed.
+  - **Fragment parallelism is capped at 4.** The throughput gain above that is small and the memory cost is not; on a phone, `-N 16` fails the download outright.
+  - **Postprocessing is dropped without ffmpeg+ffprobe.** Audio extraction, remux, metadata, chapters and SponsorBlock all run through yt-dlp's postprocessor, which probes with ffprobe. Without it the flags are omitted rather than passed through to fail *after* the bytes are downloaded, and the toggles are disabled in the UI with the reason shown. A conversion to a container that cannot hold the chosen extras (cover art in WAV, say) drops that extra and says so in the sheet.
 
 The previous hard-coded `" [<id>]"` filename check in `DownloadManager._findFinalFile` generalised to `OutputTemplate.identityFragment`: it uses the id when the template has `%(id)s`, the title when it does not, and no filter at all when the template can only produce the extension. Without that, every template lacking `%(id)s` would have reported "output file not found". A template that is extension-only is called out in the UI, since every file then shares one name and a second download is renamed `"(1)"`.
 
@@ -50,7 +57,7 @@ lib/
   core/theme/app_theme.dart
   core/router/app_router.dart
   core/providers.dart
-  core/models/{video_info,download_task,download_record,download_options,settings_model,playlist_info,output_template,command_template}.dart
+  core/models/{video_info,download_task,download_record,download_options,settings_model,playlist_info,output_template,command_template,yt_prefs}.dart
   core/utils/{url_validator,formatters,json_utils}.dart
   services/ytdlp/{binary_manager,ytdlp_service,progress_parser,bounded_capture,json_payload,arg_tokenizer}.dart
   services/downloads/{download_manager,download_layout,history_service,queue_store}.dart
@@ -214,12 +221,11 @@ The integration test boots the real app, fetches a video, picks a format and wai
 
 ## Roadmap
 
-Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source, release identity (app id, adaptive icon, keystore signing), Android foreground service for background downloads, share-sheet intake, macOS sandbox entitlements (`network.client` was missing entirely, so Release builds had no network at all), macOS notifications, an `ffprobe` detection fix that hid the embed-subtitles/thumbnail toggles on every Android launch after the first, **playlist downloads** with a per-entry picker, per-video tasks and sanitized per-playlist folders, and **advanced settings** (extra yt-dlp flags with managed-flag protection, a live-previewed output template, and saved named argument templates).
+Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source, release identity (app id, adaptive icon, keystore signing), Android foreground service for background downloads, share-sheet intake, macOS sandbox entitlements (`network.client` was missing entirely, so Release builds had no network at all), macOS notifications, an `ffprobe` detection fix that hid the embed-subtitles/thumbnail toggles on every Android launch after the first, **playlist downloads** with a per-entry picker, per-video tasks and sanitized per-playlist folders, **advanced settings** (extra yt-dlp flags with managed-flag protection, a live-previewed output template, and saved named argument templates), and **yt-dlp capability controls** (fragment parallelism, rate limits, proxy, audio extraction, remux, embedded metadata/chapters, SponsorBlock, download archive).
 
 Still open:
 
 - **YouTube PO tokens + a JS runtime** (`yt-dlp-ejs` or Deno) in the bundled runtime — the main remaining blocker for YouTube reliability (see *Cookies* above).
 - **Channel and handle URLs** — these already arrive as flat playlists and work through the same picker, but there is no "download everything from this channel" shortcut, and no pagination for very large collections.
-- First-class toggles for the most common extra flags (`--extract-audio` + format, `--embed-metadata`, `--concurrent-fragments`, `--download-archive`, `--limit-rate`). They are all reachable through the Advanced field today; a first-class control is easier to use than a hand-typed flag.
 - iOS and web are currently dead ends — either implement an engine or drop them from the supported matrix.
 - Changelog / version policy if releases are published.

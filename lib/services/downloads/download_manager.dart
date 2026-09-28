@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../core/models/download_options.dart';
@@ -12,6 +13,7 @@ import '../../core/models/download_task.dart';
 import '../../core/models/output_template.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
+import '../../core/models/yt_prefs.dart';
 import '../foreground/foreground_service.dart';
 import '../notifications/notification_service.dart';
 import '../settings/settings_service.dart';
@@ -163,6 +165,7 @@ class DownloadManager extends ChangeNotifier {
     String? playlistTitle,
     List<String> extraArgs = const [],
     String outputTemplate = '',
+    YtPrefs? prefs,
   }) {
     final task = DownloadTask(
       id: '${DateTime.now().microsecondsSinceEpoch}-${_idCounter++}',
@@ -174,6 +177,7 @@ class DownloadManager extends ChangeNotifier {
       // later default change still applies to a task enqueued before it.
       extraArgs: extraArgs,
       outputTemplate: outputTemplate,
+      prefs: prefs ?? settings?.settings.ytPrefs ?? const YtPrefs(),
       stagingPath: stagingPath,
       playlistId: playlistId,
       playlistTitle: playlistTitle,
@@ -294,6 +298,8 @@ class DownloadManager extends ChangeNotifier {
           template: _stagingTemplate(task),
           cookiesPath: settings?.settings.cookiesPath,
           extraArgs: _extraArgsFor(task),
+          prefs: task.prefs,
+          archivePath: await _archivePathFor(task),
         );
       } on YtdlpException catch (e) {
         return _fail(task, e.message);
@@ -470,6 +476,29 @@ class DownloadManager extends ChangeNotifier {
           : (settings?.settings.outputTemplate ?? ''),
     ).effective,
   );
+
+  /// Path of the `--download-archive` ledger, kept in the app support dir so it
+  /// survives the download folder being moved or cleared.
+  ///
+  /// The archive is what makes "skip what I already have" work across
+  /// sessions, so it needs a stable path rather than one derived from the
+  /// download root. Whether it is actually passed is decided by
+  /// [YtPrefs.downloadArchive]; this only resolves the location.
+  Future<String?> _archivePath() async {
+    try {
+      final dir = await getApplicationSupportDirectory();
+      return p.join(dir.path, 'downloaded.txt');
+    } catch (_) {
+      // Without a writable support dir the archive is simply not used; the
+      // download itself must still work.
+      return null;
+    }
+  }
+
+  /// The archive path only when this task actually wants one, so the common
+  /// case does not touch the filesystem at all.
+  Future<String?> _archivePathFor(DownloadTask task) =>
+      task.prefs.downloadArchive ? _archivePath() : Future.value(null);
 
   /// Extra arguments for [task]: its own override when the sheet supplied one,
   /// otherwise the Settings field tokenised now.
@@ -829,6 +858,7 @@ class DownloadManager extends ChangeNotifier {
       // siblings in the queue.
       extraArgs: task.extraArgs,
       outputTemplate: task.outputTemplate,
+      prefs: task.prefs,
       stagingPath: task.stagingPath,
       playlistId: task.playlistId,
       playlistTitle: task.playlistTitle,

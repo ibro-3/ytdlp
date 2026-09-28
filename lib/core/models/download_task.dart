@@ -1,5 +1,6 @@
 import 'download_options.dart';
 import 'video_info.dart';
+import 'yt_prefs.dart';
 
 enum DownloadStatus { queued, downloading, completed, failed, canceled }
 
@@ -12,6 +13,7 @@ class DownloadTask {
     this.options = const DownloadOptions(),
     this.extraArgs = const [],
     this.outputTemplate = '',
+    this.prefs = const YtPrefs(),
     this.stagingPath,
     this.playlistId,
     this.playlistTitle,
@@ -35,6 +37,10 @@ class DownloadTask {
 
   /// Output template for this download. Empty means the Settings default.
   final String outputTemplate;
+
+  /// First-class yt-dlp preferences captured for this download, so a retry
+  /// repeats the same command. Empty for a task enqueued before this existed.
+  final YtPrefs prefs;
 
   /// Set when the download came from a playlist. Every entry of one playlist
   /// shares the same id so the queue can group them, and the title decides the
@@ -96,6 +102,7 @@ class DownloadTask {
     'options': options.toMap(),
     'extraArgs': extraArgs,
     'outputTemplate': outputTemplate,
+    'prefs': prefs.toMap(),
   };
 
   /// Rebuilds a task from a [toMap] snapshot. Any missing or malformed field
@@ -144,6 +151,14 @@ class DownloadTask {
           _ => const <String>[],
         },
         outputTemplate: m['outputTemplate'] as String? ?? '',
+        prefs: YtPrefs.fromMap(
+          // Pattern-matched rather than cast: a snapshot whose 'prefs' is not
+          // a map must still restore, same as every other field here.
+          switch (m['prefs']) {
+            final Map<dynamic, dynamic> map => Map<String, dynamic>.from(map),
+            _ => null,
+          },
+        ),
       )
       ..status = _statusFrom(m['status'] as String?)
       ..progress = (m['progress'] as num?)?.toDouble() ?? 0

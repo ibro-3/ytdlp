@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'output_template.dart';
+import 'yt_prefs.dart';
 
 /// Persisted user preferences. Stored as a plain map in the Hive
 /// `settings` box so no codegen is needed.
@@ -21,6 +22,7 @@ class AppSettings {
     this.downloadRoot = '',
     this.extraArgs = '',
     this.outputTemplate = '',
+    this.ytPrefs = const YtPrefs(),
   });
 
   /// Null tier = Best quality.
@@ -76,6 +78,11 @@ class AppSettings {
   /// The template actually used, with the blank case resolved.
   OutputTemplate get effectiveOutputTemplate => OutputTemplate(outputTemplate);
 
+  /// First-class yt-dlp capabilities: fragment parallelism, rate limits,
+  /// postprocessing choices, proxy. All are also reachable through
+  /// [extraArgs]; these exist because each has a value that must be right.
+  final YtPrefs ytPrefs;
+
   /// Defaults seeded into the download sheet. Embed options are only honored
   /// when ffmpeg is available (bundled on Android, inferred on desktop).
   final bool defaultEmbedSubs;
@@ -105,6 +112,7 @@ class AppSettings {
     String? downloadRoot,
     String? extraArgs,
     String? outputTemplate,
+    YtPrefs? ytPrefs,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -127,6 +135,7 @@ class AppSettings {
       downloadRoot: downloadRoot ?? this.downloadRoot,
       extraArgs: extraArgs ?? this.extraArgs,
       outputTemplate: outputTemplate ?? this.outputTemplate,
+      ytPrefs: ytPrefs ?? this.ytPrefs,
     );
   }
 
@@ -146,6 +155,7 @@ class AppSettings {
     'downloadRoot': downloadRoot,
     'extraArgs': extraArgs,
     'outputTemplate': outputTemplate,
+    'ytPrefs': ytPrefs.toMap(),
   };
 
   factory AppSettings.fromMap(Map<String, dynamic> m) {
@@ -169,6 +179,7 @@ class AppSettings {
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
       extraArgs: (m['extraArgs'] as String?) ?? '',
       outputTemplate: (m['outputTemplate'] as String?) ?? '',
+      ytPrefs: YtPrefs.fromMap((m['ytPrefs'] as Map?)?.cast<String, dynamic>()),
     );
   }
 }

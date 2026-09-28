@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ytdlp/core/models/output_template.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
+import 'package:ytdlp/core/models/yt_prefs.dart';
 
 void main() {
   group('AppSettings', () {
@@ -79,6 +80,44 @@ void main() {
       final s = AppSettings.fromMap({'themeMode': 'dark'});
       expect(s.extraArgs, isEmpty);
       expect(s.outputTemplate, isEmpty);
+    });
+
+    test('ytPrefs default to the neutral configuration', () {
+      expect(const AppSettings().ytPrefs, const YtPrefs());
+      expect(const AppSettings().ytPrefs.concurrentFragments, 1);
+    });
+
+    test('ytPrefs round-trip through toMap/fromMap', () {
+      const prefs = YtPrefs(
+        concurrentFragments: 3,
+        limitRate: '2M',
+        extractAudio: true,
+        audioFormat: 'opus',
+      );
+      final back = AppSettings.fromMap(
+        const AppSettings(ytPrefs: prefs).toMap(),
+      );
+      expect(back.ytPrefs, prefs);
+    });
+
+    test('fromMap defaults ytPrefs for an older stored map', () {
+      // An install upgrading from before these controls has no ytPrefs key.
+      final s = AppSettings.fromMap({'themeMode': 'dark'});
+      expect(s.ytPrefs, const YtPrefs());
+    });
+
+    test('copyWith sets ytPrefs without disturbing other fields', () {
+      const s = AppSettings(downloadRoot: '/media/x', extraArgs: '--a');
+      final next = s.copyWith(ytPrefs: const YtPrefs(limitRate: '5M'));
+      expect(next.ytPrefs.limitRate, '5M');
+      expect(next.downloadRoot, '/media/x', reason: 'must not clobber');
+      expect(next.extraArgs, '--a');
+    });
+
+    test('copyWith keeps ytPrefs when not mentioned', () {
+      const s = AppSettings(ytPrefs: YtPrefs(limitRate: '2M'));
+      expect(s.copyWith().ytPrefs, s.ytPrefs);
+      expect(s.copyWith(themeMode: ThemeMode.dark).ytPrefs, s.ytPrefs);
     });
 
     test('copyWith can clear the audio tier to Best via thunk', () {

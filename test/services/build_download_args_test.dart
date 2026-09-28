@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ytdlp/core/models/download_options.dart';
 import 'package:ytdlp/core/models/video_info.dart';
+import 'package:ytdlp/core/models/yt_prefs.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
 const _video = Format(
@@ -22,6 +23,8 @@ List<String> _args({
   bool hasFfmpeg = true,
   String? androidFfmpegPath,
   List<String> extraArgs = const [],
+  YtPrefs prefs = const YtPrefs(),
+  String? archivePath,
 }) => buildDownloadArgs(
   url: 'https://example.com/watch?v=abc',
   format: format,
@@ -32,6 +35,8 @@ List<String> _args({
   hasFfmpeg: hasFfmpeg,
   androidFfmpegPath: androidFfmpegPath,
   extraArgs: extraArgs,
+  prefs: prefs,
+  archivePath: archivePath,
 );
 
 void main() {
@@ -194,6 +199,187 @@ void main() {
         ]),
       );
       expect(a, containsAllInOrder(['--cookies', '/c/cookies.txt']));
+    });
+  });
+
+  group('yt preferences', () {
+    test('default prefs add nothing to the command line', () {
+      // The whole point of the defaults: an untouched app produces byte-for-byte
+      // the same invocation as before these controls existed.
+      expect(_args(), _args(prefs: const YtPrefs()));
+    });
+
+    test('fragment parallelism is omitted at the default of 1', () {
+      expect(_args(prefs: const YtPrefs()), isNot(contains('-N')));
+      expect(
+        _args(prefs: const YtPrefs(concurrentFragments: 1)),
+        isNot(contains('-N')),
+        reason: '1 is yt-dlp\'s own default, so passing it is noise',
+      );
+    });
+
+    test('fragment parallelism is passed when raised', () {
+      final a = _args(prefs: const YtPrefs(concurrentFragments: 4));
+      expect(a, containsAllInOrder(['-N', '4']));
+    });
+
+    test('a rate limit and request delay are passed through', () {
+      final a = _args(prefs: const YtPrefs(limitRate: '2M', sleepRequests: 5));
+      expect(a, containsAllInOrder(['-r', '2M']));
+      expect(a, containsAllInOrder(['--sleep-requests', '5']));
+    });
+
+    test('proxy and referer are passed through when set', () {
+      final a = _args(
+        prefs: const YtPrefs(
+          proxy: 'http://localhost:8080',
+          referer: 'https://example.com',
+        ),
+      );
+      expect(a, containsAllInOrder(['--proxy', 'http://localhost:8080']));
+      expect(a, containsAllInOrder(['--referer', 'https://example.com']));
+    });
+
+    test('blank proxy and referer are omitted', () {
+      final a = _args(prefs: const YtPrefs(limitRate: '   '));
+      expect(a, isNot(contains('--proxy')));
+      expect(a, isNot(contains('--referer')));
+      expect(a, isNot(contains('-r')));
+    });
+
+    test('live-from-start and no-part are passed when enabled', () {
+      final a = _args(prefs: const YtPrefs(liveFromStart: true, noPart: true));
+      expect(a, contains('--live-from-start'));
+      expect(a, contains('--no-part'));
+    });
+
+    test('the download archive is only passed with a path', () {
+      expect(
+        _args(prefs: const YtPrefs(downloadArchive: true)),
+        isNot(contains('--download-archive')),
+        reason: 'without a file to append to, the flag is meaningless',
+      );
+      final a = _args(
+        prefs: const YtPrefs(downloadArchive: true),
+        archivePath: '/support/downloaded.txt',
+      );
+      expect(
+        a,
+        containsAllInOrder(['--download-archive', '/support/downloaded.txt']),
+      );
+    });
+
+    test('an empty archive path is ignored', () {
+      final a = _args(
+        prefs: const YtPrefs(downloadArchive: true),
+        archivePath: '',
+      );
+      expect(a, isNot(contains('--download-archive')));
+    });
+
+    test('audio extraction passes -x with its format', () {
+      final a = _args(
+        prefs: const YtPrefs(extractAudio: true, audioFormat: 'mp3'),
+      );
+      expect(a, containsAllInOrder(['-x', '--audio-format', 'mp3']));
+    });
+
+    test('remux passes its target', () {
+      expect(
+        _args(prefs: const YtPrefs(remuxVideo: 'mkv')),
+        containsAllInOrder(['--remux-video', 'mkv']),
+      );
+    });
+
+    test('metadata, chapters and sponsorblock are passed', () {
+      final a = _args(
+        prefs: const YtPrefs(
+          embedMetadata: true,
+          embedChapters: true,
+          sponsorblockRemove: true,
+        ),
+      );
+      expect(a, contains('--embed-metadata'));
+      expect(a, contains('--embed-chapters'));
+      expect(a, containsAllInOrder(['--sponsorblock-remove', 'default']));
+    });
+
+    test('postprocessing flags are omitted without ffmpeg', () {
+      // Otherwise yt-dlp fails late with "Postprocessing: ffprobe not found",
+      // after the bytes are already downloaded.
+      final a = _args(
+        hasFfmpeg: false,
+        prefs: const YtPrefs(
+          extractAudio: true,
+          remuxVideo: 'mkv',
+          embedMetadata: true,
+          embedChapters: true,
+          sponsorblockRemove: true,
+        ),
+      );
+      expect(a, isNot(contains('-x')));
+      expect(a, isNot(contains('--audio-format')));
+      expect(a, isNot(contains('--remux-video')));
+      expect(a, isNot(contains('--embed-metadata')));
+      expect(a, isNot(contains('--embed-chapters')));
+      expect(a, isNot(contains('--sponsorblock-remove')));
+    });
+
+    test('download-side prefs survive without ffmpeg', () {
+      // -N, -r and the proxy have nothing to do with postprocessing.
+      final a = _args(
+        hasFfmpeg: false,
+        prefs: const YtPrefs(
+          concurrentFragments: 4,
+          limitRate: '2M',
+          proxy: 'http://p',
+          downloadArchive: true,
+        ),
+        archivePath: '/a.txt',
+      );
+      expect(a, containsAllInOrder(['-N', '4']));
+      expect(a, containsAllInOrder(['-r', '2M']));
+      expect(a, containsAllInOrder(['--download-archive', '/a.txt']));
+    });
+
+    test('an embed is dropped when the target container cannot hold it', () {
+      // WAV has nowhere to put cover art and yt-dlp discards it silently, so
+      // the flag is omitted rather than producing a file missing its art.
+      final a = _args(
+        options: const DownloadOptions(embedThumb: true, writeThumb: true),
+        prefs: const YtPrefs(extractAudio: true, audioFormat: 'wav'),
+      );
+      expect(a, isNot(contains('--embed-thumbnail')));
+      // The sidecar is still written, so the image is not simply lost.
+      expect(a, contains('--write-thumbnail'));
+    });
+
+    test('an embed is kept when the target container supports it', () {
+      final a = _args(
+        options: const DownloadOptions(embedThumb: true),
+        prefs: const YtPrefs(extractAudio: true, audioFormat: 'm4a'),
+      );
+      expect(a, contains('--embed-thumbnail'));
+    });
+
+    test('prefs come AFTER extra args so a raw -x cannot override them', () {
+      // Same last-word-wins rule as the other managed flags.
+      final a = _args(
+        prefs: const YtPrefs(extractAudio: true, audioFormat: 'mp3'),
+        extraArgs: const ['-x', '--audio-format', 'wav'],
+      );
+      expect(a.indexOf('wav'), lessThan(a.lastIndexOf('mp3')));
+    });
+
+    test('the URL is still last', () {
+      final a = _args(
+        prefs: const YtPrefs(
+          concurrentFragments: 4,
+          limitRate: '2M',
+          extractAudio: true,
+        ),
+      );
+      expect(a.last, 'https://example.com/watch?v=abc');
     });
   });
 
