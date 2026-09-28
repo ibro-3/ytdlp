@@ -10,6 +10,7 @@ import '../services/downloads/queue_store.dart';
 import '../services/foreground/foreground_service.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/settings/settings_service.dart';
+import '../services/settings/template_store.dart';
 import '../services/ytdlp/binary_manager.dart';
 import '../services/ytdlp/ytdlp_service.dart';
 import 'models/settings_model.dart';
@@ -21,6 +22,12 @@ final historyBoxProvider = Provider<Box<dynamic>>((ref) {
 final settingsBoxProvider = Provider<Box<dynamic>>((ref) {
   throw UnimplementedError('settingsBoxProvider must be overridden in main()');
 });
+
+/// Saved argument templates. Shares the settings box but uses its own key
+/// prefix, so a template never has to round-trip through [AppSettings].
+final templateStoreProvider = Provider<TemplateStore>(
+  (ref) => TemplateStore(ref.watch(settingsBoxProvider)),
+);
 
 /// Queue snapshots, so a killed app doesn't lose in-flight downloads.
 final queueBoxProvider = Provider<Box<dynamic>>((ref) {

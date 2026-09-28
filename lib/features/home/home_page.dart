@@ -11,6 +11,7 @@ import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
 import '../../services/sharing/share_intent_service.dart';
+import '../../services/ytdlp/arg_tokenizer.dart';
 import 'home_controller.dart';
 import 'widgets/format_picker_sheet.dart';
 import 'widgets/video_info_card.dart';
@@ -108,20 +109,43 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// Opens the format picker, then enqueues whatever the user chose.
   Future<void> _download(VideoInfo video) async {
     final settings = ref.read(settingsControllerProvider);
+    final templates = ref.read(templateStoreProvider).templates;
     final result = await showFormatPickerSheet(
       context,
       video: video,
       settings: settings,
+      templates: templates,
     );
     if (result != null && mounted) {
-      _enqueue(video, result.format, result.options);
+      _enqueue(
+        video,
+        result.format,
+        result.options,
+        // Empty means "use the Settings default", resolved at spawn time.
+        extraArgs: result.extraArgs ?? '',
+        outputTemplate: result.outputTemplate ?? '',
+      );
     }
   }
 
-  void _enqueue(VideoInfo video, Format format, DownloadOptions options) {
+  void _enqueue(
+    VideoInfo video,
+    Format format,
+    DownloadOptions options, {
+    String extraArgs = '',
+    String outputTemplate = '',
+  }) {
     ref
         .read(downloadManagerProvider)
-        .enqueue(video: video, format: format, options: options);
+        .enqueue(
+          video: video,
+          format: format,
+          options: options,
+          extraArgs: extraArgs.trim().isEmpty
+              ? const []
+              : tokenizeArgs(extraArgs),
+          outputTemplate: outputTemplate.trim(),
+        );
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(

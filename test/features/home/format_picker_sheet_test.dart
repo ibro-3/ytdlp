@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/core/models/command_template.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/features/home/widgets/format_picker_sheet.dart';
@@ -73,6 +74,7 @@ Future<_Result> _openSheet(
   WidgetTester tester, {
   required VideoInfo video,
   AppSettings settings = const AppSettings(),
+  List<CommandTemplate> templates = const [],
 }) async {
   final result = _Result();
   await tester.pumpWidget(
@@ -86,6 +88,7 @@ Future<_Result> _openSheet(
                   context,
                   video: video,
                   settings: settings,
+                  templates: templates,
                 );
               },
               child: const Text('open'),
@@ -98,6 +101,33 @@ Future<_Result> _openSheet(
   await tester.tap(find.text('open'));
   await tester.pumpAndSettle();
   return result;
+}
+
+/// Brings the Advanced section into view, since it sits below the quality
+/// chips and subtitle switches in a scrolling sheet.
+///
+/// Scrolls the sheet's own scroll view rather than the whole page: the bottom
+/// sheet is a draggable, and a page-level scroll does not move its content.
+Future<void> _scrollToAdvanced(WidgetTester tester) async {
+  await tester.dragUntilVisible(
+    find.text('Advanced'),
+    find.byType(SingleChildScrollView).first,
+    const Offset(0, -220),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// Text of the field at [index] within the sheet, in the order they appear:
+/// extra arguments first, then the output template.
+String _fieldText(WidgetTester tester, int index) => tester
+    .widgetList<TextField>(find.byType(TextField))
+    .elementAt(index)
+    .controller!
+    .text;
+
+Future<void> _enterField(WidgetTester tester, int index, String text) async {
+  await tester.enterText(find.byType(TextField).at(index), text);
+  await tester.pumpAndSettle();
 }
 
 Future<void> _tapDownload(WidgetTester tester) async {
@@ -424,5 +454,133 @@ void main() {
     await tester.tap(find.text('Save next to the file'));
     await tester.pumpAndSettle();
     expect(find.text('German (auto)'), findsOneWidget);
+  });
+
+  group('advanced: extra arguments', () {
+    testWidgets('the field is seeded from the Settings default', (
+      tester,
+    ) async {
+      await _openSheet(
+        tester,
+        video: _video(),
+        settings: const AppSettings(extraArgs: '--concurrent-fragments 4'),
+      );
+      await _scrollToAdvanced(tester);
+
+      expect(find.byType(TextField), findsNWidgets(2));
+      expect(_fieldText(tester, 0), '--concurrent-fragments 4');
+      expect(_fieldText(tester, 1), isEmpty, reason: 'template starts unset');
+    });
+
+    testWidgets('the override comes back on the result', (tester) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      await _enterField(tester, 0, '--embed-metadata');
+      await _tapDownload(tester);
+
+      expect(result.picked?.extraArgs, '--embed-metadata');
+    });
+
+    testWidgets('a managed flag warns but does not block', (tester) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      await _enterField(tester, 0, '-o /elsewhere');
+
+      expect(find.textContaining('is ignored'), findsOneWidget);
+      await _tapDownload(tester);
+      expect(
+        result.picked,
+        isNotNull,
+        reason: 'a duplicate managed flag is a warning, not an error',
+      );
+    });
+
+    testWidgets('a syntax error blocks the download', (tester) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      await _enterField(tester, 0, "--a 'oops");
+
+      expect(find.textContaining('never closed'), findsOneWidget);
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Download'),
+      );
+      expect(button.onPressed, isNull);
+      expect(result.picked, isNull);
+    });
+
+    testWidgets('a template chip fills the field', (tester) async {
+      await _openSheet(
+        tester,
+        video: _video(),
+        templates: const [
+          CommandTemplate(name: 'Sponsorblock', args: '--sponsorblock-remove'),
+        ],
+      );
+      await _scrollToAdvanced(tester);
+
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Sponsorblock'));
+      await tester.pumpAndSettle();
+
+      expect(_fieldText(tester, 0), '--sponsorblock-remove');
+    });
+
+    testWidgets('an empty template list is fine', (tester) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+      await _tapDownload(tester);
+      expect(result.picked, isNotNull);
+    });
+  });
+
+  group('advanced: output template', () {
+    testWidgets('an empty field falls back to the default for the download', (
+      tester,
+    ) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+      await _tapDownload(tester);
+
+      // Empty means "use the Settings default", resolved at spawn time.
+      expect(result.picked?.outputTemplate, isEmpty);
+    });
+
+    testWidgets('the preview renders the current field', (tester) async {
+      await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      await _enterField(tester, 1, '%(title)s.%(ext)s');
+
+      expect(find.textContaining('Saves as: Sample video.mp4'), findsOneWidget);
+    });
+
+    testWidgets('a template without an extension blocks the download', (
+      tester,
+    ) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      await _enterField(tester, 1, '%(title)s');
+
+      // The error text, not the hint, is what mentions %(ext)s.
+      expect(find.textContaining('sidecars'), findsOneWidget);
+      final button = tester.widget<FilledButton>(
+        find.widgetWithText(FilledButton, 'Download'),
+      );
+      expect(button.onPressed, isNull);
+      expect(result.picked, isNull);
+    });
+
+    testWidgets('a literal extension is accepted', (tester) async {
+      final result = await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      await _enterField(tester, 1, '%(title)s.mp4');
+      await _tapDownload(tester);
+
+      expect(result.picked?.outputTemplate, '%(title)s.mp4');
+    });
   });
 }

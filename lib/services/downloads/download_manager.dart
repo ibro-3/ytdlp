@@ -9,11 +9,13 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/models/download_options.dart';
 import '../../core/models/download_record.dart';
 import '../../core/models/download_task.dart';
+import '../../core/models/output_template.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import '../foreground/foreground_service.dart';
 import '../notifications/notification_service.dart';
 import '../settings/settings_service.dart';
+import '../ytdlp/arg_tokenizer.dart';
 import '../ytdlp/progress_parser.dart';
 import '../ytdlp/ytdlp_service.dart';
 import 'download_layout.dart';
@@ -159,6 +161,8 @@ class DownloadManager extends ChangeNotifier {
     String? stagingPath,
     String? playlistId,
     String? playlistTitle,
+    List<String> extraArgs = const [],
+    String outputTemplate = '',
   }) {
     final task = DownloadTask(
       id: '${DateTime.now().microsecondsSinceEpoch}-${_idCounter++}',
@@ -166,6 +170,10 @@ class DownloadManager extends ChangeNotifier {
       format: format,
       createdAt: DateTime.now(),
       options: options,
+      // An empty override means "whatever Settings says when this runs", so a
+      // later default change still applies to a task enqueued before it.
+      extraArgs: extraArgs,
+      outputTemplate: outputTemplate,
       stagingPath: stagingPath,
       playlistId: playlistId,
       playlistTitle: playlistTitle,
@@ -285,6 +293,7 @@ class DownloadManager extends ChangeNotifier {
           outputDir: staging.path,
           template: _stagingTemplate(task),
           cookiesPath: settings?.settings.cookiesPath,
+          extraArgs: _extraArgsFor(task),
         );
       } on YtdlpException catch (e) {
         return _fail(task, e.message);
@@ -446,7 +455,41 @@ class DownloadManager extends ChangeNotifier {
   /// its sidecars) and `_findFinalFile` can scan one directory. The per-playlist
   /// grouping is applied by `_moveToFinal`, which appends the sanitized
   /// playlist folder to the final destination.
-  String _stagingTemplate(DownloadTask task) => '%(title)s [%(id)s].%(ext)s';
+  ///
+  /// A user template that names a playlist folder (`%(playlist_title)s/…`) has
+  /// it stripped here: the folder is created by the app on the way out, and
+  /// leaving it in would make yt-dlp write into a staging subdirectory that
+  /// `_findFinalFile` does not scan.
+  ///
+  /// The task's own override wins over the Settings default, so a download
+  /// started from the sheet's one-off template keeps the name it was given.
+  String _stagingTemplate(DownloadTask task) => stripPlaylistPrefix(
+    OutputTemplate(
+      task.outputTemplate.trim().isNotEmpty
+          ? task.outputTemplate
+          : (settings?.settings.outputTemplate ?? ''),
+    ).effective,
+  );
+
+  /// Extra arguments for [task]: its own override when the sheet supplied one,
+  /// otherwise the Settings field tokenised now.
+  ///
+  /// Captured on the task so a retry repeats the command that failed. The
+  /// Settings path is tokenised per run so editing the default takes effect
+  /// without a migration.
+  List<String> _extraArgsFor(DownloadTask task) {
+    if (task.extraArgs.isNotEmpty) return task.extraArgs;
+    final raw = settings?.settings.extraArgs ?? '';
+    if (raw.trim().isEmpty) return const [];
+    try {
+      return tokenizeArgs(raw);
+    } on ArgSyntaxException {
+      // The UI refuses to start a download with an unparseable field, so this
+      // is only reachable if the value changed outside the app. Ignoring it is
+      // better than failing the download over a malformed extra flag.
+      return const [];
+    }
+  }
 
   /// Marks [task] as failed, notifies, and stops the pipeline. Returns void
   /// so callers can `return _fail(...)` and let the `finally` block clean up.
@@ -500,6 +543,15 @@ class DownloadManager extends ChangeNotifier {
   /// merged file) when it is a media file, otherwise the newest matching
   /// media file in the staging directory. Never accepts files outside
   /// staging, and never a sidecar or partial.
+  ///
+  /// The destination line is the primary signal and is independent of the
+  /// output template. The directory scan is only a fallback for when that line
+  /// is missing or unusable, and it filters by whatever the active template
+  /// uses to identify the file — see [OutputTemplate.identityFragment], which
+  /// returns null for a template that cannot distinguish one video's output
+  /// from another's. Each task owns its staging directory, so an unfiltered
+  /// scan is still safe; the filter only guards against a stray file that
+  /// belongs to something else.
   Future<String?> _findFinalFile(
     Directory staging,
     DownloadTask task,
@@ -511,12 +563,15 @@ class DownloadManager extends ChangeNotifier {
         await _isValidFile(lastDestination)) {
       return lastDestination;
     }
+    final fragment = _identityFragment(task);
     FileStat? newest;
     String? newestPath;
     try {
       await for (final entity in staging.list()) {
         if (entity is! File) continue;
-        if (!entity.path.contains('[${task.video.id}]')) continue;
+        // A null fragment means the template names every file identically, so
+        // there is nothing to match on and every candidate is considered.
+        if (fragment != null && !entity.path.contains(fragment)) continue;
         if (_isSidecar(entity.path, _nonMediaExtensions)) continue;
         final stat = await entity.stat();
         if (stat.type != FileSystemEntityType.file || stat.size <= 0) continue;
@@ -530,6 +585,15 @@ class DownloadManager extends ChangeNotifier {
     }
     return newestPath;
   }
+
+  /// The substring the active output template guarantees a finished file's
+  /// name will contain. Mirrors the old hard-coded `[<id>]` check, but derived
+  /// from the template so a user template that omits `%(id)s` still resolves.
+  String? _identityFragment(DownloadTask task) => OutputTemplate(
+    task.outputTemplate.trim().isNotEmpty
+        ? task.outputTemplate
+        : (settings?.settings.outputTemplate ?? ''),
+  ).identityFragment(video: task.video);
 
   Future<bool> _isValidFile(String path) async {
     try {
@@ -759,9 +823,13 @@ class DownloadManager extends ChangeNotifier {
       video: task.video,
       format: task.format,
       options: task.options,
+      // Preserved so a retried download repeats the command that failed
+      // rather than silently picking up a changed default, and so a playlist
+      // entry still lands in its playlist folder and still groups with its
+      // siblings in the queue.
+      extraArgs: task.extraArgs,
+      outputTemplate: task.outputTemplate,
       stagingPath: task.stagingPath,
-      // Preserved so a retried playlist entry still lands in its playlist
-      // folder and still groups with its siblings in the queue.
       playlistId: task.playlistId,
       playlistTitle: task.playlistTitle,
     );

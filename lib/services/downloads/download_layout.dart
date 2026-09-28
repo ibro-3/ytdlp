@@ -1,5 +1,6 @@
 import 'package:path/path.dart' as p;
 
+import '../../core/models/output_template.dart';
 import '../../core/models/video_info.dart';
 
 /// Where a single download lands, relative to the configured download root.
@@ -76,6 +77,28 @@ const _windowsReserved = {
 /// component at 255 bytes; titles in several locales are multi-byte, so the
 /// limit is applied to characters and then trimmed to a safe byte length.
 const _maxFolderNameLength = 120;
+
+/// Removes a leading `%(playlist_title)s/` from [template].
+///
+/// A user output template may group by playlist, which is the documented way
+/// to do it. The app creates that folder itself when moving the finished file
+/// (see [resolveDownloadLayout]), so the *staging* template has to stay flat —
+/// yt-dlp would otherwise write into a subdirectory of staging, and
+/// `DownloadManager._findFinalFile` only scans the top level.
+///
+/// Only a leading playlist field is stripped, and only when it is the whole
+/// first path segment, so a title that legitimately contains a slash is left
+/// alone.
+String stripPlaylistPrefix(String template) {
+  final slash = template.indexOf('/');
+  if (slash < 0) return template;
+  if (!OutputTemplate.playlistFieldPattern.hasMatch(
+    template.substring(0, slash),
+  )) {
+    return template;
+  }
+  return template.substring(slash + 1);
+}
 
 /// Makes a playlist title usable as a single folder name.
 ///

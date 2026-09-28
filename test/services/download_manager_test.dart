@@ -6,11 +6,14 @@ import 'package:hive/hive.dart';
 import 'package:path/path.dart' as p;
 import 'package:ytdlp/core/models/download_task.dart';
 import 'package:ytdlp/core/models/download_options.dart';
+import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
+import 'package:ytdlp/services/downloads/download_layout.dart';
 import 'package:ytdlp/services/downloads/queue_store.dart';
+import 'package:ytdlp/services/settings/settings_service.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
 /// A fake yt-dlp process for deterministic manager tests.
@@ -43,6 +46,38 @@ class _EngineCall {
   final _FakeProcess process;
 }
 
+/// Records the extra arguments the manager hands the engine, and produces a
+/// valid file so the task completes.
+class _RecordingArgsEngine extends _FakeEngine {
+  _RecordingArgsEngine({super.exitCode});
+
+  List<String> extraArgs = const [];
+  String template = '';
+
+  @override
+  Future<_FakeProcess> startDownload({
+    required String url,
+    required Format format,
+    required DownloadOptions options,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+    List<String> extraArgs = const [],
+  }) {
+    this.extraArgs = extraArgs;
+    this.template = template;
+    return super.startDownload(
+      url: url,
+      format: format,
+      options: options,
+      outputDir: outputDir,
+      template: template,
+      cookiesPath: cookiesPath,
+      extraArgs: extraArgs,
+    );
+  }
+}
+
 /// Writes the expected output file into the staging dir so the manager can
 /// validate and move it, mirroring what yt-dlp would do.
 ///
@@ -72,6 +107,7 @@ class _FakeEngine implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    List<String> extraArgs = const [],
   }) async {
     started++;
     final file = File(p.join(outputDir, 'Title [abc123].mp4'));
@@ -116,6 +152,7 @@ class _NoFileEngine implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    List<String> extraArgs = const [],
   }) async {
     return _FakeProcess(lines: const ['[download] Destination: missing.mp4']);
   }
@@ -136,6 +173,7 @@ class _FailingAfterPartEngine implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    List<String> extraArgs = const [],
   }) async {
     final part = File(p.join(outputDir, 'Title [abc123].mp4.part'));
     await part.parent.create(recursive: true);
@@ -373,6 +411,229 @@ void main() {
         await waitUntil(() => !Directory(staging).existsSync());
       },
     );
+  });
+
+  group('DownloadManager output template', () {
+    /// A settings service backed by a real box, so the manager reads the
+    /// user's template and extra-args field the way it would in the app.
+    Future<(SettingsService, Box<dynamic>)> settingsWith(
+      AppSettings settings,
+    ) async {
+      final box = await Hive.openBox<dynamic>(
+        'tpl-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      final service = SettingsService(box);
+      await service.update(settings);
+      return (service, box);
+    }
+
+    test('a custom template names the finished file', () async {
+      final engine = _FakeEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(outputTemplate: '%(uploader)s - %(title)s.%(ext)s'),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      // The engine writes to whatever path it is given, so the real assertion
+      // is that the template reached it and the file moved into Video/.
+      expect(
+        engine.calls.single.outputDir,
+        startsWith(p.join(tempRoot.path, '.ytdlp-staging')),
+      );
+      expect(
+        Directory(p.join(tempRoot.path, 'Video')).listSync(),
+        isNotEmpty,
+        reason: 'the custom-named file still lands in the Video area',
+      );
+    });
+
+    test('a template without an id still resolves its finished file', () async {
+      // The old hard-coded check looked for '[<id>]' in the name, which a
+      // user template may not contain. This is the regression that would make
+      // every such download report "output file not found".
+      final engine = _FakeEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(outputTemplate: '%(title)s.%(ext)s'),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      expect(m.tasks.single.status, DownloadStatus.completed);
+      expect(m.tasks.single.filePath, isNotNull);
+      expect(m.tasks.single.error, isNull);
+    });
+
+    test('stripPlaylistPrefix only removes a leading playlist segment', () {
+      // The staging directory must stay flat, or _findFinalFile — which scans
+      // only its top level — cannot see the file yt-dlp wrote.
+      expect(
+        stripPlaylistPrefix('%(playlist_title)s/%(title)s.%(ext)s'),
+        '%(title)s.%(ext)s',
+      );
+      expect(
+        stripPlaylistPrefix(
+          '%(playlist_title)s/%(playlist_index)s-%(title)s.%(ext)s',
+        ),
+        '%(playlist_index)s-%(title)s.%(ext)s',
+      );
+      // A slash that is not a playlist field is left alone: a title can
+      // legitimately contain one.
+      expect(
+        stripPlaylistPrefix('%(uploader)s/%(title)s.%(ext)s'),
+        '%(uploader)s/%(title)s.%(ext)s',
+      );
+      expect(stripPlaylistPrefix('%(title)s.%(ext)s'), '%(title)s.%(ext)s');
+    });
+
+    test('a playlist prefix is stripped from the staging template', () async {
+      // Otherwise yt-dlp writes into a staging subdirectory and the manager,
+      // which scans the top level, cannot find the file.
+      final engine = _FakeEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(
+          outputTemplate: '%(playlist_title)s/%(title)s.%(ext)s',
+        ),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+      expect(m.tasks.single.status, DownloadStatus.completed);
+    });
+
+    test('extra args are passed through to the engine', () async {
+      final engine = _RecordingArgsEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(extraArgs: '--concurrent-fragments 4'),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      expect(engine.extraArgs, ['--concurrent-fragments', '4']);
+    });
+
+    test('a per-task template override beats the Settings default', () async {
+      final engine = _RecordingArgsEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(outputTemplate: '%(title)s.%(ext)s'),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        outputTemplate: '%(uploader)s/%(title)s.%(ext)s',
+      );
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      expect(engine.template, '%(uploader)s/%(title)s.%(ext)s');
+      expect(
+        m.tasks.single.status,
+        DownloadStatus.completed,
+        reason: 'the override must also drive the identity check',
+      );
+    });
+
+    test('a retry repeats the original template and args', () async {
+      // A retry that silently picked up a changed default would no longer
+      // resume the .part file it is meant to continue.
+      final engine = _RecordingArgsEngine(exitCode: Future<int>.value(1));
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final task = m.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        extraArgs: const ['--concurrent-fragments', '4'],
+        outputTemplate: '%(title)s.%(ext)s',
+      );
+      await waitUntil(() => task.status == DownloadStatus.failed);
+
+      final retried = m.retry(task);
+      expect(retried, isNotNull);
+      expect(retried!.extraArgs, ['--concurrent-fragments', '4']);
+      expect(retried.outputTemplate, '%(title)s.%(ext)s');
+      await waitUntil(() => retried.status != DownloadStatus.queued);
+    });
+
+    test('unparseable extra args are ignored rather than failing', () async {
+      final engine = _RecordingArgsEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(extraArgs: "--a 'unterminated"),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      expect(engine.extraArgs, isEmpty);
+      expect(
+        m.tasks.single.status,
+        DownloadStatus.completed,
+        reason: 'a malformed field must not break the download',
+      );
+    });
   });
 
   group('DownloadManager playlists', () {
@@ -826,6 +1087,49 @@ void main() {
       expect(back.options.embedThumb, isTrue);
       expect(back.options.includeAutoSubs, isTrue);
       expect(back.options.subLanguages, ['en', 'de']);
+    });
+
+    test('extraArgs and outputTemplate round-trip on a task', () {
+      final task = DownloadTask(
+        id: 't1',
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        createdAt: DateTime.now(),
+        extraArgs: const ['--concurrent-fragments', '4'],
+        outputTemplate: '%(uploader)s/%(title)s.%(ext)s',
+        playlistId: 'PL1',
+        playlistTitle: 'Road Trip',
+      );
+
+      final back = DownloadTask.fromMap(task.toMap());
+      expect(back.extraArgs, ['--concurrent-fragments', '4']);
+      expect(back.outputTemplate, '%(uploader)s/%(title)s.%(ext)s');
+      expect(back.playlistId, 'PL1');
+      expect(back.playlistTitle, 'Road Trip');
+    });
+
+    test('a task from an older snapshot defaults the new fields', () {
+      // An install upgrading mid-queue has snapshots without these keys.
+      final back = DownloadTask.fromMap({
+        'id': 'old',
+        'createdAt': DateTime.now().toIso8601String(),
+        'video': {'id': 'a', 'title': 'T', 'webUrl': 'u'},
+        'format': {'kind': 'video', 'label': 'L', 'selector': 'b'},
+      });
+      expect(back.extraArgs, isEmpty);
+      expect(back.outputTemplate, isEmpty);
+      expect(back.playlistId, isNull);
+    });
+
+    test('extraArgs of the wrong type is tolerated', () {
+      final back = DownloadTask.fromMap({
+        'id': 't',
+        'createdAt': DateTime.now().toIso8601String(),
+        'video': const <String, dynamic>{},
+        'format': const <String, dynamic>{},
+        'extraArgs': 'not a list',
+      });
+      expect(back.extraArgs, isEmpty);
     });
 
     test('DownloadOptions round-trips and tolerates a missing map', () {

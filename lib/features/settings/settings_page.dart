@@ -7,8 +7,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/models/command_template.dart';
+import '../../core/models/output_template.dart';
 import '../../core/models/settings_model.dart';
+import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
+import '../../services/settings/template_store.dart';
+import '../../services/ytdlp/arg_tokenizer.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -435,6 +440,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         onChanged: (v) =>
                             _patch(settings.copyWith(defaultWriteThumb: v)),
                       ),
+                      const SizedBox(height: 16),
+                      _AdvancedSettings(settings: settings, onPatch: _patch),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.cookie_outlined),
@@ -587,6 +594,353 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Extra yt-dlp flags and the output template.
+///
+/// Collapsed by default: the escape hatch is powerful and easy to get wrong,
+/// and the common case is that none of it is needed. Expanding it is how a
+/// user discovers the field exists at all.
+class _AdvancedSettings extends ConsumerStatefulWidget {
+  const _AdvancedSettings({required this.settings, required this.onPatch});
+
+  final AppSettings settings;
+  final Future<void> Function(AppSettings) onPatch;
+
+  @override
+  ConsumerState<_AdvancedSettings> createState() => _AdvancedSettingsState();
+}
+
+class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
+  final TextEditingController _args = TextEditingController();
+  final TextEditingController _template = TextEditingController();
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncFromSettings();
+  }
+
+  /// Seeds the fields from persisted settings, once.
+  ///
+  /// Done in initState rather than build because the fields are free text: a
+  /// rebuild while the user is mid-word must not rewrite what they typed.
+  void _syncFromSettings() {
+    if (_loaded) return;
+    _args.text = widget.settings.extraArgs;
+    _template.text = widget.settings.outputTemplate;
+    _loaded = true;
+  }
+
+  @override
+  void dispose() {
+    _args.dispose();
+    _template.dispose();
+    super.dispose();
+  }
+
+  List<ArgIssue> get _issues => validateExtraArgs(_args.text);
+
+  List<String> get _templateIssues {
+    final t = OutputTemplate(_template.text);
+    if (t.raw.trim().isEmpty) return const [];
+    if (!t.isUsable) {
+      return [
+        'Must include ${OutputTemplate.extField} so the app can tell the media '
+            'file from a subtitle or thumbnail sidecar.',
+      ];
+    }
+    return const [];
+  }
+
+  bool get _valid =>
+      !_issues.any((i) => i.isBlocking) && _templateIssues.isEmpty;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final store = ref.watch(templateStoreProvider);
+    final issues = _issues;
+    final templateErrors = _templateIssues;
+
+    return ExpansionTile(
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: EdgeInsets.zero,
+      title: const Text('Advanced'),
+      subtitle: Text(
+        widget.settings.extraArgs.trim().isEmpty &&
+                widget.settings.outputTemplate.trim().isEmpty
+            ? 'Extra yt-dlp flags and file naming'
+            : 'Custom flags and template set',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      ),
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text('Extra yt-dlp flags', style: theme.textTheme.labelMedium),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Added to every download. Flags the app sets itself — output path, '
+          'format, playlist — are ignored so a download cannot escape its '
+          'folder.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _args,
+          minLines: 1,
+          maxLines: 4,
+          onChanged: (_) => setState(() {}),
+          style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: '--concurrent-fragments 4 --embed-metadata',
+            border: const OutlineInputBorder(),
+            errorText: issues.where((i) => i.isBlocking).firstOrNull?.message,
+          ),
+        ),
+        for (final issue in issues.where((i) => !i.isBlocking))
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 14,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    issue.message,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                'Saved templates',
+                style: theme.textTheme.labelMedium,
+              ),
+            ),
+            if (store.templates.isNotEmpty)
+              TextButton(
+                onPressed: () => store.clear(),
+                child: const Text('Clear all'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        if (store.templates.isEmpty)
+          Text(
+            'None saved yet.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          )
+        else
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final t in store.templates)
+                InputChip(
+                  label: Text(t.name),
+                  onPressed: () => setState(() => _args.text = t.args),
+                  onDeleted: () => store.remove(t.name),
+                  deleteButtonTooltipMessage: 'Delete ${t.name}',
+                ),
+            ],
+          ),
+        const SizedBox(height: 8),
+        _SaveTemplateButton(args: _args.text, store: store),
+        const SizedBox(height: 20),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text('File name template', style: theme.textTheme.labelMedium),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'yt-dlp output template. Must end in an extension so the app can tell '
+          'the media file from its sidecars.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _template,
+          onChanged: (_) => setState(() {}),
+          style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: OutputTemplate.defaultTemplate,
+            border: const OutlineInputBorder(),
+            errorText: templateErrors.isEmpty ? null : templateErrors.first,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Example: ${OutputTemplate(_template.text).preview(video: _sampleVideo)}',
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontFamily: 'monospace',
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final (field, label) in OutputTemplate.knownFields)
+              ActionChip(
+                label: Text(label),
+                onPressed: () => setState(() => _insertField(field)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                describeTemplate(_template.text),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: () => setState(() => _template.text = ''),
+              child: const Text('Reset'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        FilledButton.tonalIcon(
+          onPressed: _valid
+              ? () => widget.onPatch(
+                  widget.settings.copyWith(
+                    extraArgs: _args.text,
+                    outputTemplate: _template.text,
+                  ),
+                )
+              : null,
+          icon: const Icon(Icons.save_outlined),
+          label: const Text('Save advanced settings'),
+        ),
+      ],
+    );
+  }
+
+  /// Appends a field token at the caret, so a half-typed template is not
+  /// destroyed by tapping a chip.
+  void _insertField(String field) {
+    final text = _template.text;
+    _template.text = '$text$field';
+    _template.selection = TextSelection.collapsed(
+      offset: _template.text.length,
+    );
+  }
+}
+
+/// Stand-in used to render the template preview, since the Settings page has
+/// no specific video to show.
+const _sampleVideo = VideoInfo(
+  id: 'dQw4w9WgXcQ',
+  title: 'Example Video Title',
+  webUrl: 'https://example.com/watch',
+  author: 'Example Channel',
+  uploadDate: null,
+);
+
+/// Saves the current extra-args field as a named template.
+class _SaveTemplateButton extends ConsumerStatefulWidget {
+  const _SaveTemplateButton({required this.args, required this.store});
+
+  final String args;
+  final TemplateStore store;
+
+  @override
+  ConsumerState<_SaveTemplateButton> createState() =>
+      _SaveTemplateButtonState();
+}
+
+class _SaveTemplateButtonState extends ConsumerState<_SaveTemplateButton> {
+  final TextEditingController _name = TextEditingController();
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _name.text.trim();
+    if (name.isEmpty || widget.args.trim().isEmpty) return;
+    final issues = validateExtraArgs(widget.args);
+    if (issues.any((i) => i.isBlocking)) return;
+    final ok = await widget.store.save(
+      CommandTemplate(name: name, args: widget.args.trim()),
+    );
+    if (!mounted) return;
+    _name.clear();
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(
+            ok ? 'Saved template "$name"' : 'Could not save the template',
+          ),
+        ),
+      );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final canSave =
+        _name.text.trim().isNotEmpty &&
+        widget.args.trim().isNotEmpty &&
+        !validateExtraArgs(widget.args).any((i) => i.isBlocking);
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _name,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              isDense: true,
+              hintText: 'Template name',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton.filledTonal(
+          onPressed: canSave ? _save : null,
+          icon: const Icon(Icons.bookmark_add_outlined),
+          tooltip: 'Save these flags as a template',
+        ),
+      ],
     );
   }
 }

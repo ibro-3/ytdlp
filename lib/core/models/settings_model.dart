@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'output_template.dart';
+
 /// Persisted user preferences. Stored as a plain map in the Hive
 /// `settings` box so no codegen is needed.
 class AppSettings {
@@ -17,6 +19,8 @@ class AppSettings {
     this.defaultWriteThumb = false,
     this.cookiesPath = '',
     this.downloadRoot = '',
+    this.extraArgs = '',
+    this.outputTemplate = '',
   });
 
   /// Null tier = Best quality.
@@ -54,6 +58,24 @@ class AppSettings {
   /// `Video/` / `Audio/` subfolder of this root.
   final String downloadRoot;
 
+  /// Extra yt-dlp flags applied to every download, as typed.
+  ///
+  /// Tokenised on use and appended ahead of the flags the app manages, so a
+  /// user-supplied `-o` or `-f` cannot redirect the output or change the stream
+  /// out from under the staging/finalize logic. See `validateExtraArgs` for
+  /// what gets reported back to the user.
+  final String extraArgs;
+
+  /// Output template (`-o`) for downloaded files. Empty means
+  /// [OutputTemplate.defaultTemplate].
+  ///
+  /// Must resolve to a filename with an extension, since the manager decides
+  /// which file is the media file by extension.
+  final String outputTemplate;
+
+  /// The template actually used, with the blank case resolved.
+  OutputTemplate get effectiveOutputTemplate => OutputTemplate(outputTemplate);
+
   /// Defaults seeded into the download sheet. Embed options are only honored
   /// when ffmpeg is available (bundled on Android, inferred on desktop).
   final bool defaultEmbedSubs;
@@ -81,6 +103,8 @@ class AppSettings {
     bool? defaultWriteThumb,
     String? cookiesPath,
     String? downloadRoot,
+    String? extraArgs,
+    String? outputTemplate,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -101,6 +125,8 @@ class AppSettings {
       defaultWriteThumb: defaultWriteThumb ?? this.defaultWriteThumb,
       cookiesPath: cookiesPath ?? this.cookiesPath,
       downloadRoot: downloadRoot ?? this.downloadRoot,
+      extraArgs: extraArgs ?? this.extraArgs,
+      outputTemplate: outputTemplate ?? this.outputTemplate,
     );
   }
 
@@ -118,6 +144,8 @@ class AppSettings {
     'defaultWriteThumb': defaultWriteThumb,
     'cookiesPath': cookiesPath,
     'downloadRoot': downloadRoot,
+    'extraArgs': extraArgs,
+    'outputTemplate': outputTemplate,
   };
 
   factory AppSettings.fromMap(Map<String, dynamic> m) {
@@ -139,6 +167,8 @@ class AppSettings {
       defaultWriteThumb: (m['defaultWriteThumb'] as bool?) ?? false,
       cookiesPath: (m['cookiesPath'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
+      extraArgs: (m['extraArgs'] as String?) ?? '',
+      outputTemplate: (m['outputTemplate'] as String?) ?? '',
     );
   }
 }

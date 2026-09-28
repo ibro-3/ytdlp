@@ -28,10 +28,10 @@ List<String> buildDownloadArgs({
   String? cookiesPath,
   bool hasFfmpeg = true,
   String? androidFfmpegPath,
+  List<String> extraArgs = const [],
 }) {
   final args = <String>[
     '--newline',
-    '--no-playlist',
     '--no-mtime',
     // Resume a partially downloaded .part file instead of starting over.
     // Enabled by default in yt-dlp, but stated here because the manager
@@ -47,11 +47,29 @@ List<String> buildDownloadArgs({
     '--retry-sleep',
     'linear=1:5:2',
     '--force-overwrites',
+  ];
+
+  // User flags go in *between* the app's two groups.
+  //
+  // For a single-valued option yt-dlp lets the last occurrence win, so every
+  // flag the app owns has to be stated after this block: a user-supplied -o
+  // or -f would otherwise redirect the staging path and break the
+  // finalise/move step, and --yes-playlist would expand one task into a whole
+  // collection. Nothing above can be overridden in a way that matters, so
+  // putting them first keeps the user's flags from displacing the managed ones.
+  //
+  // validateExtraArgs reports the conflicting flags in the UI rather than
+  // dropping them silently.
+  args.addAll(extraArgs);
+
+  args.addAll([
+    '--no-playlist',
     '-o',
     '$outputDir/$template',
     '-f',
     format.selector,
-  ];
+  ]);
+
   if (cookiesPath != null && cookiesPath.isNotEmpty) {
     args.addAll(['--cookies', cookiesPath]);
   }
@@ -112,6 +130,7 @@ abstract interface class DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    List<String> extraArgs = const [],
   });
 }
 
@@ -468,6 +487,7 @@ class YtdlpService implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    List<String> extraArgs = const [],
   }) async {
     final bin = await _binary.ensureRunner();
     final ffmpeg = await _binary.androidFfmpegLocation();
@@ -483,6 +503,7 @@ class YtdlpService implements DownloadEngine {
       // postprocessing. Probe the real capability instead.
       hasFfmpeg: await _binary.hasFfmpeg(),
       androidFfmpegPath: ffmpeg,
+      extraArgs: extraArgs,
     );
 
     final YtdlpProcess process;

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/core/models/output_template.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 
 void main() {
@@ -35,6 +36,49 @@ void main() {
       expect(back.defaultAudioTier, 128);
       expect(back.notificationsEnabled, isFalse);
       expect(back.downloadRoot, '/data/media/0/ytdlp');
+    });
+
+    test('extraArgs and outputTemplate default to empty', () {
+      const s = AppSettings();
+      expect(s.extraArgs, isEmpty);
+      expect(s.outputTemplate, isEmpty);
+      // An empty template resolves to the built-in default, never a blank one.
+      expect(
+        s.effectiveOutputTemplate.effective,
+        OutputTemplate.defaultTemplate,
+      );
+    });
+
+    test('the new fields round-trip', () {
+      const s = AppSettings(
+        extraArgs: '--concurrent-fragments 4',
+        outputTemplate: '%(uploader)s/%(title)s.%(ext)s',
+      );
+      final back = AppSettings.fromMap(s.toMap());
+      expect(back.extraArgs, '--concurrent-fragments 4');
+      expect(back.outputTemplate, '%(uploader)s/%(title)s.%(ext)s');
+      expect(
+        back.effectiveOutputTemplate.effective,
+        '%(uploader)s/%(title)s.%(ext)s',
+      );
+    });
+
+    test('copyWith sets and clears the new fields', () {
+      const s = AppSettings();
+      final set = s.copyWith(
+        extraArgs: '--a',
+        outputTemplate: '%(title)s.%(ext)s',
+      );
+      expect(set.extraArgs, '--a');
+      expect(set.copyWith(extraArgs: '').extraArgs, isEmpty);
+      expect(set.copyWith(outputTemplate: '').outputTemplate, isEmpty);
+    });
+
+    test('fromMap defaults the new fields for an older stored map', () {
+      // An install upgrading from before these fields existed has neither key.
+      final s = AppSettings.fromMap({'themeMode': 'dark'});
+      expect(s.extraArgs, isEmpty);
+      expect(s.outputTemplate, isEmpty);
     });
 
     test('copyWith can clear the audio tier to Best via thunk', () {

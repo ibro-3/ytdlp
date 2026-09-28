@@ -21,6 +21,7 @@ List<String> _args({
   String? cookiesPath,
   bool hasFfmpeg = true,
   String? androidFfmpegPath,
+  List<String> extraArgs = const [],
 }) => buildDownloadArgs(
   url: 'https://example.com/watch?v=abc',
   format: format,
@@ -30,13 +31,14 @@ List<String> _args({
   cookiesPath: cookiesPath,
   hasFfmpeg: hasFfmpeg,
   androidFfmpegPath: androidFfmpegPath,
+  extraArgs: extraArgs,
 );
 
 void main() {
   group('buildDownloadArgs', () {
     test('always carries the base download flags and the URL last', () {
       final a = _args();
-      expect(a.sublist(0, 3), ['--newline', '--no-playlist', '--no-mtime']);
+      expect(a.sublist(0, 2), ['--newline', '--no-mtime']);
       expect(a, containsAllInOrder(['--continue', '--retries', '10']));
       expect(a, containsAllInOrder(['--fragment-retries', '10']));
       expect(a, containsAllInOrder(['--retry-sleep', 'linear=1:5:2']));
@@ -45,6 +47,7 @@ void main() {
         containsAllInOrder(['-o', '/tmp/stg/%(title)s [%(id)s].%(ext)s']),
       );
       expect(a, containsAllInOrder(['-f', _video.selector]));
+      expect(a, contains('--no-playlist'));
       expect(a.last, 'https://example.com/watch?v=abc');
     });
 
@@ -191,6 +194,66 @@ void main() {
         ]),
       );
       expect(a, containsAllInOrder(['--cookies', '/c/cookies.txt']));
+    });
+  });
+
+  group('extra arguments', () {
+    test('are inserted after the base flags', () {
+      final a = _args(extraArgs: ['--concurrent-fragments', '4']);
+      expect(a, containsAllInOrder(['--concurrent-fragments', '4']));
+      // Still before the URL.
+      expect(a.last, 'https://example.com/watch?v=abc');
+    });
+
+    test('do not disturb the managed flags when benign', () {
+      final a = _args(
+        extraArgs: ['--embed-metadata', '--no-check-certificate'],
+      );
+      expect(a, containsAllInOrder(['-f', _video.selector]));
+      expect(
+        a,
+        containsAllInOrder(['-o', '/tmp/stg/%(title)s [%(id)s].%(ext)s']),
+      );
+    });
+
+    test('come BEFORE -o so a user -o cannot win', () {
+      // yt-dlp lets the last occurrence of a single-valued option win, so a
+      // user-supplied -o placed after ours would redirect the staging path and
+      // break the finalise/move step entirely. Ordering is the whole defence.
+      final a = _args(extraArgs: ['-o', '/tmp/attacker']);
+      final userO = a.indexOf('/tmp/attacker');
+      final appO = a.indexOf('/tmp/stg/%(title)s [%(id)s].%(ext)s');
+      expect(userO, greaterThanOrEqualTo(0));
+      expect(appO, greaterThan(userO), reason: 'the app value must come last');
+    });
+
+    test('come BEFORE -f so a user -f cannot change the stream', () {
+      final a = _args(extraArgs: ['-f', 'worst']);
+      expect(a.indexOf(_video.selector), greaterThan(a.indexOf('worst')));
+    });
+
+    test('come BEFORE --no-playlist so --yes-playlist cannot expand', () {
+      final a = _args(extraArgs: ['--yes-playlist']);
+      expect(a.indexOf('--yes-playlist'), lessThan(a.indexOf('--no-playlist')));
+    });
+
+    test('an empty list changes nothing', () {
+      expect(_args(), _args(extraArgs: const []));
+    });
+
+    test('are placed before --ffmpeg-location prepending is irrelevant', () {
+      // The ffmpeg location is inserted at index 0; the user flags still come
+      // after the app's own base flags, so ordering of the two groups does not
+      // change which -o wins.
+      final a = _args(
+        extraArgs: ['-o', '/tmp/attacker'],
+        androidFfmpegPath: '/a/ffmpeg',
+      );
+      expect(a.first, '--ffmpeg-location');
+      expect(
+        a.indexOf('/tmp/stg/%(title)s [%(id)s].%(ext)s'),
+        greaterThan(a.indexOf('/tmp/attacker')),
+      );
     });
   });
 }

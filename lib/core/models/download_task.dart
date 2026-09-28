@@ -10,6 +10,8 @@ class DownloadTask {
     required this.format,
     required this.createdAt,
     this.options = const DownloadOptions(),
+    this.extraArgs = const [],
+    this.outputTemplate = '',
     this.stagingPath,
     this.playlistId,
     this.playlistTitle,
@@ -22,6 +24,17 @@ class DownloadTask {
 
   /// Subtitle/thumbnail extras chosen when this download was enqueued.
   final DownloadOptions options;
+
+  /// Extra yt-dlp arguments for this download, already tokenised. Empty means
+  /// "use whatever Settings says at run time", so a later settings change
+  /// still applies to a task enqueued before it.
+  ///
+  /// Captured on the task rather than read at spawn time so a retry repeats
+  /// the command that failed instead of silently changing under the user.
+  final List<String> extraArgs;
+
+  /// Output template for this download. Empty means the Settings default.
+  final String outputTemplate;
 
   /// Set when the download came from a playlist. Every entry of one playlist
   /// shares the same id so the queue can group them, and the title decides the
@@ -81,6 +94,8 @@ class DownloadTask {
       'filesize': format.filesize,
     },
     'options': options.toMap(),
+    'extraArgs': extraArgs,
+    'outputTemplate': outputTemplate,
   };
 
   /// Rebuilds a task from a [toMap] snapshot. Any missing or malformed field
@@ -121,6 +136,14 @@ class DownloadTask {
         options: DownloadOptions.fromMap(
           (m['options'] as Map?)?.cast<String, dynamic>(),
         ),
+        // Tolerates a stored value of the wrong type: a corrupt snapshot must
+        // not be able to break queue restore, matching how every other field
+        // in this factory falls back to a sane default.
+        extraArgs: switch (m['extraArgs']) {
+          final List<dynamic> list => list.whereType<String>().toList(),
+          _ => const <String>[],
+        },
+        outputTemplate: m['outputTemplate'] as String? ?? '',
       )
       ..status = _statusFrom(m['status'] as String?)
       ..progress = (m['progress'] as num?)?.toDouble() ?? 0
