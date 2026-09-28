@@ -2,11 +2,13 @@ import 'dart:io';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-/// Android-first download notifications on the `downloads` channel.
-/// Foreground-only in v1 (no Foreground Service).
+/// Download notifications on the `downloads` channel.
 ///
-/// Every plugin call is wrapped so a missing/unsupported plugin, revoked
-/// permission or platform error can never interrupt a download.
+/// Android is the primary target and additionally runs a `dataSync` foreground
+/// service while the queue is non-empty (see `ForegroundService`); Linux and
+/// macOS get plain system notifications. Every plugin call is wrapped so a
+/// missing/unsupported plugin, revoked permission or platform error can never
+/// interrupt a download.
 class NotificationService {
   NotificationService();
 
@@ -27,6 +29,14 @@ class NotificationService {
       const settings = InitializationSettings(
         android: AndroidInitializationSettings('@mipmap/ic_launcher'),
         linux: LinuxInitializationSettings(defaultActionName: 'Open'),
+        // Permissions are not requested here: the notification toggle in
+        // Settings is what asks, mirroring the Android behaviour, so the
+        // app never throws a permission prompt at first launch.
+        macOS: DarwinInitializationSettings(
+          requestAlertPermission: false,
+          requestSoundPermission: false,
+          requestBadgePermission: false,
+        ),
       );
       await _plugin.initialize(settings: settings);
       if (Platform.isAndroid) {
@@ -51,16 +61,29 @@ class NotificationService {
     }
   }
 
-  /// Android 13+ requires an explicit runtime grant.
+  /// Asks the OS for permission to post notifications.
+  ///
+  /// Android 13+ needs an explicit runtime grant; macOS needs the app
+  /// authorized before any notification is accepted. Linux and Windows have no
+  /// permission model here, so they are treated as always allowed.
   Future<bool> requestPermission() async {
-    if (!Platform.isAndroid) return true;
+    if (!Platform.isAndroid && !Platform.isMacOS) return true;
     try {
-      final android = _plugin
+      if (Platform.isAndroid) {
+        final android = _plugin
+            .resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin
+            >();
+        if (android == null) return false;
+        final granted = await android.requestNotificationsPermission();
+        return granted ?? false;
+      }
+      final macos = _plugin
           .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin
+            MacOSFlutterLocalNotificationsPlugin
           >();
-      if (android == null) return false;
-      final granted = await android.requestNotificationsPermission();
+      if (macos == null) return false;
+      final granted = await macos.requestPermissions(alert: true, sound: true);
       return granted ?? false;
     } catch (_) {
       return false;
@@ -96,6 +119,15 @@ class NotificationService {
             ongoing: true,
           ),
           linux: const LinuxNotificationDetails(),
+          // macOS has no progress bar. Stay silent so a fast download does
+          // not fire a banner per update — the completion notice below is the
+          // one the user actually wants to see.
+          macOS: const DarwinNotificationDetails(
+            presentAlert: false,
+            presentSound: false,
+            presentBanner: false,
+            presentList: true,
+          ),
         ),
       );
     } catch (_) {}
@@ -113,8 +145,8 @@ class NotificationService {
         id: taskId.hashCode,
         title: success ? 'Download complete' : 'Download failed',
         body: detail == null || detail.isEmpty ? title : '$title\n$detail',
-        notificationDetails: const NotificationDetails(
-          android: AndroidNotificationDetails(
+        notificationDetails: NotificationDetails(
+          android: const AndroidNotificationDetails(
             _channelId,
             _channelName,
             channelDescription: _channelDesc,
@@ -123,7 +155,11 @@ class NotificationService {
             ongoing: false,
             autoCancel: true,
           ),
-          linux: LinuxNotificationDetails(),
+          linux: const LinuxNotificationDetails(),
+          macOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentSound: true,
+          ),
         ),
       );
     } catch (_) {}

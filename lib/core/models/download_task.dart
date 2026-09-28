@@ -11,6 +11,8 @@ class DownloadTask {
     required this.createdAt,
     this.options = const DownloadOptions(),
     this.stagingPath,
+    this.playlistId,
+    this.playlistTitle,
   });
 
   final String id;
@@ -20,6 +22,12 @@ class DownloadTask {
 
   /// Subtitle/thumbnail extras chosen when this download was enqueued.
   final DownloadOptions options;
+
+  /// Set when the download came from a playlist. Every entry of one playlist
+  /// shares the same id so the queue can group them, and the title decides the
+  /// folder the finished files are grouped into.
+  final String? playlistId;
+  final String? playlistTitle;
 
   DownloadStatus status = DownloadStatus.queued;
   double progress = 0;
@@ -55,6 +63,8 @@ class DownloadTask {
     'warning': warning,
     'filePath': filePath,
     'stagingPath': stagingPath,
+    'playlistId': playlistId,
+    'playlistTitle': playlistTitle,
     'video': {
       'id': video.id,
       'title': video.title,
@@ -91,6 +101,8 @@ class DownloadTask {
             DateTime.tryParse((m['createdAt'] as String?) ?? '') ??
             DateTime.now(),
         stagingPath: m['stagingPath'] as String?,
+        playlistId: m['playlistId'] as String?,
+        playlistTitle: m['playlistTitle'] as String?,
         video: VideoInfo(
           id: (v['id'] as String?) ?? '',
           title: (v['title'] as String?) ?? 'Unknown video',

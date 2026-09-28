@@ -8,6 +8,7 @@ class DownloadRecord {
     required this.filePath,
     this.size = 0,
     required this.createdAt,
+    this.playlistTitle,
   });
 
   final String id;
@@ -19,6 +20,10 @@ class DownloadRecord {
   final int size;
   final DateTime createdAt;
 
+  /// Set when the file was downloaded as part of a playlist, so the library
+  /// can group entries and show where they live on disk.
+  final String? playlistTitle;
+
   Map<String, dynamic> toMap() => {
     'id': id,
     'videoId': videoId,
@@ -28,6 +33,7 @@ class DownloadRecord {
     'filePath': filePath,
     'size': size,
     'createdAt': createdAt.millisecondsSinceEpoch,
+    'playlistTitle': playlistTitle,
   };
 
   factory DownloadRecord.fromMap(Map<String, dynamic> m) => DownloadRecord(
@@ -41,5 +47,6 @@ class DownloadRecord {
     createdAt: DateTime.fromMillisecondsSinceEpoch(
       (m['createdAt'] as num?)?.toInt() ?? 0,
     ),
+    playlistTitle: m['playlistTitle'] as String?,
   );
 }

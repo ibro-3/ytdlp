@@ -1,4 +1,5 @@
 import '../utils/formatters.dart';
+import '../utils/json_utils.dart';
 
 enum FormatKind { video, audio }
 
@@ -129,29 +130,34 @@ class VideoInfo {
     // the bundled pair may be incomplete, so callers that know should say so.
     bool? canPostprocess,
   }) {
-    final rawFormats =
-        (j['formats'] as List?)?.whereType<Map<String, dynamic>>().toList() ??
-        const <Map<String, dynamic>>[];
+    final rawFormats = jsonList<Map<String, dynamic>>(j['formats']);
 
     // Prefer yt-dlp's own pick (a .jpg for YouTube) over the last raw
     // thumbnail entry, which is often a maxresdefault.webp that 404s on
     // older videos.
-    String? thumb = j['thumbnail'] as String?;
-    if (thumb == null || thumb.isEmpty) {
-      final thumbs = j['thumbnails'] as List?;
-      if (thumbs != null && thumbs.isNotEmpty) {
-        final last = thumbs.last;
-        if (last is Map) thumb = last['url'] as String?;
+    var thumb = jsonString(j['thumbnail']);
+    if (thumb == null) {
+      final thumbs = jsonList<Object>(j['thumbnails']);
+      if (thumbs.isNotEmpty) {
+        final last = jsonMap(thumbs.last);
+        thumb = jsonString(last['url']);
       }
     }
 
     return VideoInfo(
-      id: (j['id'] as String?) ?? '',
-      title: (j['title'] as String?) ?? 'Untitled video',
-      webUrl: (j['webpage_url'] ?? j['original_url'] ?? '') as String,
-      author: (j['uploader'] ?? j['channel']) as String?,
-      duration: (j['duration'] as num?)?.round() ?? 0,
-      uploadDate: parseUploadDate(j['upload_date'] as String?),
+      id: jsonString(j['id']) ?? '',
+      title: jsonString(j['title']) ?? 'Untitled video',
+      // `url` is the last resort: in a full extraction it is the direct media
+      // URL and is shadowed by `webpage_url`, but a `--flat-playlist` entry
+      // only carries `url`, and that is exactly what has to be downloaded.
+      webUrl:
+          jsonString(j['webpage_url']) ??
+          jsonString(j['original_url']) ??
+          jsonString(j['url']) ??
+          '',
+      author: jsonString(j['uploader']) ?? jsonString(j['channel']),
+      duration: jsonNum(j['duration'])?.round() ?? 0,
+      uploadDate: parseUploadDate(jsonString(j['upload_date'])),
       thumbnail: thumb,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess ?? hasFfmpeg,
@@ -166,15 +172,13 @@ class VideoInfo {
   static List<SubtitleTrack> _parseSubtitleTracks(Map<String, dynamic> j) {
     final byLang = <String, ({Set<String> exts, bool manual})>{};
 
-    void merge(dynamic source, {required bool manual}) {
+    void merge(Object? source, {required bool manual}) {
       if (source is! Map) return;
       for (final MapEntry(:key, :value) in source.entries) {
         if (key is! String) continue;
-        final formats = value is List
-            ? value.whereType<Map<String, dynamic>>()
-            : const <Map<String, dynamic>>[];
+        final formats = jsonList<Object>(value);
         final exts = formats
-            .map((f) => (f['ext'] as String?) ?? '')
+            .map((f) => jsonString(jsonMap(f)['ext']) ?? '')
             .where((e) => e.isNotEmpty)
             .toSet();
         if (exts.isEmpty) continue;

@@ -6,7 +6,14 @@
 	<true/>
 	<key>com.apple.security.cs.allow-jit</key>
 	<true/>
+	<!-- Flutter's debug build runs the JIT/VM service over a local socket. -->
 	<key>com.apple.security.network.server</key>
+	<true/>
+	<!-- Same network + file access the Release profile needs, so a macOS
+	     debug build behaves like a Release one instead of failing later. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 </dict>
 </plist>

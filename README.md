@@ -6,11 +6,12 @@ A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary**
 
 ## Features
 
-- **Download tab** — M3 `SearchBar` URL input (paste/clear), a clipboard paste FAB that extracts the link out of whatever you shared, **share-sheet intake** (a URL shared from another app lands here, auto-filled and fetched), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. Audio quality is offered as named tiers (Best/High/Medium/Low) resolved against the source's actual bitrates — tiers that would deliver the same file are hidden and every row shows the real container + kbps. The sheet also carries **subtitles** (sidecar `.srt`/`.vtt` and/or embed; per-language chips with auto-generated captions marked "(auto)", plus "All available") and **thumbnail** (embed as cover art and/or `.jpg` sidecar) options, with embed gated on ffmpeg. Everything is seeded from the Settings defaults on every open.
-- **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. One download runs at a time on mobile, two in parallel on desktop. Posts Android progress/completion notifications (foreground-only in v1).
+- **Download tab** — M3 `SearchBar` URL input (paste/clear), a clipboard paste FAB that extracts the link out of whatever you shared, **share-sheet intake** (a URL shared from another app lands here, auto-filled and fetched), `yt-dlp -J` metadata fetch, `VideoInfoCard` (thumbnail via `cached_network_image`), and a single **Download** button. A link that resolves to a **playlist** shows a playlist summary instead, and **Choose videos** opens a picker (see below). Tapping it opens a bottom sheet with the format (`SegmentedButton` Video/Audio) + quality (`ChoiceChip`) pickers and its own Download button. Audio quality is offered as named tiers (Best/High/Medium/Low) resolved against the source's actual bitrates — tiers that would deliver the same file are hidden and every row shows the real container + kbps. The sheet also carries **subtitles** (sidecar `.srt`/`.vtt` and/or embed; per-language chips with auto-generated captions marked "(auto)", plus "All available") and **thumbnail** (embed as cover art and/or `.jpg` sidecar) options, with embed gated on ffmpeg. Everything is seeded from the Settings defaults on every open.
+- **Queue tab** — live progress (`LinearProgressIndicator`, %/speed/ETA), cancel/retry/open/share/delete. Backed by `DownloadManager` (ChangeNotifier) streaming yt-dlp `--newline` output. One download runs at a time on mobile, two in parallel on desktop. Posts progress/completion notifications (Android, Linux, macOS) and keeps a `dataSync` foreground service alive on Android while work is in flight.
   - **Resumable**: a failed or interrupted download keeps its staging directory and yt-dlp's `.part` file, so Retry continues instead of re-fetching. Engine flags add `--continue`, `--retries 10`, `--fragment-retries 10` and a capped `--retry-sleep linear=1:5:2` backoff.
   - **Restart-safe**: the queue is snapshotted to Hive, including the subtitle/thumbnail options of each task. Work that was running when the process was killed comes back as *failed* ("Interrupted when the app closed — tap Retry to continue") with its partial download intact; staging directories no task refers to are deleted on startup so they can't leak storage.
   - **Sidecars kept**: subtitles and thumbnails land next to the media file in the library folder (`.mkv` + `.en.srt` + `.jpg`), never stranded in staging. yt-dlp warnings (e.g. "webm doesn't support embedding a thumbnail, mkv will be used") are surfaced on the task instead of failing it.
+- **Playlist downloads** — a playlist link is recognised from the first `-J` request and re-fetched with `--flat-playlist`, which lists entries without pulling stream data for each (keeping even a large collection inside the metadata budget). The picker lists every entry with a thumbnail and duration, a text filter, select-all/clear, and per-batch quality + subtitle/thumbnail options seeded from Settings. Each selected entry becomes **its own queue task**, so every video keeps its own progress, retry and cancel, and one unavailable entry cannot fail the rest. Entries land in a folder named after the playlist inside `Video/` or `Audio/`, and the history record remembers which playlist a file came from. Undownloadable entries (private, members-only, premium) are dropped during parsing rather than shown as items that would always fail.
 - **Library tab** — Hive-backed history, file existence check, open (`open_filex`), share (`share_plus`), clear.
 - **Settings tab** — theme mode (system/light/dark) + seed color swatches, default video quality, default audio quality (Best/High/Medium/Low) + audio-only, default subtitle/thumbnail options (sidecar vs embed, auto captions), **download folder** (default Downloads, or any writable folder picked in Settings; videos → `Video/`, audio → `Audio/`), **cookies.txt import** (see below), yt-dlp version + one-tap update (system `yt-dlp -U`; app-managed copies and the Android runtime refresh from the official release), notification toggle + test.
 
@@ -25,9 +26,9 @@ Some sites — YouTube in particular — refuse anonymous requests, showing "Sig
 - **State:** `flutter_riverpod` 3.x (`NotifierProvider` for Home, `Provider` for services)
 - **Routing:** `go_router` 18 (`StatefulShellRoute.indexedStack`)
 - **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
-- **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlists will group under one folder per playlist inside the matching area. Three Hive boxes: `history` (library), `settings`, `queue` (task snapshots for restart recovery).
-- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`; app-managed desktop copies re-download the official build; on Android the button replaces the yt-dlp script inside the extracted CPython runtime with the official standalone release — downloaded to a temp file and verified by running `--version` with the runtime's own interpreter before it replaces the working script, so a bad download can never break the engine. There is no URL to configure. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
-- **Notifications:** `flutter_local_notifications`, `downloads` channel, `POST_NOTIFICATIONS` (Android 13+ runtime grant on toggle). Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle.
+- **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlist entries group one folder deeper, under the sanitized playlist title. Since the app moves a finished file from staging itself rather than letting yt-dlp write it to a final path, it sanitizes that folder name itself (`sanitizeFolderName`) — path separators, control characters and Windows-reserved device names included, because yt-dlp's own template sanitization never runs for a folder the app creates. Three Hive boxes: `history` (library), `settings`, `queue` (task snapshots for restart recovery).
+- **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. The desktop builds in `assets/bin/` are **not** registered in `pubspec.yaml` on purpose: `flutter.assets` has no per-platform scoping, so declaring them would package ~56 MB of desktop binaries into every Android APK too, tripling the 19 MB/ABI payload. Desktop falls through to the auto-download instead. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`; app-managed desktop copies re-download the official build; on Android the button replaces the yt-dlp script inside the extracted CPython runtime with the official standalone release — downloaded to a temp file and verified by running `--version` with the runtime's own interpreter before it replaces the working script, so a bad download can never break the engine. There is no URL to configure. Copies to app support dir + `chmod 755`. Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
+- **Notifications:** `flutter_local_notifications`, `downloads` channel on Android, `LinuxNotificationDetails` on Linux, `DarwinNotificationDetails` on macOS. Permission is only requested when the Settings toggle is switched on (Android 13+ runtime grant, macOS `requestPermissions`), never at first launch. Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle. macOS progress updates are shown without an alert/banner, since it has no progress bar and a fast download would otherwise fire a banner per update.
 - **Background downloads (Android):** `flutter_foreground_task` runs a `dataSync` foreground service for as long as the queue is non-empty, so downloads survive the app being backgrounded. It starts with the first task, shows the active download's title + percentage, and stops once the queue drains. A wake lock is held while it runs. Notification updates are throttled to a changed percentage and at most one every 2s — every update is a platform round trip, and the plugin answers redundant start contracts with `ForegroundServiceDidNotStartInTime`.
 - **Share intake (Android):** `receive_sharing_intent` catches `ACTION_SEND` text/plain intents, so YTDL appears in other apps' share sheets. A shared URL is extracted with the same `extractUrl` used for the clipboard (so "check this out https://…" works), auto-fills the Download tab and fetches immediately. The cold-start payload is buffered so sharing into a closed app is not lost, and consumed with `reset()` so a restart does not replay it.
 
@@ -39,16 +40,24 @@ lib/
   core/theme/app_theme.dart
   core/router/app_router.dart
   core/providers.dart
-  core/models/{video_info,download_task,download_record}.dart
-  core/utils/{url_validator,formatters}.dart
-  services/ytdlp/{binary_manager,ytdlp_service,progress_parser}.dart
-  services/downloads/{download_manager,download_layout,history_service}.dart
+  core/models/{video_info,download_task,download_record,download_options,settings_model,playlist_info}.dart
+  core/utils/{url_validator,formatters,json_utils}.dart
+  services/ytdlp/{binary_manager,ytdlp_service,progress_parser,bounded_capture,json_payload}.dart
+  services/downloads/{download_manager,download_layout,history_service,queue_store}.dart
+  services/settings/settings_service.dart
+  services/notifications/notification_service.dart
+  services/foreground/foreground_service.dart
+  services/sharing/share_intent_service.dart
   widgets/app_shell.dart
-  features/home/{home_controller,home_page,widgets/video_info_card}.dart
+  features/home/{home_controller,home_page,widgets/video_info_card,widgets/format_picker_sheet}.dart
   features/queue/queue_page.dart
   features/library/library_page.dart
-assets/bin/.gitkeep
-tool/fetch_binaries.sh
+  features/settings/settings_page.dart
+  features/playlist/playlist_page.dart
+assets/bin/
+  linux/yt-dlp, macos/yt-dlp, windows/yt-dlp.exe   # optional desktop fallbacks
+  android/<abi>/{python.tar.gz,ffmpeg,ffprobe}    # required on Android
+tool/{fetch_binaries,fetch_android_runtime,fetch_ffmpeg_android}.sh
 ```
 
 ## Getting started
@@ -68,7 +77,7 @@ System `yt-dlp` + `ffmpeg` are used if on PATH (checked with `which`/`where`). N
 ./tool/fetch_binaries.sh
 ```
 
-Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `assets/bin/` and prints guidance for Android.
+Fetches official single-file `yt-dlp` builds for Linux/macOS/Windows into `assets/bin/` and prints guidance for Android. **They are not registered in `pubspec.yaml`** — see the Engine bullet in *Stack* for why bundling them would bloat every Android APK. They are useful as a dev convenience (a binary on disk to point at) and as a manual fallback; the app itself uses a system `yt-dlp` or auto-downloads one.
 
 **Android has no official standalone binary** — the GitHub Linux build links glibc and won't run on Android's bionic libc. This repo bundles a self-contained CPython + yt-dlp runtime assembled from official Termux packages (same versions as Termux ships: currently CPython 3.14 + yt-dlp 2026.08.19):
 
@@ -107,9 +116,29 @@ flutter build apk --release --split-per-abi
 
 ## Release identity
 
-- **App ID:** `com.github.ytdlp` (set in `android/app/build.gradle.kts`)
-- **App label:** `YTDL` (set in `AndroidManifest.xml`)
+- **App ID:** `com.github.ytdlp` on every platform — `android/app/build.gradle.kts`, `linux/CMakeLists.txt` (`APPLICATION_ID`), `macos/Runner/Configs/AppInfo.xcconfig` (`PRODUCT_BUNDLE_IDENTIFIER`) and the `RunnerTests` bundle in `macos/Runner.xcodeproj`
+- **App label:** `YTDL` — `AndroidManifest.xml` on Android, `CFBundleDisplayName`/`CFBundleName` in `macos/Runner/Info.plist`, the GTK header-bar title in `linux/runner/my_application.cc`, the window title in `windows/runner/main.cpp` and the `Runner.rc` version block, and `web/index.html` + `web/manifest.json`
 - **Launcher icon:** adaptive icon with red background + white download arrow
+- The on-disk binary/app name stays `ytdlp` on desktop (`BINARY_NAME`, `PRODUCT_NAME`) to match the `ytdlp.app` product reference in `Runner.xcodeproj`; only the user-facing label is `YTDL`
+
+### Desktop sandbox (macOS)
+
+macOS builds are sandboxed, so `macos/Runner/*.entitlements` must grant:
+
+- `com.apple.security.network.client` — without it a Release build cannot resolve or connect to anything, so every metadata fetch and download fails
+- `com.apple.security.files.user-selected.read-write` — the download-folder picker and `cookies.txt` import both touch files outside the app container
+- `DebugProfile.entitlements` additionally keeps `cs.allow-jit` and `network.server` for Flutter's debug VM service, and mirrors both entitlements above so a debug build behaves like a Release one
+
+## Platform support
+
+| Platform | Status |
+| -------- | ------ |
+| **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, `dataSync` foreground service, share-sheet intake. |
+| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. |
+| **Windows** | Supported. System or bundled `yt-dlp.exe`. |
+| **macOS** | Supported. Sandboxed — see *Desktop sandbox* above. Notifications are available. |
+| **iOS** | **Not supported.** `BinaryManager` has no iOS engine branch and `share_intent_service` no-ops off Android, so there is no way to run `yt-dlp`. |
+| **Web** | **Not supported.** `dart:io` is used throughout and there is no web engine implementation. |
 
 ### Signing
 
@@ -160,6 +189,8 @@ This produces separate APKs for `arm64-v8a`, `armeabi-v7a`, `x86_64`, and `x86`.
 - a **playlist link** — yt-dlp returns the whole collection (tens of MB) and still exits 0, so the app reports "that link is a playlist, this app downloads one video at a time" rather than a generic error;
 - otherwise the site sent a response too large to read, with the actual size.
 
+A playlist is normally recognised *before* this point, from the first request's exit code or its `_type`, and re-fetched cheaply with `--flat-playlist`. The oversize path is therefore the rare case of a collection too big even as a flat listing. The heuristic is deliberately narrow — an unrelated failure like "video is private" must stay an error rather than being retried as a playlist (see `looksLikePlaylistOutput`).
+
 A chatty stderr never fails a successful fetch, and output is decoded leniently so one malformed byte from a site cannot blank out the metadata. If a payload still cannot be read, the app shows what the response actually began with (and tolerates a short non-JSON preamble the bundled runtime may print to stdout) instead of a bare "invalid JSON".
 
 ## Testing
@@ -173,10 +204,12 @@ The integration test boots the real app, fetches a video, picks a format and wai
 
 ## Roadmap
 
-Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source, release identity (app id, adaptive icon, keystore signing), Android foreground service for background downloads, and share-sheet intake.
+Done recently: bottom-sheet format picker (removed the inline format section), clipboard paste button, resumable downloads with retry backoff, queue persistence across restarts, cookies.txt support, one-tap yt-dlp update from a fixed source, release identity (app id, adaptive icon, keystore signing), Android foreground service for background downloads, share-sheet intake, macOS sandbox entitlements (`network.client` was missing entirely, so Release builds had no network at all), macOS notifications, an `ffprobe` detection fix that hid the embed-subtitles/thumbnail toggles on every Android launch after the first, and **playlist downloads** with a per-entry picker, per-video tasks and sanitized per-playlist folders.
 
 Still open:
 
 - **YouTube PO tokens + a JS runtime** (`yt-dlp-ejs` or Deno) in the bundled runtime — the main remaining blocker for YouTube reliability (see *Cookies* above).
-- Playlist downloads (`download_layout.dart` already carries the per-playlist template; the caller always passes `false`).
+- **Channel and handle URLs** — these already arrive as flat playlists and work through the same picker, but there is no "download everything from this channel" shortcut, and no pagination for very large collections.
+- A user-editable output template and a custom extra-arguments field; `_findFinalFile`'s `[<id>]` filename fallback assumes the current hard-coded template and must be generalized first.
+- iOS and web are currently dead ends — either implement an engine or drop them from the supported matrix.
 - Changelog / version policy if releases are published.

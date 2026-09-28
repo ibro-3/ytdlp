@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models/download_options.dart';
+import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
@@ -138,6 +139,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   Widget build(BuildContext context) {
     final state = ref.watch(homeControllerProvider);
     final video = state.video;
+    final playlist = state.playlist;
     final hasFormats =
         video != null &&
         (video.videoFormats.isNotEmpty || video.audioFormats.isNotEmpty);
@@ -168,6 +170,8 @@ class _HomePageState extends ConsumerState<HomePage> {
                     message: state.error!,
                     onRetry: _lastUrl == null ? null : _retry,
                   )
+                else if (playlist != null)
+                  _PlaylistSummary(playlist: playlist)
                 else if (video != null) ...[
                   VideoInfoCard(video: video),
                   const SizedBox(height: 16),
@@ -255,6 +259,95 @@ class _HomePageState extends ConsumerState<HomePage> {
               label: Text(loading ? 'Fetching…' : 'Fetch details'),
             );
           },
+        ),
+      ],
+    );
+  }
+}
+
+/// Shown when a link resolves to a playlist rather than a single video.
+///
+/// A playlist cannot go straight to the format sheet: there is no single set of
+/// formats, and downloading the whole thing unprompted could be hundreds of
+/// videos. This card states what was found and hands off to the picker.
+class _PlaylistSummary extends StatelessWidget {
+  const _PlaylistSummary({required this.playlist});
+
+  final PlaylistInfo playlist;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.playlist_play, color: scheme.primary),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        playlist.title,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    Chip(
+                      label: Text(
+                        '${playlist.count} video${playlist.count == 1 ? '' : 's'}',
+                      ),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    if (playlist.uploader != null)
+                      Chip(
+                        avatar: const Icon(Icons.person_outline, size: 16),
+                        label: Text(playlist.uploader!),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    if (playlist.totalDuration > 0)
+                      Chip(
+                        avatar: const Icon(Icons.schedule, size: 16),
+                        label: Text(
+                          formatPlaylistDuration(playlist.totalDuration),
+                        ),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        FilledButton.icon(
+          onPressed: () => context.push('/download/playlist', extra: playlist),
+          icon: const Icon(Icons.playlist_add_check),
+          label: const Text('Choose videos'),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Pick which ones to download. They are queued individually, grouped '
+          'into one folder named after the playlist.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ],
     );

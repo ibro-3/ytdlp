@@ -90,6 +90,15 @@ flutter:
     - assets/bin/android/arm64-v8a/ffprobe
     - assets/bin/.gitkeep
 
+    # NOTE: assets/bin/{linux,macos,windows}/yt-dlp exist in the repo but are
+    # deliberately NOT registered here. `flutter.assets` has no per-platform
+    # scoping, so declaring them would package ~56 MB of desktop binaries into
+    # every Android APK as well — nearly tripling the 19 MB/ABI payload and
+    # blowing the ~25 MB per-ABI split target documented in the README. On
+    # desktop, BinaryManager instead resolves a system install first and then
+    # auto-downloads the official single-file build into the app support dir
+    # (see tool/fetch_binaries.sh and the Engine section of the README).
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

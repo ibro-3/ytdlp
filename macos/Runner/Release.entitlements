@@ -4,5 +4,14 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- yt-dlp fetches metadata over HTTPS and streams media from the CDN.
+	     Without network.client a sandboxed Release build cannot resolve or
+	     connect to anything, so every download fails. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- The download-folder picker and the cookies.txt import both need to
+	     read and write files the user chose, outside the app container. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
 </dict>
 </plist>

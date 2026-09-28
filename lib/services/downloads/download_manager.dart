@@ -9,6 +9,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/models/download_options.dart';
 import '../../core/models/download_record.dart';
 import '../../core/models/download_task.dart';
+import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import '../foreground/foreground_service.dart';
 import '../notifications/notification_service.dart';
@@ -50,6 +51,14 @@ class DownloadManager extends ChangeNotifier {
 
   final List<DownloadTask> _tasks = [];
   final Map<String, DownloadProcess> _processes = {};
+
+  /// Distinguishes tasks created within the same microsecond.
+  ///
+  /// A playlist batch calls `enqueue` in a tight loop, where
+  /// `microsecondsSinceEpoch` repeats — and task ids key `_processes`, the
+  /// notification id and the queue snapshot, so a collision would cancel or
+  /// overwrite the wrong download.
+  int _idCounter = 0;
 
   DateTime _lastUiNotify = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _persistDebounce;
@@ -148,19 +157,80 @@ class DownloadManager extends ChangeNotifier {
     required Format format,
     DownloadOptions options = const DownloadOptions(),
     String? stagingPath,
+    String? playlistId,
+    String? playlistTitle,
   }) {
     final task = DownloadTask(
-      id: '${DateTime.now().microsecondsSinceEpoch}',
+      id: '${DateTime.now().microsecondsSinceEpoch}-${_idCounter++}',
       video: video,
       format: format,
       createdAt: DateTime.now(),
       options: options,
       stagingPath: stagingPath,
+      playlistId: playlistId,
+      playlistTitle: playlistTitle,
     );
     _tasks.insert(0, task);
     notifyListeners();
     _pump();
     return task;
+  }
+
+  /// Enqueues one task per selected entry of [playlist], all sharing the same
+  /// [format] and [options].
+  ///
+  /// Each entry becomes its own yt-dlp process rather than one
+  /// `--yes-playlist` run, so every video keeps its own progress, retry and
+  /// cancel, and one unavailable entry cannot fail the rest. `--no-playlist`
+  /// therefore stays in the args: each URL here is a single video.
+  ///
+  /// Returns the created tasks in playlist order.
+  List<DownloadTask> enqueuePlaylist({
+    required PlaylistInfo playlist,
+    required List<VideoInfo> selected,
+    required Format format,
+    DownloadOptions options = const DownloadOptions(),
+  }) {
+    if (selected.isEmpty) return const [];
+    // One id shared by every entry, so the queue can group them and
+    // "cancel all in this playlist" has something to match on. A playlist
+    // without a usable id falls back to its title, then to a unique value.
+    final groupId = playlist.id.isNotEmpty
+        ? playlist.id
+        : (playlist.title.isNotEmpty
+              ? playlist.title
+              : 'playlist-${DateTime.now().microsecondsSinceEpoch}');
+    final title = playlist.title;
+
+    final created = <DownloadTask>[];
+    for (final video in selected) {
+      created.add(
+        enqueue(
+          video: video,
+          format: format,
+          options: options,
+          playlistId: groupId,
+          playlistTitle: title,
+        ),
+      );
+    }
+    return created;
+  }
+
+  /// Cancels every task belonging to [playlistId]. Returns how many were
+  /// affected. Used by the playlist group's "Cancel all" action.
+  int cancelPlaylist(String playlistId) {
+    var n = 0;
+    for (final task in _tasks.toList()) {
+      if (task.playlistId != playlistId) continue;
+      if (task.status != DownloadStatus.queued &&
+          task.status != DownloadStatus.downloading) {
+        continue;
+      }
+      cancel(task.id);
+      n++;
+    }
+    return n;
   }
 
   /// Starts at most [maxConcurrency] downloads, oldest queued first.
@@ -282,8 +352,12 @@ class DownloadManager extends ChangeNotifier {
         );
       }
 
-      final layout = resolveDownloadLayout(root: root, kind: task.format.kind);
-      final finalFile = await _moveToFinal(source, layout.directory);
+      final layout = resolveDownloadLayout(
+        root: root,
+        kind: task.format.kind,
+        playlistTitle: task.playlistTitle,
+      );
+      final finalFile = await _moveToFinal(source, layout.targetDirectory);
       if (finalFile == null) {
         return _fail(task, 'Could not move the downloaded file into place.');
       }
@@ -308,6 +382,7 @@ class DownloadManager extends ChangeNotifier {
             filePath: finalFile.path,
             size: finalFile.size,
             createdAt: task.createdAt,
+            playlistTitle: task.playlistTitle,
           ),
         );
       } catch (e) {
@@ -364,8 +439,13 @@ class DownloadManager extends ChangeNotifier {
     return await dir.exists() ? dir : null;
   }
 
-  /// Template used inside the staging directory. Playlists are out of
-  /// scope today, so a plain per-video template keeps all output flat.
+  /// Template used inside the staging directory.
+  ///
+  /// Always flat, even for a playlist entry: each entry is its own task with
+  /// its own staging directory, so yt-dlp writes exactly one media file (plus
+  /// its sidecars) and `_findFinalFile` can scan one directory. The per-playlist
+  /// grouping is applied by `_moveToFinal`, which appends the sanitized
+  /// playlist folder to the final destination.
   String _stagingTemplate(DownloadTask task) => '%(title)s [%(id)s].%(ext)s';
 
   /// Marks [task] as failed, notifies, and stops the pipeline. Returns void
@@ -536,10 +616,7 @@ class DownloadManager extends ChangeNotifier {
     final fg = foregroundService;
     if (fg == null) return;
     try {
-      await fg.startService(
-        title: task.video.title,
-        progress: task.progress,
-      );
+      await fg.startService(title: task.video.title, progress: task.progress);
     } catch (_) {
       // Foreground service failure must never break a download.
     }
@@ -683,6 +760,10 @@ class DownloadManager extends ChangeNotifier {
       format: task.format,
       options: task.options,
       stagingPath: task.stagingPath,
+      // Preserved so a retried playlist entry still lands in its playlist
+      // folder and still groups with its siblings in the queue.
+      playlistId: task.playlistId,
+      playlistTitle: task.playlistTitle,
     );
     notifyListeners();
     return next;

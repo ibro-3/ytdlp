@@ -60,10 +60,13 @@ class _AndroidRuntime {
 class BinaryManager {
   String? _ytdlpPath;
   String? _ffmpegPath;
-  String? _ffprobePath;
 
   /// Whether the bundled ffprobe was extracted. Distinguishes "ffmpeg is
   /// present but postprocessing is unavailable" from "ffmpeg is missing".
+  ///
+  /// The probe's own path is deliberately not tracked: yt-dlp derives it from
+  /// the `--ffmpeg-location` directory we hand it, and both binaries are
+  /// extracted side by side, so the location is never needed by callers.
   bool _probeExtracted = false;
 
   bool? _hasFfmpeg;
@@ -106,13 +109,6 @@ class BinaryManager {
     return _probeExtracted;
   }
 
-  /// Location of the bundled Android ffprobe, if available.
-  Future<String?> androidFfprobeLocation() async {
-    if (!Platform.isAndroid) return null;
-    await _ensureAndroidFfmpeg();
-    return _ffprobePath;
-  }
-
   Future<String?> _ensureAndroidFfmpeg() {
     if (_ffmpegPath != null) return Future.value(_ffmpegPath);
     final f = _ffmpegFuture ??= _initAndroidFfmpeg();
@@ -142,7 +138,12 @@ class BinaryManager {
           // needs it, so re-extract rather than silently fail later.
           if (await ffprobe.exists()) {
             await _ensureExecutable(ffprobe.path);
-            _ffprobePath = ffprobe.path;
+            // Must be set on this path too. It used to be assigned only in the
+            // extraction branch below, so on every launch after the first
+            // hasFfprobe() reported false — and the format sheet permanently
+            // hid the embed-subtitles / embed-thumbnail toggles for returning
+            // Android users, even though ffprobe was sitting right there.
+            _probeExtracted = true;
             return _ffmpegPath = ffmpeg.path;
           }
         }
@@ -163,7 +164,6 @@ class BinaryManager {
       // merges DASH streams, it just cannot postprocess.
       final probe = await _extractAsset('ffprobe');
       _probeExtracted = probe != null;
-      if (probe != null) _ffprobePath = probe;
       try {
         await marker.writeAsString(_ffmpegVersion, flush: true);
       } catch (_) {}

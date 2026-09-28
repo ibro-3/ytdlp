@@ -76,6 +76,70 @@ void main() {
           reason: 'ffmpeg must match the device ABI',
         );
       });
+
+      test('$abi bundles ffprobe (postprocessing)', () {
+        // BinaryManager._initAndroidFfmpeg only keeps an already-extracted
+        // copy when the version marker matches AND ffprobe sits next to
+        // ffmpeg. A missing probe silently downgrades the app to
+        // "no embedding" instead of failing loudly, so assert it ships.
+        final probe = File('assets/bin/android/$abi/ffprobe');
+        expect(
+          probe.existsSync(),
+          isTrue,
+          reason: 'run tool/fetch_ffmpeg_android.sh $abi',
+        );
+        expect(probe.lengthSync(), lessThan(5 * 1024 * 1024));
+        final head = probe.readAsBytesSync().take(20).toList();
+        expect(head.sublist(0, 4), [0x7f, 0x45, 0x4c, 0x46]);
+        expect(head[18] | (head[19] << 8), abi == 'x86_64' ? 62 : 183);
+      });
     }
+  });
+
+  group('declared assets exist on disk', () {
+    // pubspec.yaml lists these under flutter.assets. A path that is declared
+    // but absent fails the build outright, so keep the two in sync.
+    const declared = [
+      'assets/bin/.gitkeep',
+      'assets/bin/android/x86_64/ffmpeg',
+      'assets/bin/android/x86_64/ffprobe',
+      'assets/bin/android/x86_64/python.tar.gz',
+      'assets/bin/android/arm64-v8a/ffmpeg',
+      'assets/bin/android/arm64-v8a/ffprobe',
+      'assets/bin/android/arm64-v8a/python.tar.gz',
+    ];
+
+    test('every asset declared in pubspec.yaml is present', () {
+      for (final path in declared) {
+        expect(
+          File(path).existsSync(),
+          isTrue,
+          reason: '$path is declared in pubspec.yaml but missing on disk',
+        );
+      }
+    });
+
+    test('desktop yt-dlp binaries stay out of flutter.assets', () {
+      // flutter.assets has no per-platform scoping, so declaring the desktop
+      // builds would ship ~56 MB of them inside every Android APK. Desktop
+      // resolves a system install and otherwise auto-downloads, so leaving
+      // these undeclared is deliberate — not an oversight to "fix".
+      final pubspec = File('pubspec.yaml').readAsStringSync();
+      for (final path in [
+        'assets/bin/linux/yt-dlp',
+        'assets/bin/macos/yt-dlp',
+        'assets/bin/windows/yt-dlp.exe',
+      ]) {
+        if (!File(path).existsSync()) continue;
+        expect(
+          pubspec,
+          isNot(contains('- $path')),
+          reason:
+              '$path is bundled. That adds ~56 MB to Android APKs; remove the '
+              'asset entry from pubspec.yaml (the README documents the '
+              'auto-download fallback instead)',
+        );
+      }
+    });
   });
 }

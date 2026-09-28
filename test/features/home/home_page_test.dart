@@ -2,11 +2,37 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/core/models/playlist_info.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/core/providers.dart';
 import 'package:ytdlp/features/home/home_page.dart';
 import 'package:ytdlp/services/ytdlp/binary_manager.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
+
+VideoInfo _video(String url) => VideoInfo(
+  id: 'abc123',
+  title: 'Pasted video',
+  webUrl: url,
+  videoFormats: const [
+    Format(kind: FormatKind.video, label: 'Best', selector: 'b'),
+  ],
+);
+
+PlaylistInfo _playlist() => PlaylistInfo(
+  id: 'PL1',
+  title: 'Road Trip',
+  webUrl: 'https://example.com/playlist?list=PL1',
+  uploader: 'Some Channel',
+  entries: [
+    for (var i = 0; i < 3; i++)
+      VideoInfo(
+        id: 'v$i',
+        title: 'Clip $i',
+        webUrl: 'https://example.com/watch?v=v$i',
+        duration: 60 * (i + 1),
+      ),
+  ],
+);
 
 /// Stands in for the real engine so the test never spawns a process or
 /// touches the network.
@@ -15,17 +41,15 @@ class _FakeYtdlpService extends YtdlpService {
 
   final List<String> fetched = [];
 
+  /// When set, [fetch] resolves to a playlist instead of a video.
+  bool resolveAsPlaylist = false;
+
   @override
-  Future<VideoInfo> fetchVideoInfo(String url) async {
+  Future<FetchResult> fetch(String url) async {
     fetched.add(url);
-    return VideoInfo(
-      id: 'abc123',
-      title: 'Pasted video',
-      webUrl: url,
-      videoFormats: const [
-        Format(kind: FormatKind.video, label: 'Best', selector: 'b'),
-      ],
-    );
+    return resolveAsPlaylist
+        ? PlaylistResult(_playlist())
+        : VideoResult(_video(url));
   }
 }
 
@@ -111,5 +135,32 @@ void main() {
 
     expect(service.fetched, isEmpty);
     expect(find.text('No link found in the clipboard'), findsOneWidget);
+  });
+
+  group('playlist links', () {
+    setUp(() => service.resolveAsPlaylist = true);
+
+    testWidgets('a playlist link shows a summary, not the format button', (
+      tester,
+    ) async {
+      _mockClipboard('https://example.com/playlist?list=PL1');
+      await pumpHome(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      // The playlist's own identity and size, not a single video card.
+      expect(find.text('Road Trip'), findsOneWidget);
+      expect(find.text('3 videos'), findsOneWidget);
+      expect(find.text('Some Channel'), findsOneWidget);
+      // 60 + 120 + 180 seconds.
+      expect(find.text('6 min'), findsOneWidget);
+      // The single-video download button must not be offered.
+      expect(find.widgetWithText(FilledButton, 'Download'), findsNothing);
+      expect(
+        find.widgetWithText(FilledButton, 'Choose videos'),
+        findsOneWidget,
+      );
+    });
   });
 }

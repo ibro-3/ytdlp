@@ -6,6 +6,7 @@ import 'package:hive/hive.dart';
 import 'package:path/path.dart' as p;
 import 'package:ytdlp/core/models/download_task.dart';
 import 'package:ytdlp/core/models/download_options.dart';
+import 'package:ytdlp/core/models/playlist_info.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
@@ -372,6 +373,229 @@ void main() {
         await waitUntil(() => !Directory(staging).existsSync());
       },
     );
+  });
+
+  group('DownloadManager playlists', () {
+    PlaylistInfo playlist(
+      List<VideoInfo> entries, {
+      String title = 'Road Trip',
+    }) => PlaylistInfo(
+      id: 'PL1',
+      title: title,
+      webUrl: 'https://example.com/playlist?list=PL1',
+      entries: entries,
+    );
+
+    VideoInfo entry(String id) => VideoInfo(
+      id: 'abc123',
+      title: 'Title $id',
+      webUrl: 'https://example.com/video?id=$id',
+    );
+
+    test('enqueuePlaylist creates one task per selected entry', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final chosen = [entry('a'), entry('b'), entry('c')];
+      final created = m.enqueuePlaylist(
+        playlist: playlist(chosen),
+        selected: chosen,
+        format: _video('a').videoFormats.first,
+      );
+
+      expect(created, hasLength(3));
+      // Every task carries the same group id so the queue can group them.
+      expect(created.map((t) => t.playlistId).toSet(), {'PL1'});
+      expect(created.map((t) => t.playlistTitle).toSet(), {'Road Trip'});
+
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+    });
+
+    test('tasks created in one batch get unique ids', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final chosen = [entry('a'), entry('b'), entry('c')];
+      final created = m.enqueuePlaylist(
+        playlist: playlist(chosen),
+        selected: chosen,
+        format: _video('a').videoFormats.first,
+      );
+
+      // microsecondsSinceEpoch repeats within a tight loop; ids key the
+      // process map and the notification id, so they must not collide.
+      expect(created.map((t) => t.id).toSet(), hasLength(3));
+
+      // Let the pipeline drain before the manager is disposed.
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+    });
+
+    test('an empty selection enqueues nothing', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
+
+      expect(
+        m.enqueuePlaylist(
+          playlist: playlist(const []),
+          selected: const [],
+          format: _video('a').videoFormats.first,
+        ),
+        isEmpty,
+      );
+      expect(m.tasks, isEmpty);
+    });
+
+    test('entries land in a folder named after the playlist', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final chosen = [entry('a'), entry('b')];
+      m.enqueuePlaylist(
+        playlist: playlist(chosen),
+        selected: chosen,
+        format: _video('a').videoFormats.first,
+      );
+
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      // Grouped under Video/Road Trip/, not loose in Video/.
+      expect(
+        Directory(p.join(tempRoot.path, 'Video', 'Road Trip')).existsSync(),
+        isTrue,
+      );
+      expect(
+        File(p.join(tempRoot.path, 'Video', 'Road Trip', 'Title [abc123].mp4'))
+            .existsSync(),
+        isTrue,
+      );
+    });
+
+    test(
+      'a playlist title with separators is sanitized into the folder',
+      () async {
+        final engine = _FakeEngine();
+        final m = manager(engine, maxConcurrency: 1);
+        addTearDown(m.dispose);
+
+        final chosen = [entry('a')];
+        m.enqueuePlaylist(
+          playlist: playlist(chosen, title: 'Mix/Tapes: 2026'),
+          selected: chosen,
+          format: _video('a').videoFormats.first,
+        );
+
+        await waitUntil(
+          () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+        );
+
+        // The title must not have created nested directories.
+        final videoDir = Directory(p.join(tempRoot.path, 'Video'));
+        expect(videoDir.existsSync(), isTrue);
+        final names = videoDir
+            .listSync()
+            .whereType<Directory>()
+            .map((d) => p.basename(d.path))
+            .toList();
+        expect(names, ['Mix_Tapes_ 2026']);
+      },
+    );
+
+    test('the history record remembers the playlist', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final chosen = [entry('a')];
+      m.enqueuePlaylist(
+        playlist: playlist(chosen),
+        selected: chosen,
+        format: _video('a').videoFormats.first,
+      );
+
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+      await waitUntil(() => history.records.isNotEmpty);
+
+      expect(history.records.single.playlistTitle, 'Road Trip');
+    });
+
+    test(
+      'retry keeps the playlist so the entry lands in the same folder',
+      () async {
+        final engine = _FakeEngine(exitCode: Future<int>.value(1));
+        final m = manager(engine, maxConcurrency: 1);
+        addTearDown(m.dispose);
+
+        final chosen = [entry('a')];
+        final task = m
+            .enqueuePlaylist(
+              playlist: playlist(chosen),
+              selected: chosen,
+              format: _video('a').videoFormats.first,
+            )
+            .single;
+
+        await waitUntil(() => task.status == DownloadStatus.failed);
+        expect(task.playlistTitle, 'Road Trip');
+
+        // A retry of a failed task carries the provenance forward.
+        final retried = m.retry(task);
+        expect(retried, isNotNull);
+        expect(retried!.playlistId, task.playlistId);
+        expect(retried.playlistTitle, 'Road Trip');
+      },
+    );
+
+    test('cancelPlaylist cancels the running and queued entries', () async {
+      // maxConcurrency 1 so one entry runs and the rest queue behind it.
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future, // never completes on its own
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final chosen = [entry('a'), entry('b'), entry('c')];
+      m.enqueuePlaylist(
+        playlist: playlist(chosen),
+        selected: chosen,
+        format: _video('a').videoFormats.first,
+      );
+      await waitUntil(() => engine.started == 1);
+
+      expect(m.cancelPlaylist('PL1'), 3);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.canceled),
+      );
+    });
+
+    test('cancelPlaylist ignores tasks from another playlist', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueuePlaylist(
+        playlist: playlist([entry('a')]),
+        selected: [entry('a')],
+        format: _video('a').videoFormats.first,
+      );
+      m.enqueue(video: entry('solo'), format: _video('a').videoFormats.first);
+
+      expect(m.cancelPlaylist('PL1'), 1);
+      // The unrelated single video is untouched.
+      final solo = m.tasks.firstWhere((t) => t.playlistId == null);
+      expect(solo.status, isNot(DownloadStatus.canceled));
+    });
   });
 
   group('DownloadManager cleanup and ops', () {

@@ -5,10 +5,13 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
+// Kept as the on-disk/binary name to match BINARY_NAME on Linux and the
+// `ytdlp.app` product reference in Runner.xcodeproj — the user-facing label is
+// set separately via CFBundleDisplayName in Info.plist.
 PRODUCT_NAME = ytdlp
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.example.ytdlp
+PRODUCT_BUNDLE_IDENTIFIER = com.github.ytdlp
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.example. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 YTDL contributors. All rights reserved.

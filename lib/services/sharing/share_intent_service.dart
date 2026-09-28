@@ -53,9 +53,10 @@ class ShareIntentService {
   /// a URL this way, iOS is left to the clipboard flow.
   void init() {
     if (!Platform.isAndroid) return;
-    _subscription ??= ReceiveSharingIntent.instance
-        .getMediaStream()
-        .listen(_handleBatch, onError: (_) {});
+    _subscription ??= ReceiveSharingIntent.instance.getMediaStream().listen(
+      _handleBatch,
+      onError: (_) {},
+    );
 
     // A cold start from the share sheet does not emit on the stream, so the
     // initial payload has to be read explicitly.

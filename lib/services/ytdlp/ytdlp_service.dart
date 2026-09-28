@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
+
 import '../../core/models/download_options.dart';
+import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
@@ -166,13 +169,42 @@ class YtdlpProcess implements DownloadProcess {
   }
 }
 
+/// What a metadata fetch resolved to: either one video, or a playlist whose
+/// entries the user can pick from.
+///
+/// The distinction matters because a playlist has to go through a selection UI
+/// before anything is downloaded, while a video goes straight to the format
+/// sheet. Both carry the device's ffmpeg/ffprobe capability so the picking UI
+/// can gate embed options the same way in both cases.
+sealed class FetchResult {
+  const FetchResult();
+}
+
+class VideoResult extends FetchResult {
+  const VideoResult(this.video);
+  final VideoInfo video;
+}
+
+class PlaylistResult extends FetchResult {
+  const PlaylistResult(this.playlist);
+  final PlaylistInfo playlist;
+}
+
 class YtdlpService implements DownloadEngine {
   YtdlpService(this._binary);
   final BinaryManager _binary;
 
   static const _metadataTimeout = Duration(seconds: 90);
 
-  Future<VideoInfo> fetchVideoInfo(String url) async {
+  /// Fetches metadata for [url], resolving it to either a single video or a
+  /// playlist.
+  ///
+  /// The first request is the ordinary single-video one, so the common case is
+  /// unchanged: one `-J --no-playlist` call. Only when that call turns out to
+  /// be a playlist is a second, cheaper request made with `--flat-playlist` to
+  /// enumerate the entries — flat entries carry no stream data, which keeps
+  /// even a large collection inside the metadata byte budget.
+  Future<FetchResult> fetch(String url) async {
     final r = await _binary.ensureRunner();
     final hasFfmpeg = await _binary.hasFfmpeg();
     // Embedding/conversion also needs ffprobe, which is not implied by ffmpeg.
@@ -189,9 +221,21 @@ class YtdlpService implements DownloadEngine {
         'Getting video info timed out. The site may be slow — try again.',
       );
     }
-    // A payload this large is never a single video. A playlist URL makes
-    // yt-dlp emit the whole collection and still exit 0, which used to
-    // surface as the useless "produced too much output".
+
+    // A playlist URL either errors out (because --no-playlist forbids
+    // expanding it) or, on extractors that do not honour the flag, comes back
+    // as a full playlist payload. Both mean "ask again, differently".
+    if (_looksLikePlaylist(run)) {
+      return _fetchPlaylistEntries(
+        r,
+        url: url,
+        hasFfmpeg: hasFfmpeg,
+        canPostprocess: canPostprocess,
+      );
+    }
+
+    // A payload this large is never a single video. The playlist case is
+    // handled above, so this is a site genuinely flooding the app.
     if (run.stdoutOverflowed) {
       throw YtdlpException(_oversizeMessage(run));
     }
@@ -208,10 +252,12 @@ class YtdlpService implements DownloadEngine {
       if (decoded is! Map<String, dynamic>) {
         throw const YtdlpException('Unexpected yt-dlp response.');
       }
-      return VideoInfo.fromYtdlpJson(
-        decoded,
-        hasFfmpeg: hasFfmpeg,
-        canPostprocess: canPostprocess,
+      return VideoResult(
+        VideoInfo.fromYtdlpJson(
+          decoded,
+          hasFfmpeg: hasFfmpeg,
+          canPostprocess: canPostprocess,
+        ),
       );
     } on FormatException {
       // Only reachable from fromYtdlpJson's parsing; a decode failure is
@@ -223,14 +269,114 @@ class YtdlpService implements DownloadEngine {
     }
   }
 
-  /// Explains an oversized metadata response, naming the most likely cause.
+  /// Second-stage fetch: enumerate a playlist's entries without pulling stream
+  /// data for each of them.
+  Future<FetchResult> _fetchPlaylistEntries(
+    ProcessRunner r, {
+    required String url,
+    required bool hasFfmpeg,
+    required bool canPostprocess,
+  }) async {
+    final run = await _runCaptured(r, [
+      '-J',
+      '--flat-playlist',
+      '--no-warnings',
+      url,
+    ], timeout: _metadataTimeout);
+    if (run.timedOut) {
+      throw const YtdlpException(
+        'Listing the playlist timed out. The site may be slow — try again.',
+      );
+    }
+    if (run.stdoutOverflowed) {
+      throw YtdlpException(
+        'That playlist is too large to list '
+        '(${formatBytesShort(run.stdoutBytes)}).\n'
+        'Try opening it on the site and picking a few videos instead.',
+      );
+    }
+    if (run.code != 0) {
+      throw YtdlpException(
+        _extractError(run.stderr) ??
+            'Could not list that playlist (yt-dlp exited with code '
+                '${run.code}).',
+      );
+    }
+    try {
+      final decoded = decodeYtdlpPayload(run.stdout);
+      if (decoded is! Map<String, dynamic>) {
+        throw YtdlpException(jsonFailureMessage(run.stdout));
+      }
+      final playlist = PlaylistInfo.fromYtdlpJson(
+        decoded,
+        hasFfmpeg: hasFfmpeg,
+        canPostprocess: canPostprocess,
+      );
+      if (playlist.isEmpty) {
+        throw const YtdlpException(
+          'That playlist has no videos available to download.\n'
+          'They may be private, region-locked, or need a different extractor.',
+        );
+      }
+      return PlaylistResult(playlist);
+    } on FormatException {
+      throw const YtdlpException(
+        'yt-dlp sent playlist details the app could not understand.\n'
+        'Try updating yt-dlp in Settings.',
+      );
+    }
+  }
+
+  /// Whether a run resolved to a playlist rather than a video.
+  ///
+  /// Two shapes have to be accepted. Some extractors honour `--no-playlist`
+  /// and fail with "This is a playlist, use --yes-playlist"; others ignore
+  /// the flag and return the whole collection as a payload with
+  /// `_type: playlist`, still exiting 0. A successful run whose *stdout* names
+  /// a playlist is only ever a playlist, so that check needs no error
+  /// heuristic; the stderr path applies only to a failed run.
+  static bool _looksLikePlaylist(_CapturedRun run) => looksLikePlaylistOutput(
+    stdout: run.stdout,
+    stderr: run.stderr,
+    exitCode: run.code,
+  );
+
+  /// Public form of the playlist heuristic, taking the three raw signals
+  /// rather than a captured run so it can be pinned by unit tests.
+  ///
+  /// Over-detecting sends the user down the wrong path (a real "video is
+  /// private" error would be retried as a playlist and reported as
+  /// "no videos available"), and under-detecting dead-ends them with a message
+  /// about downloading one video at a time. Both failure modes are worth a
+  /// test, which is why this is separated from the process plumbing.
+  @visibleForTesting
+  static bool looksLikePlaylistOutput({
+    required String stdout,
+    required String stderr,
+    required int exitCode,
+  }) {
+    // A payload that says `_type: playlist` is one regardless of exit code:
+    // yt-dlp happily returns a whole collection and still exits 0.
+    if (BoundedCapture.looksLikePlaylist(stdout)) return true;
+    if (exitCode == 0) return false;
+    final err = stderr.toLowerCase();
+    return err.contains('is a playlist') || err.contains('use --yes-playlist');
+  }
+
+  /// Backwards-compatible single-video fetch. Callers that cannot show a
+  /// playlist picker get a clear error instead of a wrong-shaped result.
+  Future<VideoInfo> fetchVideoInfo(String url) async {
+    final result = await fetch(url);
+    if (result is VideoResult) return result.video;
+    throw const YtdlpException(
+      'That link is a playlist, not a single video.\n'
+      'Use the Download tab to pick which videos to get.',
+    );
+  }
+
+  /// Explains an oversized metadata response.
   static String _oversizeMessage(_CapturedRun run) {
     final size = formatBytesShort(run.stdoutBytes);
-    if (BoundedCapture.looksLikePlaylist(run.stdout) ||
-        run.stderr.toLowerCase().contains('playlist')) {
-      return 'That link is a playlist, and this app downloads one video at a '
-          'time.\nOpen the playlist and copy the link to a single video.';
-    }
     return 'The site sent a very large response ($size) that the app could '
         'not read.\nTry a different link, or report it with the site name.';
   }
