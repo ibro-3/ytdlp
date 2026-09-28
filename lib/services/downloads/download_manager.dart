@@ -14,6 +14,7 @@ import '../../core/models/output_template.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import '../../core/models/yt_prefs.dart';
+import '../../core/models/youtube_prefs.dart';
 import '../foreground/foreground_service.dart';
 import '../notifications/notification_service.dart';
 import '../settings/settings_service.dart';
@@ -39,8 +40,8 @@ class DownloadManager extends ChangeNotifier {
     this.notifications,
     this.queueStore,
     this.foregroundService,
-    this.maxConcurrency = 1,
-  }) {
+    int maxConcurrency = 1,
+  }) : _maxConcurrency = maxConcurrency.clamp(1, 8) {
     if (queueStore != null) unawaited(_restore());
   }
 
@@ -51,7 +52,6 @@ class DownloadManager extends ChangeNotifier {
   final NotificationService? notifications;
   final QueueStore? queueStore;
   final ForegroundService? foregroundService;
-  final int maxConcurrency;
 
   final List<DownloadTask> _tasks = [];
   final Map<String, DownloadProcess> _processes = {};
@@ -67,6 +67,59 @@ class DownloadManager extends ChangeNotifier {
   DateTime _lastUiNotify = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _persistDebounce;
   bool _restoring = false;
+
+  /// When set, no *new* download starts until it is cleared. A running one is
+  /// left alone rather than killed: pausing should not throw away a partial
+  /// download the user spent bandwidth on. Set by [pause] / cleared by
+  /// [resume] / [togglePause].
+  bool _paused = false;
+
+  /// Whether the queue is paused. Not persisted — a pause is a decision about
+  /// the current session, and silently restoring one on next launch would look
+  /// like the app was broken.
+  bool get isPaused => _paused;
+
+  /// The concurrency this manager was constructed with. Kept mutable so a
+  /// Settings change takes effect without rebuilding the provider, which would
+  /// discard the live queue.
+  int _maxConcurrency;
+
+  /// Live concurrency limit. Changing it up starts waiting tasks immediately;
+  /// changing it down only stops new ones, since a running download is not
+  /// interrupted.
+  int get maxConcurrency => _maxConcurrency;
+
+  set maxConcurrency(int value) {
+    final next = value.clamp(1, 8);
+    if (next == _maxConcurrency) return;
+    _maxConcurrency = next;
+    _pump();
+    notifyListeners();
+  }
+
+  /// Pauses the queue: no further downloads start until [resume].
+  ///
+  /// Already-running downloads continue, so this costs nothing that was
+  /// already paid for.
+  void pause() {
+    if (_paused) return;
+    _paused = true;
+    // Releasing the foreground service while downloads are still running
+    // would let Android kill the app mid-download, so it is left up; the
+    // completion path stops it.
+    notifyListeners();
+  }
+
+  /// Resumes a paused queue, starting as many waiting tasks as concurrency
+  /// allows.
+  void resume() {
+    if (!_paused) return;
+    _paused = false;
+    _pump();
+    notifyListeners();
+  }
+
+  void togglePause() => _paused ? resume() : pause();
 
   /// Per-task throttle state for progress notifications (≤ 1 per 2s, and
   /// only when the percentage actually changed).
@@ -84,6 +137,60 @@ class DownloadManager extends ChangeNotifier {
   /// Tasks waiting for a free slot.
   int get queuedCount =>
       _tasks.where((t) => t.status == DownloadStatus.queued).length;
+
+  /// Waiting tasks in the order the scheduler will start them: oldest first.
+  ///
+  /// [tasks] is newest-first for display, so this is that order reversed among
+  /// the queued subset. Exposed so the queue UI can show "next up" truthfully
+  /// rather than re-deriving the ordering.
+  List<DownloadTask> get queueInStartOrder => _tasks
+      .where((t) => t.status == DownloadStatus.queued)
+      .toList()
+      .reversed
+      .toList();
+
+  /// Tasks that have reached a terminal state.
+  int get completedCount =>
+      _tasks.where((t) => t.status == DownloadStatus.completed).length;
+
+  int get failedCount =>
+      _tasks.where((t) => t.status == DownloadStatus.failed).length;
+
+  /// Reorders a waiting task within the queue, moving it [offset] places
+  /// earlier (negative) or later (positive) among the *queued* tasks only.
+  ///
+  /// Only queued tasks are considered: a running download cannot be reprioritised
+  /// meaningfully, and reordering the whole list would be confusing because
+  /// finished tasks are interleaved. Returns false when the task is not queued
+  /// or the move would leave the queue.
+  bool reorder(String id, int offset) {
+    if (offset == 0) return false;
+    final task = _tasks.where((t) => t.id == id).firstOrNull;
+    if (task == null || task.status != DownloadStatus.queued) return false;
+
+    // The scheduler picks the oldest queued task and [tasks] is newest-first,
+    // so "earlier in the queue" is a higher index.
+    final queued = queueInStartOrder;
+    final index = queued.indexWhere((t) => t.id == id);
+    if (index < 0) return false;
+
+    final target = (index + offset).clamp(0, queued.length - 1);
+    if (target == index) return false;
+
+    // Re-stamp the queued tasks' createdAt so the scheduler's "oldest first"
+    // ordering follows the new sequence, then re-sort into display order.
+    for (var i = 0; i < queued.length; i++) {
+      queued[i].createdAt = DateTime.fromMicrosecondsSinceEpoch(i + 1);
+    }
+    final moved = queued.removeAt(index);
+    queued.insert(target, moved);
+    for (var i = 0; i < queued.length; i++) {
+      queued[i].createdAt = DateTime.fromMicrosecondsSinceEpoch(i + 1);
+    }
+    _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    notifyListeners();
+    return true;
+  }
 
   /// Restores the persisted queue after a restart.
   ///
@@ -146,10 +253,20 @@ class DownloadManager extends ChangeNotifier {
     final store = queueStore;
     if (store == null) return;
     try {
-      await store.save(_tasks);
+      await store.save(
+        _tasks,
+        maxTasks: settings?.settings.maxQueueSize ?? QueueStore.defaultMaxTasks,
+      );
     } catch (_) {
       // Persistence is best-effort; a download must not fail because of it.
     }
+  }
+
+  /// Persists right away rather than on the debounce timer, for changes that
+  /// shrink the queue and would otherwise be lost if the app died first.
+  Future<void> _schedulePersistNow() async {
+    _persistDebounce?.cancel();
+    await _persist();
   }
 
   /// Enqueues a download. Returns the created task.
@@ -166,6 +283,7 @@ class DownloadManager extends ChangeNotifier {
     List<String> extraArgs = const [],
     String outputTemplate = '',
     YtPrefs? prefs,
+    YoutubePrefs? youtube,
   }) {
     final task = DownloadTask(
       id: '${DateTime.now().microsecondsSinceEpoch}-${_idCounter++}',
@@ -178,6 +296,7 @@ class DownloadManager extends ChangeNotifier {
       extraArgs: extraArgs,
       outputTemplate: outputTemplate,
       prefs: prefs ?? settings?.settings.ytPrefs ?? const YtPrefs(),
+      youtube: youtube ?? settings?.settings.youtube ?? const YoutubePrefs(),
       stagingPath: stagingPath,
       playlistId: playlistId,
       playlistTitle: playlistTitle,
@@ -229,6 +348,58 @@ class DownloadManager extends ChangeNotifier {
     return created;
   }
 
+  /// Cancels every queued or running task, leaving finished ones alone.
+  /// Returns how many were affected.
+  int cancelAll() {
+    var n = 0;
+    for (final task in _tasks.toList()) {
+      final status = task.status;
+      if (status != DownloadStatus.queued &&
+          status != DownloadStatus.downloading) {
+        continue;
+      }
+      cancel(task.id);
+      n++;
+    }
+    return n;
+  }
+
+  /// Removes every finished task — completed, failed or canceled — from the
+  /// queue without touching downloaded files. Returns how many were removed.
+  ///
+  /// Staging directories kept for a resume are reclaimed, so a long-lived
+  /// queue cannot accumulate them after a batch of failures.
+  int clearFinished() {
+    final removable = _tasks
+        .where(
+          (t) =>
+              t.status == DownloadStatus.completed ||
+              t.status == DownloadStatus.failed ||
+              t.status == DownloadStatus.canceled,
+        )
+        .toList();
+    for (final task in removable) {
+      final staging = task.stagingPath;
+      if (staging != null) unawaited(_deleteRecursive(staging));
+    }
+    _tasks.removeWhere((t) => removable.contains(t));
+    if (removable.isNotEmpty) {
+      unawaited(_schedulePersistNow());
+      notifyListeners();
+    }
+    return removable.length;
+  }
+
+  /// Number of tasks that [clearFinished] would remove.
+  int get finishedCount => _tasks
+      .where(
+        (t) =>
+            t.status == DownloadStatus.completed ||
+            t.status == DownloadStatus.failed ||
+            t.status == DownloadStatus.canceled,
+      )
+      .length;
+
   /// Cancels every task belonging to [playlistId]. Returns how many were
   /// affected. Used by the playlist group's "Cancel all" action.
   int cancelPlaylist(String playlistId) {
@@ -245,14 +416,18 @@ class DownloadManager extends ChangeNotifier {
     return n;
   }
 
-  /// Starts at most [maxConcurrency] downloads, oldest queued first.
+  /// Starts as many waiting downloads as the concurrency limit and pause state
+  /// allow, oldest queued first.
   void _pump() {
-    if (_runningCount >= maxConcurrency) return;
+    // A paused queue holds everything until resumed; running tasks are
+    // untouched.
+    if (_paused) return;
+    if (_runningCount >= _maxConcurrency) return;
     final candidates = _tasks.reversed.where(
       (t) => t.status == DownloadStatus.queued,
     );
     for (final task in candidates) {
-      if (_runningCount >= maxConcurrency) break;
+      if (_runningCount >= _maxConcurrency) break;
       task.status = DownloadStatus.downloading;
       // Start the foreground service so the OS doesn't kill us. The throttle is
       // reset so the very first progress update is never swallowed by a
@@ -299,6 +474,7 @@ class DownloadManager extends ChangeNotifier {
           cookiesPath: settings?.settings.cookiesPath,
           extraArgs: _extraArgsFor(task),
           prefs: task.prefs,
+          youtube: task.youtube,
           archivePath: await _archivePathFor(task),
         );
       } on YtdlpException catch (e) {
@@ -859,6 +1035,7 @@ class DownloadManager extends ChangeNotifier {
       extraArgs: task.extraArgs,
       outputTemplate: task.outputTemplate,
       prefs: task.prefs,
+      youtube: task.youtube,
       stagingPath: task.stagingPath,
       playlistId: task.playlistId,
       playlistTitle: task.playlistTitle,

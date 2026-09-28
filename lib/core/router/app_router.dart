@@ -5,6 +5,7 @@ import '../../core/models/playlist_info.dart';
 import '../../features/home/home_page.dart';
 import '../../features/library/library_page.dart';
 import '../../features/playlist/playlist_page.dart';
+import '../../features/queue/batch_queue_page.dart';
 import '../../features/queue/queue_page.dart';
 import '../../features/settings/settings_page.dart';
 import '../../widgets/app_shell.dart';
@@ -44,6 +45,12 @@ final appRouter = GoRouter(
             GoRoute(
               path: '/queue',
               builder: (context, state) => const QueuePage(),
+              routes: [
+                GoRoute(
+                  path: 'batch',
+                  builder: (context, state) => const BatchQueuePage(),
+                ),
+              ],
             ),
           ],
         ),

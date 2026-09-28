@@ -12,6 +12,7 @@ import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
 import '../../services/sharing/share_intent_service.dart';
 import '../../services/ytdlp/arg_tokenizer.dart';
+import '../queue/batch_queue_controller.dart';
 import 'home_controller.dart';
 import 'widgets/format_picker_sheet.dart';
 import 'widgets/video_info_card.dart';
@@ -51,32 +52,28 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   /// Fills the URL field from a share intent and fetches it right away.
-  void _onSharedUrl(String url) {
+  ///
+  /// A share carrying several links goes to the batch queue, same as a paste.
+  void _onSharedUrl(String text) {
     if (!mounted) return;
+    final urls = extractUrls(text);
+    if (urls.isEmpty) return;
+    if (urls.length > 1) {
+      _openBatch(urls);
+      return;
+    }
+    final url = urls.first;
     _urlController
       ..text = url
       ..selection = TextSelection.collapsed(offset: url.length);
     _submit();
   }
 
-  void _submit() {
-    final raw = _urlController.text.trim();
-    if (!isValidUrl(raw)) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('Enter a valid video URL (https://…)')),
-        );
-      return;
-    }
-    _lastUrl = raw;
-    ref.read(homeControllerProvider.notifier).fetch(url: raw);
-  }
-
   /// Fills the URL field from the clipboard and fetches immediately.
   ///
-  /// Shared text often wraps the link in a sentence, so [extractUrl] pulls
-  /// the URL out of whatever shape the clipboard holds.
+  /// Shared text often wraps the link in a sentence, so the extractor pulls the
+  /// URLs out of whatever shape the clipboard holds. A paste containing several
+  /// links goes to the batch queue instead of silently taking only the first.
   Future<void> _pasteFromClipboard() async {
     final messenger = ScaffoldMessenger.of(context);
     String? text;
@@ -86,8 +83,8 @@ class _HomePageState extends ConsumerState<HomePage> {
     } catch (_) {
       text = null;
     }
-    final url = text == null ? null : extractUrl(text);
-    if (url == null) {
+    final urls = text == null ? const <String>[] : extractUrls(text);
+    if (urls.isEmpty) {
       messenger
         ..hideCurrentSnackBar()
         ..showSnackBar(
@@ -95,6 +92,11 @@ class _HomePageState extends ConsumerState<HomePage> {
         );
       return;
     }
+    if (urls.length > 1) {
+      await _openBatch(urls);
+      return;
+    }
+    final url = urls.first;
     if (_urlController.text == url) {
       // Already pasted — don't re-fetch on every tap.
       _submit();
@@ -104,6 +106,37 @@ class _HomePageState extends ConsumerState<HomePage> {
       ..text = url
       ..selection = TextSelection.collapsed(offset: url.length);
     _submit();
+  }
+
+  /// Resolves several links at once and hands them to the batch queue.
+  Future<void> _openBatch(List<String> urls) async {
+    final controller = ref.read(batchQueueControllerProvider.notifier);
+    // Navigate first so the list is visible while it fills in, rather than
+    // blocking on a dialog.
+    context.push('/queue/batch');
+    await controller.resolveAll(urls);
+  }
+
+  /// A multi-line or multi-link paste in the search field.
+  void _submit() {
+    final raw = _urlController.text.trim();
+    final urls = extractUrls(raw);
+    if (urls.isEmpty) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('Enter a valid video URL (https://…)')),
+        );
+      return;
+    }
+    if (urls.length > 1) {
+      _urlController.clear();
+      _openBatch(urls);
+      return;
+    }
+    final url = urls.first;
+    _lastUrl = url;
+    ref.read(homeControllerProvider.notifier).fetch(url: url);
   }
 
   /// Opens the format picker, then enqueues whatever the user chose.

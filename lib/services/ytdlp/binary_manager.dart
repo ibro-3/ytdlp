@@ -33,6 +33,7 @@ class _AndroidRuntime {
     required this.python,
     required this.script,
     required this.env,
+    required this.sitePackages,
   });
 
   /// `<usr>/bin/python3.14`
@@ -42,6 +43,30 @@ class _AndroidRuntime {
   final String script;
 
   final Map<String, String> env;
+
+  /// `<usr>/lib/python3.14/site-packages`, taken from `PYTHONPATH`. A Python
+  /// package installed here is importable by the runtime, which is how the
+  /// YouTube JS runtime gets added without touching the interpreter itself.
+  final String sitePackages;
+}
+
+/// A read-only view of the extracted Android runtime, for callers that need to
+/// run the bundled interpreter — currently the YouTube JS-runtime installer.
+///
+/// The private [_AndroidRuntime] keeps the mutable extraction state to itself;
+/// this exposes only what an outside caller legitimately needs.
+class AndroidRuntimeHandle {
+  const AndroidRuntimeHandle({
+    required this.python,
+    required this.script,
+    required this.env,
+    required this.sitePackages,
+  });
+
+  final String python;
+  final String script;
+  final Map<String, String> env;
+  final String sitePackages;
 }
 
 /// Locates the `yt-dlp` binary:
@@ -179,6 +204,12 @@ class BinaryManager {
   // v2 added ffprobe alongside ffmpeg, which postprocessing requires.
   static const _ffmpegBuild = 'ffmpeg-8.1.3-static-v2-ffprobe';
   static const _toolVersion = '2026.09.1';
+
+  /// The `yt-dlp-ejs` release the JS-runtime installer fetches. Pinned rather
+  /// than tracking "latest" so an install is reproducible and a bad upstream
+  /// release cannot break every user's YouTube downloads; bumped in step with
+  /// [_toolVersion].
+  static const ytEjsVersion = '2025.09.25';
   static const _runtimeVersion = '$_toolVersion-$_runtimeBuild';
   static const _ffmpegVersion = '$_toolVersion-$_ffmpegBuild';
 
@@ -266,6 +297,7 @@ class BinaryManager {
         final runtime = _AndroidRuntime(
           python: '$usr/bin/python3.14',
           script: '$usr/bin/yt-dlp',
+          sitePackages: '$usr/lib/python3.14/site-packages',
           env: {
             'LD_LIBRARY_PATH': '$usr/lib',
             'PYTHONHOME': usr,
@@ -425,6 +457,29 @@ class BinaryManager {
   }
 
   /// Installed yt-dlp version string, e.g. `2026.08.19`.
+  /// The extracted Android runtime, or null when this install does not use one.
+  ///
+  /// Memoized alongside the runner, so a caller can run the bundled
+  /// interpreter without triggering a second extraction.
+  Future<AndroidRuntimeHandle?> get androidRuntime async {
+    // Triggers extraction if it has not happened yet, which is what makes the
+    // runtime available to callers on first use.
+    await ensureRunner();
+    if (!_usingRuntime) return null;
+    final runtime = _androidRuntime;
+    if (runtime == null) return null;
+    return AndroidRuntimeHandle(
+      python: runtime.python,
+      script: runtime.script,
+      env: runtime.env,
+      sitePackages: runtime.sitePackages,
+    );
+  }
+
+  /// The app's private files directory, where downloaded engines and the
+  /// YouTube JS runtime are kept.
+  Future<Directory> get supportDirectory => getApplicationSupportDirectory();
+
   Future<String> ytdlpVersion() async {
     final r = await ensureRunner();
     try {

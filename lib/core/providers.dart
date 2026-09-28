@@ -9,9 +9,12 @@ import '../services/downloads/history_service.dart';
 import '../services/downloads/queue_store.dart';
 import '../services/foreground/foreground_service.dart';
 import '../services/notifications/notification_service.dart';
+import '../services/diagnostics/diagnostics_service.dart';
+import '../services/settings/backup_service.dart';
 import '../services/settings/settings_service.dart';
 import '../services/settings/template_store.dart';
 import '../services/ytdlp/binary_manager.dart';
+import '../services/ytdlp/ejs_installer.dart';
 import '../services/ytdlp/ytdlp_service.dart';
 import 'models/settings_model.dart';
 
@@ -27,6 +30,28 @@ final settingsBoxProvider = Provider<Box<dynamic>>((ref) {
 /// prefix, so a template never has to round-trip through [AppSettings].
 final templateStoreProvider = Provider<TemplateStore>(
   (ref) => TemplateStore(ref.watch(settingsBoxProvider)),
+);
+
+/// Export and restore of settings plus templates as one JSON document.
+final backupServiceProvider = Provider<BackupService>(
+  (ref) => BackupService(
+    box: ref.watch(settingsBoxProvider),
+    templates: ref.watch(templateStoreProvider),
+  ),
+);
+
+/// Installs and verifies the JavaScript runtime YouTube formats need.
+final ejsInstallerProvider = Provider<EjsInstaller>(
+  (ref) => EjsInstaller(ref.watch(binaryManagerProvider)),
+);
+
+/// Builds a support report: versions, paths and settings, with credentials
+/// excluded.
+final diagnosticsServiceProvider = Provider<DiagnosticsService>(
+  (ref) => DiagnosticsService(
+    binary: ref.watch(binaryManagerProvider),
+    settings: ref.watch(settingsServiceProvider),
+  ),
 );
 
 /// Queue snapshots, so a killed app doesn't lose in-flight downloads.
@@ -89,19 +114,30 @@ final notificationServiceProvider = Provider<NotificationService>(
 );
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
-  // Mobile devices have less headroom than desktops. Two never run at once
-  // on Android/iOS; desktop allows two parallel downloads by default.
-  final maxConcurrency = Platform.isAndroid ? 1 : 2;
+  final settings = ref.watch(settingsServiceProvider);
+  // Mobile devices have less headroom, so the default is one parallel download
+  // there and two on desktop. The user can override in Settings, and the limit
+  // is applied live so a change does not have to rebuild this provider and
+  // throw away the live queue.
   final manager = DownloadManager(
     ytdlp: ref.watch(ytdlpServiceProvider),
     history: ref.watch(historyServiceProvider),
     downloadsDir: ref.watch(downloadsDirProvider),
-    settings: ref.watch(settingsServiceProvider),
+    settings: settings,
     notifications: ref.watch(notificationServiceProvider),
     queueStore: ref.watch(queueStoreProvider),
     foregroundService: ForegroundService.instance,
-    maxConcurrency: maxConcurrency,
+    maxConcurrency: settings.settings.resolveConcurrency(
+      isMobile: Platform.isAndroid || Platform.isIOS,
+    ),
   );
+  // A later settings change moves the live limit rather than replacing the
+  // manager, so queued work survives it.
+  ref.listen(settingsServiceProvider, (prev, next) {
+    manager.maxConcurrency = next.settings.resolveConcurrency(
+      isMobile: Platform.isAndroid || Platform.isIOS,
+    );
+  });
   ref.onDispose(manager.dispose);
   return manager;
 });

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'output_template.dart';
+import 'youtube_prefs.dart';
 import 'yt_prefs.dart';
 
 /// Persisted user preferences. Stored as a plain map in the Hive
@@ -23,6 +24,11 @@ class AppSettings {
     this.extraArgs = '',
     this.outputTemplate = '',
     this.ytPrefs = const YtPrefs(),
+    this.youtube = const YoutubePrefs(),
+    // null means "not set", and the platform default is used instead: one
+    // parallel download on Android, two on desktop.
+    this.maxConcurrency,
+    this.maxQueueSize = 50,
   });
 
   /// Null tier = Best quality.
@@ -83,6 +89,31 @@ class AppSettings {
   /// [extraArgs]; these exist because each has a value that must be right.
   final YtPrefs ytPrefs;
 
+  /// YouTube player clients and JS-runtime preference.
+  final YoutubePrefs youtube;
+
+  /// How many downloads may run at once. `null` defers to the platform default
+  /// (1 on Android, 2 on desktop) so the value is right without the user having
+  /// to choose it.
+  final int? maxConcurrency;
+
+  /// The concurrency actually in force, resolved against [isMobile].
+  int resolveConcurrency({required bool isMobile}) =>
+      maxConcurrency ?? (isMobile ? 1 : 2);
+
+  /// How many task snapshots to keep for restart recovery.
+  ///
+  /// 50 is enough for a session; a larger playlist needs a higher value or the
+  /// oldest entries are lost on restart. Anything above the cap only affects
+  /// what survives a restart — queued work still runs in the current session.
+  final int maxQueueSize;
+
+  /// Concurrency bounds. The ceiling is a resource limit, not a preference.
+  static const int concurrencyMin = 1;
+  static const int concurrencyMax = 8;
+  static const int queueSizeMin = 10;
+  static const int queueSizeMax = 500;
+
   /// Defaults seeded into the download sheet. Embed options are only honored
   /// when ffmpeg is available (bundled on Android, inferred on desktop).
   final bool defaultEmbedSubs;
@@ -113,6 +144,9 @@ class AppSettings {
     String? extraArgs,
     String? outputTemplate,
     YtPrefs? ytPrefs,
+    YoutubePrefs? youtube,
+    int? Function()? maxConcurrencySetter,
+    int? maxQueueSize,
   }) {
     return AppSettings(
       themeMode: themeMode ?? this.themeMode,
@@ -136,6 +170,19 @@ class AppSettings {
       extraArgs: extraArgs ?? this.extraArgs,
       outputTemplate: outputTemplate ?? this.outputTemplate,
       ytPrefs: ytPrefs ?? this.ytPrefs,
+      youtube: youtube ?? this.youtube,
+      // The setter thunk distinguishes three cases: omitted keeps the current
+      // value, `() => null` clears the override back to the platform default,
+      // and `() => n` sets one.
+      maxConcurrency: switch (maxConcurrencySetter?.call()) {
+        final int value => value.clamp(concurrencyMin, concurrencyMax),
+        null when maxConcurrencySetter != null => null,
+        _ => maxConcurrency,
+      },
+      maxQueueSize: (maxQueueSize ?? this.maxQueueSize).clamp(
+        queueSizeMin,
+        queueSizeMax,
+      ),
     );
   }
 
@@ -156,6 +203,9 @@ class AppSettings {
     'extraArgs': extraArgs,
     'outputTemplate': outputTemplate,
     'ytPrefs': ytPrefs.toMap(),
+    'youtube': youtube.toMap(),
+    'maxConcurrency': maxConcurrency,
+    'maxQueueSize': maxQueueSize,
   };
 
   factory AppSettings.fromMap(Map<String, dynamic> m) {
@@ -180,6 +230,24 @@ class AppSettings {
       extraArgs: (m['extraArgs'] as String?) ?? '',
       outputTemplate: (m['outputTemplate'] as String?) ?? '',
       ytPrefs: YtPrefs.fromMap((m['ytPrefs'] as Map?)?.cast<String, dynamic>()),
+      youtube: YoutubePrefs.fromMap(
+        (m['youtube'] as Map?)?.cast<String, dynamic>(),
+      ),
+      // Clamped on read as well as on write, so a hand-edited or downgraded box
+      // cannot set a concurrency that starves or overloads the device. A stored
+      // 1 from an older build is indistinguishable from a deliberate choice, so
+      // it is honoured rather than treated as "unset".
+      maxConcurrency: switch (m['maxConcurrency']) {
+        final num n => _clamp(n.toInt(), concurrencyMin, concurrencyMax),
+        _ => null,
+      },
+      maxQueueSize: _clamp(
+        (m['maxQueueSize'] as num?)?.toInt() ?? 50,
+        queueSizeMin,
+        queueSizeMax,
+      ),
     );
   }
+
+  static int _clamp(int value, int min, int max) => value.clamp(min, max);
 }

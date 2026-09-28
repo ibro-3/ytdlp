@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -12,9 +13,13 @@ import '../../core/models/output_template.dart';
 import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/models/yt_prefs.dart';
+import '../../core/models/youtube_prefs.dart';
 import '../../core/providers.dart';
+import '../../services/settings/backup_service.dart';
 import '../../services/settings/template_store.dart';
 import '../../services/ytdlp/arg_tokenizer.dart';
+import '../../services/ytdlp/binary_manager.dart';
+import '../../services/ytdlp/ejs_installer.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -112,6 +117,140 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// Imports a Netscape-format `cookies.txt`.
   ///
   /// The file is copied into the app's support directory so the picked path
+  void _say(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Writes settings and templates to a JSON file the user chose.
+  Future<void> _exportBackup() async {
+    final backup = ref.read(backupServiceProvider);
+    final stamp = DateTime.now().toIso8601String().split('T').first;
+    final bytes = utf8.encode(backup.export().encode());
+    Uri? target;
+    try {
+      target = await FilePicker.saveFile(
+        dialogTitle: 'Save settings backup',
+        fileName: 'ytdlp-settings-$stamp.json',
+        bytes: bytes,
+        mimeType: 'application/json',
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+    } catch (_) {
+      target = null; // Picker unavailable on this platform.
+    }
+    if (target == null) return; // Cancelled, or the platform cannot save.
+    // A file:// target can also be written directly, which covers the case
+    // where the platform reports a path but wrote nothing.
+    if (target.scheme == 'file' && target.toFilePath() != target.path) {
+      final file = File.fromUri(target);
+      if (!await file.exists()) {
+        try {
+          await file.writeAsBytes(bytes, flush: true);
+        } catch (_) {}
+      }
+    }
+    if (mounted) _say('Settings saved');
+  }
+
+  /// Restores settings and templates from a backup file.
+  ///
+  /// Destructive, so it asks first: restoring replaces the current preferences
+  /// rather than merging into them.
+  Future<void> _importBackup() async {
+    PlatformFile? picked;
+    try {
+      picked = await FilePicker.pickFile(
+        dialogTitle: 'Choose a settings backup',
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+      );
+    } catch (_) {
+      picked = null;
+    }
+    if (picked == null) return;
+
+    // Read via the path, not readAsString: on Android a picker's cached path
+    // can already be gone, and reading the real file works either way.
+    String? raw;
+    final pickedPath = picked.path;
+    if (pickedPath != null) {
+      try {
+        raw = await File(pickedPath).readAsString();
+      } catch (_) {
+        raw = null;
+      }
+    }
+    if (raw == null) {
+      _say("Couldn't read that file");
+      return;
+    }
+
+    final backup = ref.read(backupServiceProvider);
+    // Decoded before asking, so an unrelated JSON file is rejected with a clear
+    // message rather than after a scary "replace everything?" prompt.
+    final parsed = SettingsBackup.decode(raw);
+    if (parsed == null) {
+      _say("That isn't a YTDL settings backup");
+      return;
+    }
+
+    // Checked before the await, so the dialog is shown on a live context.
+    if (!mounted) return;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Replace settings?'),
+        content: Text(
+          'This replaces your current preferences'
+          '${parsed.templates.isEmpty ? '' : ' and ${parsed.templates.length} '
+                    'saved template(s)'} with the ones in the backup.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+
+    if (!await backup.restore(parsed)) {
+      _say("That backup is from a newer version of the app");
+      return;
+    }
+    // The settings service caches its value, so it has to re-read the box for
+    // the new preferences to take effect.
+    ref.read(settingsServiceProvider).init();
+    if (!mounted) return;
+    setState(() {});
+    _say('Settings restored');
+  }
+
+  /// Copies a support report to the clipboard.
+  ///
+  /// The clipboard rather than a file, because the point is to paste it into an
+  /// issue: hand-transcribing versions and paths is why most reports are
+  /// unanswerable.
+  Future<void> _copyDiagnostics() async {
+    final report = await ref.read(diagnosticsServiceProvider).build();
+    if (!mounted) return;
+    try {
+      await Clipboard.setData(ClipboardData(text: report.text));
+      if (mounted) _say('Diagnostics copied — paste them into a bug report');
+    } catch (_) {
+      if (mounted) _say("Couldn't reach the clipboard");
+    }
+  }
+
   /// can't stop resolving (Android pickers hand back cache paths, and desktop
   /// users may pick a file on removable media), then yt-dlp is pointed at the
   /// copy via `--cookies`.
@@ -442,6 +581,64 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             _patch(settings.copyWith(defaultWriteThumb: v)),
                       ),
                       const SizedBox(height: 16),
+                      Text(
+                        'Queue',
+                        style: Theme.of(context).textTheme.labelMedium,
+                      ),
+                      const SizedBox(height: 4),
+                      DropdownButtonFormField<int?>(
+                        initialValue: settings.maxConcurrency,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          labelText: 'Simultaneous downloads',
+                          helperText:
+                              'Higher values can slow a phone down; 1–2 suits '
+                              'most connections',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text(
+                              'Automatic (1 on mobile, 2 on desktop)',
+                            ),
+                          ),
+                          for (
+                            var n = AppSettings.concurrencyMin;
+                            n <= AppSettings.concurrencyMax;
+                            n++
+                          )
+                            DropdownMenuItem(value: n, child: Text('$n')),
+                        ],
+                        onChanged: (v) => _patch(
+                          settings.copyWith(maxConcurrencySetter: () => v),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int>(
+                        initialValue: settings.maxQueueSize,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          labelText: 'Remembered queue entries',
+                          helperText:
+                              'How many downloads survive an app restart. '
+                              'Raise it for large playlists',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          for (
+                            var n = AppSettings.queueSizeMin;
+                            n <= AppSettings.queueSizeMax;
+                            n += 10
+                          )
+                            DropdownMenuItem(value: n, child: Text('$n')),
+                        ],
+                        onChanged: (v) =>
+                            _patch(settings.copyWith(maxQueueSize: v ?? 50)),
+                      ),
+                      const SizedBox(height: 16),
                       _AdvancedSettings(settings: settings, onPatch: _patch),
                       ListTile(
                         contentPadding: EdgeInsets.zero,
@@ -474,6 +671,32 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             ),
                           ],
                         ),
+                      ),
+                      const SizedBox(height: 12),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.save_alt_outlined),
+                        title: const Text('Back up settings'),
+                        subtitle: const Text(
+                          'Saves preferences and argument templates to a file',
+                        ),
+                        onTap: _exportBackup,
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.settings_backup_restore),
+                        title: const Text('Restore from a backup'),
+                        onTap: _importBackup,
+                      ),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.bug_report_outlined),
+                        title: const Text('Copy diagnostics'),
+                        subtitle: const Text(
+                          'Versions, paths and settings for a bug report. '
+                          'Never includes cookies',
+                        ),
+                        onTap: _copyDiagnostics,
                       ),
                     ],
                   ),
@@ -774,6 +997,8 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings> {
         _SaveTemplateButton(args: _args.text, store: store),
         const SizedBox(height: 24),
         _YtPrefsSection(settings: widget.settings, onPatch: widget.onPatch),
+        const SizedBox(height: 24),
+        _YoutubeSection(settings: widget.settings, onPatch: widget.onPatch),
         const SizedBox(height: 24),
         Align(
           alignment: Alignment.centerLeft,
@@ -1369,6 +1594,185 @@ class _SeedSwatch extends StatelessWidget {
           Text(name, style: Theme.of(context).textTheme.labelSmall),
         ],
       ),
+    );
+  }
+}
+
+/// YouTube player clients and the JavaScript runtime.
+///
+/// yt-dlp needs a PO token to fetch many YouTube formats, which increasingly
+/// means a JS runtime. The `yt-dlp-ejs` package supplies it; this section
+/// installs it on demand and reports what is actually installed, rather than
+/// claiming a capability it cannot verify.
+class _YoutubeSection extends ConsumerStatefulWidget {
+  const _YoutubeSection({required this.settings, required this.onPatch});
+
+  final AppSettings settings;
+  final Future<void> Function(AppSettings) onPatch;
+
+  @override
+  ConsumerState<_YoutubeSection> createState() => _YoutubeSectionState();
+}
+
+class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
+  EjsInfo? _ejs;
+  bool _installing = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _probe();
+  }
+
+  Future<void> _probe() async {
+    final info = await ref.read(ejsInstallerProvider).status(refresh: true);
+    if (mounted) setState(() => _ejs = info);
+  }
+
+  Future<void> _install() async {
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() {
+      _installing = true;
+      _error = null;
+    });
+    try {
+      final version = BinaryManager.ytEjsVersion;
+      final installer = ref.read(ejsInstallerProvider);
+      // Resolved from PyPI rather than hard-coded, so a stale pin cannot
+      // become a permanently broken install.
+      final url = await installer.resolveLatestWheel(version);
+      final info = await installer.install(archiveUrl: url, version: version);
+      if (!mounted) return;
+      setState(() {
+        _ejs = info;
+        _installing = false;
+      });
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(content: Text('JavaScript runtime installed')),
+        );
+    } on EjsInstallException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _installing = false;
+        _error = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _installing = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<void> _uninstall() async {
+    await ref.read(ejsInstallerProvider).uninstall();
+    await _probe();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final yt = widget.settings.youtube;
+    final ejs = _ejs;
+
+    void patch(YoutubePrefs next) =>
+        widget.onPatch(widget.settings.copyWith(youtube: next));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text('YouTube', style: theme.textTheme.labelMedium),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'YouTube hides formats behind a proof-of-origin token, which yt-dlp '
+          'obtains with a small JavaScript component.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Icon(
+              ejs?.isUsable == true ? Icons.check_circle : Icons.info_outline,
+              size: 16,
+              color: ejs?.isUsable == true
+                  ? scheme.primary
+                  : scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                ejs?.summary ?? 'Checking the JavaScript runtime…',
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+            if (!_installing)
+              TextButton(
+                onPressed: _install,
+                child: Text(ejs?.isUsable == true ? 'Update' : 'Install'),
+              ),
+          ],
+        ),
+        if (_installing) const LinearProgressIndicator(),
+        if (ejs?.isUsable == true)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: _uninstall,
+              child: const Text('Remove'),
+            ),
+          ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              _error!,
+              style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+            ),
+          ),
+        const Divider(height: 28),
+        Text('Extra player clients', style: theme.textTheme.labelSmall),
+        const SizedBox(height: 4),
+        Text(
+          'Some formats are only offered to particular clients. Adding more can '
+          'unlock them, at the cost of more requests to YouTube.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final client in YoutubeClient.values)
+              if (client != YoutubeClient.web)
+                FilterChip(
+                  label: Text(client.label),
+                  selected: yt.extraClients.contains(client),
+                  onSelected: (v) => patch(
+                    yt.copyWith(
+                      extraClients: v
+                          ? [...yt.extraClients, client]
+                          : [
+                              for (final c in yt.extraClients)
+                                if (c != client) c,
+                            ],
+                    ),
+                  ),
+                ),
+          ],
+        ),
+      ],
     );
   }
 }

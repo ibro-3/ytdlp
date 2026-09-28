@@ -1,5 +1,6 @@
 import 'download_options.dart';
 import 'video_info.dart';
+import 'youtube_prefs.dart';
 import 'yt_prefs.dart';
 
 enum DownloadStatus { queued, downloading, completed, failed, canceled }
@@ -14,6 +15,7 @@ class DownloadTask {
     this.extraArgs = const [],
     this.outputTemplate = '',
     this.prefs = const YtPrefs(),
+    this.youtube = const YoutubePrefs(),
     this.stagingPath,
     this.playlistId,
     this.playlistTitle,
@@ -22,7 +24,13 @@ class DownloadTask {
   final String id;
   final VideoInfo video;
   final Format format;
-  final DateTime createdAt;
+
+  /// When the task was enqueued, which is also its queue ordering: the
+  /// scheduler starts the oldest waiting task first.
+  ///
+  /// Mutable only so `DownloadManager.reorder` can re-stamp a waiting task to
+  /// move it in the queue. Nothing else changes it.
+  DateTime createdAt;
 
   /// Subtitle/thumbnail extras chosen when this download was enqueued.
   final DownloadOptions options;
@@ -41,6 +49,9 @@ class DownloadTask {
   /// First-class yt-dlp preferences captured for this download, so a retry
   /// repeats the same command. Empty for a task enqueued before this existed.
   final YtPrefs prefs;
+
+  /// YouTube-specific preferences, captured so a retry repeats the command.
+  final YoutubePrefs youtube;
 
   /// Set when the download came from a playlist. Every entry of one playlist
   /// shares the same id so the queue can group them, and the title decides the
@@ -103,6 +114,7 @@ class DownloadTask {
     'extraArgs': extraArgs,
     'outputTemplate': outputTemplate,
     'prefs': prefs.toMap(),
+    'youtube': youtube.toMap(),
   };
 
   /// Rebuilds a task from a [toMap] snapshot. Any missing or malformed field
@@ -151,6 +163,14 @@ class DownloadTask {
           _ => const <String>[],
         },
         outputTemplate: m['outputTemplate'] as String? ?? '',
+        youtube: YoutubePrefs.fromMap(
+          // Pattern-matched rather than cast, like `prefs` below: a corrupt
+          // snapshot must not be able to break queue restore.
+          switch (m['youtube']) {
+            final Map<dynamic, dynamic> map => Map<String, dynamic>.from(map),
+            _ => null,
+          },
+        ),
         prefs: YtPrefs.fromMap(
           // Pattern-matched rather than cast: a snapshot whose 'prefs' is not
           // a map must still restore, same as every other field here.

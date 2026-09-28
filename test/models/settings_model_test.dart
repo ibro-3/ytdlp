@@ -120,6 +120,80 @@ void main() {
       expect(s.copyWith(themeMode: ThemeMode.dark).ytPrefs, s.ytPrefs);
     });
 
+    test('maxConcurrency is unset by default and resolves per platform', () {
+      const s = AppSettings();
+      expect(s.maxConcurrency, isNull);
+      expect(s.resolveConcurrency(isMobile: true), 1);
+      expect(s.resolveConcurrency(isMobile: false), 2);
+    });
+
+    test('an explicit concurrency overrides the platform default', () {
+      const s = AppSettings(maxConcurrency: 4);
+      expect(s.resolveConcurrency(isMobile: true), 4);
+      expect(s.resolveConcurrency(isMobile: false), 4);
+    });
+
+    test('copyWith can clear concurrency back to the platform default', () {
+      const s = AppSettings(maxConcurrency: 4);
+      expect(
+        s.copyWith(maxConcurrencySetter: () => null).maxConcurrency,
+        isNull,
+      );
+      expect(
+        s
+            .copyWith(maxConcurrencySetter: () => null)
+            .resolveConcurrency(isMobile: true),
+        1,
+      );
+      // A plain int still sets it, and omitting it keeps the current value.
+      expect(s.copyWith(maxConcurrencySetter: () => 3).maxConcurrency, 3);
+      expect(s.copyWith().maxConcurrency, 4);
+    });
+
+    test('copyWith clamps concurrency into range', () {
+      const s = AppSettings();
+      expect(
+        s.copyWith(maxConcurrencySetter: () => 99).maxConcurrency,
+        AppSettings.concurrencyMax,
+      );
+      expect(
+        s.copyWith(maxConcurrencySetter: () => 0).maxConcurrency,
+        AppSettings.concurrencyMin,
+      );
+    });
+
+    test('fromMap clamps a stored concurrency', () {
+      expect(
+        AppSettings.fromMap({'maxConcurrency': 999}).maxConcurrency,
+        AppSettings.concurrencyMax,
+      );
+      expect(
+        AppSettings.fromMap({'maxConcurrency': -3}).maxConcurrency,
+        AppSettings.concurrencyMin,
+      );
+      // A stored value is a deliberate choice, so 1 is honoured.
+      expect(AppSettings.fromMap({'maxConcurrency': 1}).maxConcurrency, 1);
+    });
+
+    test('fromMap treats a non-numeric concurrency as unset', () {
+      expect(
+        AppSettings.fromMap({'maxConcurrency': 'many'}).maxConcurrency,
+        isNull,
+      );
+    });
+
+    test('maxQueueSize defaults to 50 and clamps', () {
+      expect(const AppSettings().maxQueueSize, 50);
+      expect(
+        const AppSettings().copyWith(maxQueueSize: 1).maxQueueSize,
+        AppSettings.queueSizeMin,
+      );
+      expect(
+        AppSettings.fromMap({'maxQueueSize': 0}).maxQueueSize,
+        AppSettings.queueSizeMin,
+      );
+    });
+
     test('copyWith can clear the audio tier to Best via thunk', () {
       const s = AppSettings(defaultAudioTier: 192);
       final cleared = s.copyWith(defaultAudioTier: () => null);

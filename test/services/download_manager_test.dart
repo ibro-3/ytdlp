@@ -10,6 +10,7 @@ import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/core/models/yt_prefs.dart';
+import 'package:ytdlp/core/models/youtube_prefs.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
 import 'package:ytdlp/services/downloads/download_layout.dart';
@@ -55,6 +56,7 @@ class _RecordingArgsEngine extends _FakeEngine {
   List<String> extraArgs = const [];
   String template = '';
   YtPrefs prefs = const YtPrefs();
+  YoutubePrefs youtube = const YoutubePrefs();
   String? archivePath;
 
   @override
@@ -68,10 +70,12 @@ class _RecordingArgsEngine extends _FakeEngine {
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
   }) {
     this.extraArgs = extraArgs;
     this.template = template;
     this.prefs = prefs;
+    this.youtube = youtube;
     this.archivePath = archivePath;
     return super.startDownload(
       url: url,
@@ -83,6 +87,7 @@ class _RecordingArgsEngine extends _FakeEngine {
       extraArgs: extraArgs,
       prefs: prefs,
       archivePath: archivePath,
+      youtube: youtube,
     );
   }
 }
@@ -119,6 +124,7 @@ class _FakeEngine implements DownloadEngine {
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
   }) async {
     started++;
     final file = File(p.join(outputDir, 'Title [abc123].mp4'));
@@ -166,6 +172,7 @@ class _NoFileEngine implements DownloadEngine {
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
   }) async {
     return _FakeProcess(lines: const ['[download] Destination: missing.mp4']);
   }
@@ -189,6 +196,7 @@ class _FailingAfterPartEngine implements DownloadEngine {
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
   }) async {
     final part = File(p.join(outputDir, 'Title [abc123].mp4.part'));
     await part.parent.create(recursive: true);
@@ -428,6 +436,231 @@ void main() {
     );
   });
 
+  group('DownloadManager queue control', () {
+    test('pausing holds the queue and resuming releases it', () async {
+      // maxConcurrency 1 so exactly one task is in flight and two wait.
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future, // held open
+      );
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.pause();
+      expect(m.isPaused, isTrue);
+
+      for (final id in ['a', 'b', 'c']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      // Nothing starts while paused, not even the first task.
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(engine.started, 0);
+      expect(m.queuedCount, 3);
+
+      m.resume();
+      await waitUntil(() => engine.started == 1);
+      expect(m.isPaused, isFalse);
+      // Still serial, so the rest wait.
+      expect(engine.started, 1);
+    });
+
+    test('pause leaves a running download alone', () async {
+      // Pausing must not throw away a partial the user paid bandwidth for.
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(() => engine.started == 1);
+
+      m.pause();
+      m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect(engine.started, 1, reason: 'the running task is unaffected');
+      expect(
+        m.tasks.firstWhere((t) => t.video.id == 'a').status,
+        DownloadStatus.downloading,
+      );
+    });
+
+    test('togglePause flips the state', () {
+      final m = manager(_FakeEngine());
+      addTearDown(m.dispose);
+      expect(m.isPaused, isFalse);
+      m.togglePause();
+      expect(m.isPaused, isTrue);
+      m.togglePause();
+      expect(m.isPaused, isFalse);
+    });
+
+    test('raising concurrency starts waiting tasks', () async {
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      m.enqueue(video: _video('c'), format: _video('c').videoFormats.first);
+      await waitUntil(() => engine.started == 1);
+
+      // Raising the live limit lets more start without rebuilding the manager,
+      // so the existing queue survives the settings change.
+      m.maxConcurrency = 3;
+      await waitUntil(() => engine.started == 3);
+      expect(m.maxConcurrency, 3);
+    });
+
+    test(
+      'lowering concurrency does not interrupt a running download',
+      () async {
+        final engine = _FakeEngine(exitCode: Completer<int>().future);
+        final m = manager(engine, maxConcurrency: 3);
+        addTearDown(m.dispose);
+
+        for (final id in ['a', 'b', 'c']) {
+          m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+        }
+        await waitUntil(() => engine.started == 3);
+
+        m.maxConcurrency = 1;
+        expect(
+          m.tasks.where((t) => t.status == DownloadStatus.downloading).length,
+          3,
+          reason: 'running work is never killed by a settings change',
+        );
+      },
+    );
+
+    test('concurrency is clamped to a sane range', () {
+      final m = manager(_FakeEngine());
+      addTearDown(m.dispose);
+      m.maxConcurrency = 0;
+      expect(m.maxConcurrency, 1);
+      m.maxConcurrency = 99;
+      expect(m.maxConcurrency, 8);
+    });
+
+    test(
+      'cancelAll cancels queued and running, leaving finished alone',
+      () async {
+        final engine = _FakeEngine();
+        final m = manager(engine, maxConcurrency: 1);
+        addTearDown(m.dispose);
+
+        m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+        await waitUntil(
+          () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+        );
+        expect(m.completedCount, 1);
+
+        m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+        m.enqueue(video: _video('c'), format: _video('c').videoFormats.first);
+        expect(m.cancelAll(), greaterThanOrEqualTo(2));
+        await waitUntil(
+          () => m.tasks.every(
+            (t) =>
+                t.status == DownloadStatus.canceled ||
+                t.status == DownloadStatus.completed,
+          ),
+        );
+        // The completed one is untouched.
+        expect(m.completedCount, 1);
+      },
+    );
+
+    test('clearFinished removes finished tasks and reclaims staging', () async {
+      final engine = _FakeEngine(exitCode: Future<int>.value(1));
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.failed),
+      );
+      expect(m.failedCount, 2);
+      expect(m.finishedCount, 2);
+
+      final staging = m.tasks.map((t) => t.stagingPath).whereType<String>();
+      expect(staging, isNotEmpty);
+
+      expect(m.clearFinished(), 2);
+      expect(m.tasks, isEmpty);
+      // The kept-for-resume directories are reclaimed too, so a long-lived
+      // queue cannot accumulate them. The deletion is scheduled rather than
+      // awaited by clearFinished, hence the wait.
+      await waitUntil(
+        () => staging.every((path) => !Directory(path).existsSync()),
+      );
+    });
+
+    test('clearFinished leaves queued and running work', () async {
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      await waitUntil(() => engine.started == 1);
+
+      expect(m.clearFinished(), 0);
+      expect(m.tasks, hasLength(2));
+    });
+
+    test('reorder moves a waiting task within the queue', () async {
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      // With concurrency 1 the first runs and the rest stay queued, which is
+      // the only state where reordering is meaningful.
+      for (final id in ['a', 'b', 'c']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => engine.started == 1);
+
+      final b = m.tasks.firstWhere((t) => t.video.id == 'b');
+      // 'b' is ahead of 'c' in the queue, so a positive offset pushes it back.
+      expect(m.reorder(b.id, 1), isTrue);
+
+      expect(m.queueInStartOrder.map((t) => t.video.id), ['c', 'b']);
+    });
+
+    test('reorder refuses a running or unknown task', () async {
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(() => engine.started == 1);
+
+      final running = m.tasks.single;
+      expect(
+        m.reorder(running.id, 1),
+        isFalse,
+        reason: 'it is already running',
+      );
+      expect(m.reorder('no-such-id', 1), isFalse);
+      expect(m.reorder(running.id, 0), isFalse, reason: 'a no-op move');
+    });
+
+    test('reorder clamps at the end of the queue', () async {
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      for (final id in ['a', 'b']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => engine.started == 1);
+
+      final b = m.tasks.firstWhere((t) => t.video.id == 'b');
+      // Pushing the last queued task further back is a no-op, not an error that
+      // corrupts the order.
+      expect(m.reorder(b.id, 5), isFalse);
+      expect(m.queueInStartOrder.map((t) => t.video.id), ['b']);
+    });
+  });
+
   group('DownloadManager output template', () {
     /// A settings service backed by a real box, so the manager reads the
     /// user's template and extra-args field the way it would in the app.
@@ -441,6 +674,32 @@ void main() {
       await service.update(settings);
       return (service, box);
     }
+
+    test('youtube prefs reach the engine and default from Settings', () async {
+      final engine = _RecordingArgsEngine();
+      final (settingsService, box) = await settingsWith(
+        const AppSettings(
+          youtube: YoutubePrefs(extraClients: [YoutubeClient.ios]),
+        ),
+      );
+      addTearDown(box.deleteFromDisk);
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settingsService,
+      );
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(
+        () => m.tasks.every((t) => t.status == DownloadStatus.completed),
+      );
+
+      expect(engine.youtube.extraClients, [YoutubeClient.ios]);
+      // Captured on the task, so a retry repeats the same command.
+      expect(m.tasks.single.youtube.extraClients, [YoutubeClient.ios]);
+    });
 
     test('a custom template names the finished file', () async {
       final engine = _FakeEngine();
@@ -1057,13 +1316,16 @@ void main() {
         await waitUntil(() => inFinal('Title [abc123].jpg'));
         expect(inFinal('Title [abc123].mp4'), isTrue);
         expect(inFinal('Title [abc123].en.srt'), isTrue);
-        // ...the stale .part does not, and neither does staging itself.
+        // ...the stale .part does not.
         expect(inFinal('Title [abc123].mp4.part'), isFalse);
-        expect(
-          Directory(p.join(tempRoot.path, '.ytdlp-staging')).existsSync(),
-          isFalse,
-        );
         expect(t.filePath, endsWith('Title [abc123].mp4'));
+        // Staging is removed by the task's `finally` block, which runs *after*
+        // the file is moved, so it has to be waited for rather than asserted
+        // at the moment the artifacts appear.
+        await waitUntil(
+          () =>
+              !Directory(p.join(tempRoot.path, '.ytdlp-staging')).existsSync(),
+        );
       },
     );
 
@@ -1248,6 +1510,39 @@ void main() {
       expect(back.extraArgs, isEmpty);
       expect(back.outputTemplate, isEmpty);
       expect(back.playlistId, isNull);
+    });
+
+    test('a task from an older snapshot gets neutral youtube prefs', () {
+      final back = DownloadTask.fromMap({
+        'id': 'old',
+        'createdAt': DateTime.now().toIso8601String(),
+        'video': const <String, dynamic>{},
+        'format': const <String, dynamic>{},
+      });
+      expect(back.youtube, const YoutubePrefs());
+    });
+
+    test('youtube prefs round-trip on a task', () {
+      const yt = YoutubePrefs(useEjs: false, extraClients: [YoutubeClient.ios]);
+      final task = DownloadTask(
+        id: 't1',
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+        createdAt: DateTime.now(),
+        youtube: yt,
+      );
+      expect(DownloadTask.fromMap(task.toMap()).youtube, yt);
+    });
+
+    test('a corrupt youtube map still restores the task', () {
+      final back = DownloadTask.fromMap({
+        'id': 't',
+        'createdAt': DateTime.now().toIso8601String(),
+        'video': const <String, dynamic>{},
+        'format': const <String, dynamic>{},
+        'youtube': 'not a map',
+      });
+      expect(back.youtube, const YoutubePrefs());
     });
 
     test('extraArgs of the wrong type is tolerated', () {

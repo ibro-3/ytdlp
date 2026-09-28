@@ -16,9 +16,14 @@ class QueueStore {
 
   static const _key = 'queue';
 
+  /// Used when the caller does not specify a limit. Matches the Settings
+  /// default so a store written before the setting existed keeps behaving the
+  /// same way.
+  static const defaultMaxTasks = 50;
+
   /// Most recent tasks are the only ones worth restoring; older ones are
   /// dropped so the box cannot grow without bound.
-  static const _maxTasks = 50;
+  static const _maxTasks = 500;
 
   List<DownloadTask> load() {
     final raw = _box.get(_key);
@@ -34,11 +39,24 @@ class QueueStore {
         // A single corrupt record must not break the whole queue.
       }
     }
+    // Snapshots are written newest-first, so the stored order already is the
+    // display order. Sorting by createdAt as well makes the invariant explicit
+    // and repairs a hand-edited box.
+    tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return tasks;
   }
 
-  Future<void> save(List<DownloadTask> tasks) {
-    final snapshot = [for (final t in tasks.take(_maxTasks)) t.toMap()];
+  /// Persists [tasks], keeping the [maxTasks] most recent.
+  ///
+  /// A caller-supplied limit is clamped to [_maxTasks] so a corrupt settings
+  /// value cannot make the box grow without bound. The tasks are already
+  /// newest-first (the manager keeps them that way), so `take` keeps the newest.
+  Future<void> save(
+    List<DownloadTask> tasks, {
+    int maxTasks = defaultMaxTasks,
+  }) {
+    final limit = maxTasks.clamp(1, _maxTasks);
+    final snapshot = [for (final t in tasks.take(limit)) t.toMap()];
     return _box.put(_key, snapshot);
   }
 

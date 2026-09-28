@@ -8,6 +8,7 @@ import '../../core/models/download_options.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import '../../core/models/yt_prefs.dart';
+import '../../core/models/youtube_prefs.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
 import 'json_payload.dart';
@@ -32,6 +33,7 @@ List<String> buildDownloadArgs({
   List<String> extraArgs = const [],
   YtPrefs prefs = const YtPrefs(),
   String? archivePath,
+  YoutubePrefs youtube = const YoutubePrefs(),
 }) {
   final args = <String>[
     '--newline',
@@ -69,6 +71,17 @@ List<String> buildDownloadArgs({
   args.addAll(
     _prefsArgs(prefs, hasFfmpeg: hasFfmpeg, archivePath: archivePath),
   );
+
+  // YouTube client selection. Emitted before the managed group so a raw
+  // `--extractor-args` in the extra-args field cannot outrank it, and only
+  // when the user actually added a client: `web` alone is already the default,
+  // so passing it would be a no-op flag on every download.
+  if (youtube.isClientSelectionMeaningful) {
+    args.addAll([
+      '--extractor-args',
+      'youtube:player_client=${youtube.playerClientsTarget}',
+    ]);
+  }
 
   args.addAll([
     '--no-playlist',
@@ -204,6 +217,7 @@ abstract interface class DownloadEngine {
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
   });
 }
 
@@ -563,6 +577,7 @@ class YtdlpService implements DownloadEngine {
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
   }) async {
     final bin = await _binary.ensureRunner();
     final ffmpeg = await _binary.androidFfmpegLocation();
@@ -581,6 +596,7 @@ class YtdlpService implements DownloadEngine {
       extraArgs: extraArgs,
       prefs: prefs,
       archivePath: archivePath,
+      youtube: youtube,
     );
 
     final YtdlpProcess process;
