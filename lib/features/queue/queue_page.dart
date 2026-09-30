@@ -245,7 +245,6 @@ class _TaskCard extends ConsumerWidget {
     // cancel.
     final isQueued = task.status == DownloadStatus.queued;
     final isRunning = task.status == DownloadStatus.downloading;
-    final isDownloading = isQueued || isRunning;
     final isPaused = task.status == DownloadStatus.paused;
     final isDone = task.status == DownloadStatus.completed;
     final isFailed = task.status == DownloadStatus.failed;
@@ -313,6 +312,7 @@ class _TaskCard extends ConsumerWidget {
                     ],
                   ),
                 ),
+                _buildActions(context, manager, task),
               ],
             ),
             const SizedBox(height: 12),
@@ -449,92 +449,123 @@ class _TaskCard extends ConsumerWidget {
                 ),
               ),
             ],
-            const SizedBox(height: 10),
-            // Icon-only from here down: these are per-task actions on a card
-            // that may be one of dozens in a list, and labelled buttons make a
-            // long queue mostly buttons. The tooltips carry the names, and the
-            // icons are distinct enough to read at a glance.
-            Wrap(
-              spacing: 4,
-              runSpacing: 4,
-              children: [
-                if (isDownloading) ...[
-                  IconButton(
-                    onPressed: () => manager.pauseTask(task.id),
-                    icon: const Icon(Icons.pause),
-                    tooltip: 'Pause this download',
-                  ),
-                  IconButton(
-                    onPressed: () => manager.cancel(task.id),
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Cancel this download',
-                  ),
-                ] else if (isPaused) ...[
-                  IconButton.filledTonal(
-                    onPressed: () => manager.resumeTask(task.id),
-                    icon: const Icon(Icons.play_arrow),
-                    tooltip: 'Resume this download',
-                  ),
-                  IconButton(
-                    onPressed: () => manager.cancel(task.id),
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Cancel this download',
-                  ),
-                ] else if (isDone) ...[
-                  IconButton.filledTonal(
-                    onPressed: () => _open(context, manager, task),
-                    icon: const Icon(Icons.play_arrow),
-                    tooltip: 'Open the file',
-                  ),
-                  IconButton(
-                    onPressed: () => _share(context, manager, task),
-                    icon: const Icon(Icons.share_outlined),
-                    tooltip: 'Share the file',
-                  ),
-                  IconButton(
-                    onPressed: () => _delete(context, manager, task),
-                    icon: const Icon(Icons.delete_outline),
-                    tooltip: 'Delete file',
-                  ),
-                ] else if (isFailed || isCanceled) ...[
-                  // Retry covers a canceled download too: its partial is kept,
-                  // so this continues rather than re-downloading.
-                  IconButton.filledTonal(
-                    onPressed: () => manager.retry(task),
-                    icon: const Icon(Icons.refresh),
-                    tooltip: 'Try again',
-                  ),
-                  IconButton(
-                    onPressed: () => manager.dismiss(task.id),
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Remove from the queue',
-                  ),
-                ] else ...[
-                  IconButton(
-                    onPressed: () => manager.dismiss(task.id),
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Remove from the queue',
-                  ),
-                ],
-                // Reorder is only meaningful while a task is still waiting;
-                // a running download has already been started.
-                if (onMoveUp != null || onMoveDown != null) ...[
-                  const SizedBox(width: 4),
-                  IconButton(
-                    onPressed: onMoveUp,
-                    icon: const Icon(Icons.arrow_upward, size: 18),
-                    tooltip: 'Move earlier in the queue',
-                  ),
-                  IconButton(
-                    onPressed: onMoveDown,
-                    icon: const Icon(Icons.arrow_downward, size: 18),
-                    tooltip: 'Move later in the queue',
-                  ),
-                ],
-              ],
-            ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// The card's action icons, in the top-right corner beside the title.
+  ///
+  /// Icon-only: these are per-task actions on a card that may be one of dozens
+  /// in a list, and labelled buttons make a long queue mostly buttons. The
+  /// tooltips carry the names, and the icons are distinct enough to read at a
+  /// glance.
+  ///
+  /// Two rows rather than one, so a completed card (open, share, delete) and a
+  /// queued one (pause, cancel, move up, move down) both fit a narrow phone
+  /// without the row overflowing.
+  Widget _buildActions(
+    BuildContext context,
+    DownloadManager manager,
+    DownloadTask task,
+  ) {
+    final isQueued = task.status == DownloadStatus.queued;
+    final isRunning = task.status == DownloadStatus.downloading;
+    final isDownloading = isQueued || isRunning;
+    final isPaused = task.status == DownloadStatus.paused;
+    final isDone = task.status == DownloadStatus.completed;
+    final isFailed = task.status == DownloadStatus.failed;
+    final isCanceled = task.status == DownloadStatus.canceled;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isDownloading) ...[
+                IconButton(
+                  onPressed: () => manager.pauseTask(task.id),
+                  icon: const Icon(Icons.pause),
+                  tooltip: 'Pause this download',
+                ),
+                IconButton(
+                  onPressed: () => manager.cancel(task.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Cancel this download',
+                ),
+              ] else if (isPaused) ...[
+                IconButton.filledTonal(
+                  onPressed: () => manager.resumeTask(task.id),
+                  icon: const Icon(Icons.play_arrow),
+                  tooltip: 'Resume this download',
+                ),
+                IconButton(
+                  onPressed: () => manager.cancel(task.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Cancel this download',
+                ),
+              ] else if (isDone) ...[
+                IconButton.filledTonal(
+                  onPressed: () => _open(context, manager, task),
+                  icon: const Icon(Icons.play_arrow),
+                  tooltip: 'Open the file',
+                ),
+                IconButton(
+                  onPressed: () => _share(context, manager, task),
+                  icon: const Icon(Icons.share_outlined),
+                  tooltip: 'Share the file',
+                ),
+                IconButton(
+                  onPressed: () => _delete(context, manager, task),
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Delete file',
+                ),
+              ] else if (isFailed || isCanceled) ...[
+                // Retry covers a canceled download too: its partial is kept,
+                // so this continues rather than re-downloading.
+                IconButton.filledTonal(
+                  onPressed: () => manager.retry(task),
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Try again',
+                ),
+                IconButton(
+                  onPressed: () => manager.dismiss(task.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Remove from the queue',
+                ),
+              ] else
+                IconButton(
+                  onPressed: () => manager.dismiss(task.id),
+                  icon: const Icon(Icons.close),
+                  tooltip: 'Remove from the queue',
+                ),
+            ],
+          ),
+          // Reorder is only meaningful while a task is still waiting; a running
+          // download has already been started, so its arrows would promise an
+          // ordering the scheduler would not honour.
+          if (onMoveUp != null || onMoveDown != null)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  onPressed: onMoveUp,
+                  icon: const Icon(Icons.arrow_upward, size: 18),
+                  tooltip: 'Move earlier in the queue',
+                ),
+                IconButton(
+                  onPressed: onMoveDown,
+                  icon: const Icon(Icons.arrow_downward, size: 18),
+                  tooltip: 'Move later in the queue',
+                ),
+              ],
+            ),
+        ],
       ),
     );
   }

@@ -6,6 +6,7 @@ import '../../../core/models/output_template.dart';
 import '../../../core/models/settings_model.dart';
 import '../../../core/models/video_info.dart';
 import '../../../services/ytdlp/arg_tokenizer.dart';
+import '../../../widgets/tab_carousel.dart';
 
 /// What the user picked in the format sheet: a [Format] plus any subtitle
 /// and thumbnail extras. `null` from [showFormatPickerSheet] means dismissed.
@@ -72,7 +73,8 @@ class _FormatPickerSheet extends StatefulWidget {
   State<_FormatPickerSheet> createState() => _FormatPickerSheetState();
 }
 
-class _FormatPickerSheetState extends State<_FormatPickerSheet> {
+class _FormatPickerSheetState extends State<_FormatPickerSheet>
+    with SingleTickerProviderStateMixin {
   late FormatKind _mode;
   Format? _videoSel;
   Format? _audioSel;
@@ -80,6 +82,18 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   late bool _writeSubs;
   late bool _includeAuto;
   final Set<String> _subLangs = {};
+
+  /// The carousel's pages: the one-off yt-dlp flags, then the file name
+  /// template.
+  static const List<String> _pages = ['Advanced', 'File name'];
+  final PageController _pageController = PageController();
+
+  /// Drives the [TabBar] strip, and is moved by a page swipe so the strip
+  /// always shows which page is up.
+  late final TabController _tabController = TabController(
+    length: _pages.length,
+    vsync: this,
+  );
 
   /// One-off extra arguments for this download, seeded from Settings and
   /// pre-filled with the arguments of the chosen template when there is one.
@@ -117,15 +131,6 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   /// rather than on ffmpeg alone, because postprocessing additionally needs
   /// ffprobe — offering them without it yields "ffprobe not found".
   bool get _canEmbed => widget.video.canPostprocess;
-
-  /// Whether a cover image survives the postprocessing the user's yt-dlp
-  /// preferences ask for.
-  ///
-  /// `--extract-audio` into WAV, for instance, has nowhere to put cover art, so
-  /// yt-dlp would drop it without reporting anything. Not a toggle any more —
-  /// this decides whether to say so, because an audio download that silently
-  /// loses its cover art looks like a bug.
-  bool get _canTargetEmbedThumb => widget.settings.ytPrefs.canEmbedThumbnail;
 
   @override
   void initState() {
@@ -184,6 +189,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   void dispose() {
     _extraArgs.dispose();
     _template.dispose();
+    _pageController.dispose();
+    _tabController.dispose();
     super.dispose();
   }
 
@@ -361,33 +368,42 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                         ),
                       ],
                     ],
-                    // Cover art is derived from the mode rather than offered as
-                    // a toggle, but it is conditional on ffmpeg and on the
-                    // target container, so it is still worth saying out loud
-                    // when it will not happen.
-                    if (!isVideoMode) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        !_canEmbed
-                            ? 'The thumbnail is not embedded: this needs ffmpeg '
-                                  'and ffprobe.'
-                            : !_canTargetEmbedThumb
-                            ? 'The chosen conversion cannot hold cover art, so '
-                                  'the thumbnail is left out.'
-                            : 'The thumbnail is embedded as cover art.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                    const SizedBox(height: 20),
+                    // The two one-off overrides live in a carousel rather than
+                    // stacked: neither is needed for a plain download, and
+                    // stacked they pushed the quality chips and subtitle
+                    // switches off a short screen. A TabBar rather than a bare
+                    // swipe, because a carousel with no visible strip is
+                    // undiscoverable.
+                    TabBar(
+                      controller: _tabController,
+                      tabs: [for (final title in _pages) Tab(text: title)],
+                      onTap: (i) => _pageController.animateToPage(
+                        i,
+                        duration: const Duration(milliseconds: 200),
+                        curve: Curves.easeOut,
                       ),
-                    ],
-                    const SizedBox(height: 20),
-                    _sectionLabel(theme, 'Advanced'),
+                    ),
                     const SizedBox(height: 8),
-                    _buildExtraArgs(theme),
-                    const SizedBox(height: 20),
-                    _sectionLabel(theme, 'File name'),
-                    const SizedBox(height: 8),
-                    _buildOutputTemplate(theme),
+                    // Sized from the pages' own laid-out heights, because a
+                    // PageView is unbounded vertically and these two differ a
+                    // lot: the flags page carries the template chips and every
+                    // validation note. Capped to the sheet, since the carousel
+                    // sits inside a scroll view that has only so much room.
+                    ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxHeight: MediaQuery.sizeOf(context).height * 0.5,
+                      ),
+                      child: TabCarousel(
+                        controller: _pageController,
+                        pages: [
+                          _buildExtraArgs(theme),
+                          _buildOutputTemplate(theme),
+                        ],
+                        fallbackHeight: 220,
+                        onPageChanged: (i) => _tabController.index = i,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -440,6 +456,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text('Advanced flags', style: theme.textTheme.labelMedium),
+        const SizedBox(height: 8),
         TextField(
           controller: _extraArgs,
           onChanged: (_) => setState(() => _activeTemplate = ''),
@@ -510,6 +528,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        Text('File name template', style: theme.textTheme.labelMedium),
+        const SizedBox(height: 8),
         TextField(
           controller: _template,
           onChanged: (_) => setState(() {}),

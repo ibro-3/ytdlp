@@ -4,6 +4,7 @@ import 'package:ytdlp/core/models/command_template.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/features/home/widgets/format_picker_sheet.dart';
+import 'package:ytdlp/widgets/tab_carousel.dart';
 
 const _best = Format(
   kind: FormatKind.video,
@@ -103,30 +104,38 @@ Future<_Result> _openSheet(
   return result;
 }
 
-/// Brings the Advanced section into view, since it sits below the quality
+/// Brings the advanced carousel into view, since it sits below the quality
 /// chips and subtitle switches in a scrolling sheet.
 ///
 /// Scrolls the sheet's own scroll view rather than the whole page: the bottom
 /// sheet is a draggable, and a page-level scroll does not move its content.
 Future<void> _scrollToAdvanced(WidgetTester tester) async {
   await tester.dragUntilVisible(
-    find.text('Advanced'),
+    find.widgetWithText(Tab, 'Advanced'),
     find.byType(SingleChildScrollView).first,
     const Offset(0, -220),
   );
   await tester.pumpAndSettle();
 }
 
-/// Text of the field at [index] within the sheet, in the order they appear:
-/// extra arguments first, then the output template.
-String _fieldText(WidgetTester tester, int index) => tester
-    .widgetList<TextField>(find.byType(TextField))
-    .elementAt(index)
-    .controller!
-    .text;
+/// Moves the carousel to the file name page.
+///
+/// A [PageView] only builds the page it is on, so the output template's field
+/// does not exist until the tab is tapped. Every lookup is therefore scoped to
+/// the visible page rather than indexing a list of both fields.
+Future<void> _openFileNamePage(WidgetTester tester) async {
+  await tester.tap(find.widgetWithText(Tab, 'File name'));
+  await tester.pumpAndSettle();
+}
 
-Future<void> _enterField(WidgetTester tester, int index, String text) async {
-  await tester.enterText(find.byType(TextField).at(index), text);
+/// The one text field on whichever carousel page is up.
+Finder get _visibleField => find.byType(TextField);
+
+String _fieldText(WidgetTester tester) =>
+    tester.widget<TextField>(_visibleField).controller!.text;
+
+Future<void> _enterField(WidgetTester tester, String text) async {
+  await tester.enterText(_visibleField, text);
   await tester.pumpAndSettle();
 }
 
@@ -357,18 +366,6 @@ void main() {
     );
   });
 
-  testWidgets('audio mode says out loud when cover art is dropped', (
-    tester,
-  ) async {
-    // Derived or not, a download that quietly loses its cover art looks like a
-    // bug — so the sheet states it when ffmpeg/ffprobe are missing.
-    await _openSheet(tester, video: _video(subtitleTracks: const [_enSubs]));
-    await tester.tap(find.text('Audio'));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('needs ffmpeg and ffprobe'), findsOneWidget);
-  });
-
   testWidgets('embed switches are forced off and disabled without ffmpeg', (
     tester,
   ) async {
@@ -497,16 +494,17 @@ void main() {
       );
       await _scrollToAdvanced(tester);
 
-      expect(find.byType(TextField), findsNWidgets(2));
-      expect(_fieldText(tester, 0), '--concurrent-fragments 4');
-      expect(_fieldText(tester, 1), isEmpty, reason: 'template starts unset');
+      expect(_fieldText(tester), '--concurrent-fragments 4');
+
+      await _openFileNamePage(tester);
+      expect(_fieldText(tester), isEmpty, reason: 'template starts unset');
     });
 
     testWidgets('the override comes back on the result', (tester) async {
       final result = await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
 
-      await _enterField(tester, 0, '--embed-metadata');
+      await _enterField(tester, '--embed-metadata');
       await _tapDownload(tester);
 
       expect(result.picked?.extraArgs, '--embed-metadata');
@@ -516,7 +514,7 @@ void main() {
       final result = await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
 
-      await _enterField(tester, 0, '-o /elsewhere');
+      await _enterField(tester, '-o /elsewhere');
 
       expect(find.textContaining('is ignored'), findsOneWidget);
       await _tapDownload(tester);
@@ -531,7 +529,7 @@ void main() {
       final result = await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
 
-      await _enterField(tester, 0, "--a 'oops");
+      await _enterField(tester, "--a 'oops");
 
       expect(find.textContaining('never closed'), findsOneWidget);
       final button = tester.widget<FilledButton>(
@@ -554,7 +552,7 @@ void main() {
       await tester.tap(find.widgetWithText(ChoiceChip, 'Sponsorblock'));
       await tester.pumpAndSettle();
 
-      expect(_fieldText(tester, 0), '--sponsorblock-remove');
+      expect(_fieldText(tester), '--sponsorblock-remove');
     });
 
     testWidgets('an empty template list is fine', (tester) async {
@@ -571,6 +569,7 @@ void main() {
     ) async {
       final result = await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
+      await _openFileNamePage(tester);
       await _tapDownload(tester);
 
       // Empty means "use the Settings default", resolved at spawn time.
@@ -580,8 +579,9 @@ void main() {
     testWidgets('the preview renders the current field', (tester) async {
       await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
+      await _openFileNamePage(tester);
 
-      await _enterField(tester, 1, '%(title)s.%(ext)s');
+      await _enterField(tester, '%(title)s.%(ext)s');
 
       expect(find.textContaining('Saves as: Sample video.mp4'), findsOneWidget);
     });
@@ -591,8 +591,9 @@ void main() {
     ) async {
       final result = await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
+      await _openFileNamePage(tester);
 
-      await _enterField(tester, 1, '%(title)s');
+      await _enterField(tester, '%(title)s');
 
       // The error text, not the hint, is what mentions %(ext)s.
       expect(find.textContaining('sidecars'), findsOneWidget);
@@ -606,11 +607,58 @@ void main() {
     testWidgets('a literal extension is accepted', (tester) async {
       final result = await _openSheet(tester, video: _video());
       await _scrollToAdvanced(tester);
+      await _openFileNamePage(tester);
 
-      await _enterField(tester, 1, '%(title)s.mp4');
+      await _enterField(tester, '%(title)s.mp4');
       await _tapDownload(tester);
 
       expect(result.picked?.outputTemplate, '%(title)s.mp4');
+    });
+  });
+
+  group('advanced carousel', () {
+    testWidgets('both pages are reachable from the tab strip', (tester) async {
+      await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      // The flags field is on the first page, the template on the second, and a
+      // PageView only builds the page it is showing.
+      expect(_fieldText(tester), isEmpty);
+      expect(find.text('File name template'), findsNothing);
+
+      await _openFileNamePage(tester);
+      expect(find.text('File name template'), findsOneWidget);
+    });
+
+    testWidgets('a swipe moves to the file name page and the tab follows', (
+      tester,
+    ) async {
+      await _openSheet(tester, video: _video());
+      await _scrollToAdvanced(tester);
+
+      // Dragged from a point that is actually on screen: the carousel sits at
+      // the bottom of a scrolling sheet, so a centre-based drag can land off
+      // the viewport and hit nothing at all. The distance is a fraction of the
+      // measured width rather than a constant, because a page only turns past
+      // half its width and the sheet is a different width per screen size.
+      // Dragged from a point that is actually on screen: the carousel sits at
+      // the bottom of a scrolling sheet, so a centre-based drag can land off
+      // the viewport and hit nothing at all. Started near the top edge, above
+      // the text field — a pan that begins inside a field is claimed by the
+      // field's own gesture recogniser rather than the page. The distance is a
+      // fraction of the measured width rather than a constant, because a page
+      // only turns past half its width and the sheet is a different width on
+      // every screen size.
+      final rect = tester.getRect(find.byType(TabCarousel));
+      await tester.dragFrom(
+        rect.topLeft + Offset(rect.width * 0.8, 8),
+        Offset(-rect.width * 0.7, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('File name template'), findsOneWidget);
+      final tabBar = tester.widget<TabBar>(find.byType(TabBar));
+      expect(tabBar.controller!.index, 1, reason: 'strip tracks the swipe');
     });
   });
 }

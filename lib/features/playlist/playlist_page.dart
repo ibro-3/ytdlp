@@ -276,7 +276,6 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   }
 
   Widget _buildOptions(PlaylistInfo playlist) {
-    final theme = Theme.of(context);
     final canEmbed = playlist.canPostprocess;
     final isAudio = _kind == FormatKind.audio;
     final tiers = isAudio
@@ -328,20 +327,6 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
             ],
           ),
           const SizedBox(height: 4),
-          // Cover art has no toggle: audio batches embed it, video batches do
-          // not. Said here because a video batch that *looks* like it is losing
-          // the thumbnail would otherwise be a silent surprise.
-          Text(
-            isAudio
-                ? canEmbed
-                      ? 'The thumbnail is embedded as cover art.'
-                      : 'Needs ffmpeg and ffprobe to embed the thumbnail as '
-                            'cover art.'
-                : 'The thumbnail is not embedded in video files.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             dense: true,

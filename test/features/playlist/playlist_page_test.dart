@@ -291,7 +291,8 @@ void main() {
       tester,
     ) async {
       // A batch has no per-entry format data, so a toggle would only be
-      // guessing; the derived value is stated instead.
+      // guessing. There is no caption either: the derived value (audio embeds,
+      // video does not) is applied silently rather than explained on screen.
       await pump(tester, _playlist(count: 1, canPostprocess: true));
       expect(
         find.widgetWithText(SwitchListTile, 'Embed thumbnail'),
@@ -301,10 +302,7 @@ void main() {
         find.widgetWithText(SwitchListTile, 'Save thumbnail .jpg'),
         findsNothing,
       );
-      expect(
-        find.textContaining('not embedded in video files'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('cover art'), findsNothing);
     });
 
     testWidgets('an audio batch embeds cover art', (tester) async {
@@ -313,18 +311,18 @@ void main() {
         _playlist(count: 1, canPostprocess: true),
         settings: const AppSettings(defaultAudioOnly: true),
       );
-      expect(find.textContaining('embedded as cover art'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Download 1'));
+      await tester.pumpAndSettle();
+
+      expect(manager.options.single.embedThumb, isTrue);
     });
 
-    testWidgets('a batch says so when cover art cannot be embedded', (
-      tester,
-    ) async {
-      await pump(
-        tester,
-        _playlist(count: 1, canPostprocess: false),
-        settings: const AppSettings(defaultAudioOnly: true),
-      );
-      expect(find.textContaining('Needs ffmpeg and ffprobe'), findsOneWidget);
+    testWidgets('a video batch does not embed cover art', (tester) async {
+      await pump(tester, _playlist(count: 1, canPostprocess: true));
+      await tester.tap(find.widgetWithText(FilledButton, 'Download 1'));
+      await tester.pumpAndSettle();
+
+      expect(manager.options.single.embedThumb, isFalse);
     });
   });
 }
