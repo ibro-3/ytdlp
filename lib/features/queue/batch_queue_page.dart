@@ -9,7 +9,6 @@ import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/formatters.dart';
-import '../../services/ytdlp/arg_tokenizer.dart';
 import 'batch_queue_controller.dart';
 
 /// Queue several links at once.
@@ -26,21 +25,13 @@ class BatchQueuePage extends ConsumerStatefulWidget {
 
 class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
   final Set<String> _selected = {};
-  late final TextEditingController _extraArgs = TextEditingController(
-    text: ref.read(settingsControllerProvider).extraArgs,
-  );
-
-  @override
-  void dispose() {
-    _extraArgs.dispose();
-    super.dispose();
-  }
 
   /// Enqueues every selected, resolved video with one shared quality choice.
   ///
   /// A batch has no per-video format list to pick from, so the quality comes
   /// from one chip row rather than a per-item picker — the same approach the
-  /// playlist picker takes.
+  /// playlist picker takes. Extra arguments and the file name template come
+  /// from Settings, as they do for a single download.
   Future<void> _downloadAll(List<VideoInfo> videos) async {
     if (videos.isEmpty) return;
     final settings = ref.read(settingsControllerProvider);
@@ -59,10 +50,6 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
         video: video,
         format: quality.format,
         options: quality.options,
-        extraArgs: _extraArgs.text.trim().isEmpty
-            ? const []
-            : tokenizeArgs(_extraArgs.text),
-        outputTemplate: ref.read(settingsControllerProvider).outputTemplate,
       );
     }
     if (!mounted) return;
@@ -86,14 +73,11 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
       appBar: AppBar(
         title: const Text('Queue links'),
         actions: [
-          AnimatedBuilder(
-            animation: _extraArgs,
-            builder: (context, _) => IconButton(
-              onPressed: () =>
-                  ref.read(batchQueueControllerProvider.notifier).clear(),
-              icon: const Icon(Icons.clear_all),
-              tooltip: 'Clear the list',
-            ),
+          IconButton(
+            onPressed: () =>
+                ref.read(batchQueueControllerProvider.notifier).clear(),
+            icon: const Icon(Icons.clear_all),
+            tooltip: 'Clear the list',
           ),
         ],
       ),

@@ -102,7 +102,11 @@ class _TabCarouselState extends State<TabCarousel> {
 /// known after layout, and calling back during build would set state in the
 /// middle of a build.
 class MeasuredHeight extends StatefulWidget {
-  const MeasuredHeight({required this.child, required this.onHeight, super.key});
+  const MeasuredHeight({
+    required this.child,
+    required this.onHeight,
+    super.key,
+  });
 
   final Widget child;
   final ValueChanged<double> onHeight;

@@ -87,6 +87,38 @@ void main() {
     await settle(tester);
   }
 
+  group('sections', () {
+    testWidgets('the yt-dlp capabilities have their own top-level sections', (
+      tester,
+    ) async {
+      // These lived inside the Advanced carousel, which made it over a thousand
+      // pixels tall. They are common choices, so they must be findable without
+      // expanding a collapsed escape hatch.
+      await pump(tester);
+      expect(find.text('Network'), findsOneWidget);
+      expect(find.text('Post-processing'), findsOneWidget);
+      expect(find.text('Queue'), findsOneWidget);
+    });
+
+    testWidgets('the network controls are not behind Advanced', (tester) async {
+      await pump(tester);
+      expect(find.text('Proxy'), findsOneWidget);
+      expect(find.text('Rate limit'), findsOneWidget);
+      expect(
+        find.text('Parallel fragments: 1'),
+        findsOneWidget,
+        reason: 'the fragment slider, outside the carousel',
+      );
+    });
+
+    testWidgets('the queue controls sit together', (tester) async {
+      await pump(tester);
+      expect(find.text('Simultaneous downloads'), findsOneWidget);
+      expect(find.text('Remembered queue entries'), findsOneWidget);
+      expect(find.text('Write without a .part file'), findsOneWidget);
+    });
+  });
+
   group('advanced carousel', () {
     testWidgets('both pages are reachable from the tab strip', (tester) async {
       await pump(tester);

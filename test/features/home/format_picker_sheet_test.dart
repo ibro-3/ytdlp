@@ -4,7 +4,6 @@ import 'package:ytdlp/core/models/command_template.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/features/home/widgets/format_picker_sheet.dart';
-import 'package:ytdlp/widgets/tab_carousel.dart';
 
 const _best = Format(
   kind: FormatKind.video,
@@ -102,41 +101,6 @@ Future<_Result> _openSheet(
   await tester.tap(find.text('open'));
   await tester.pumpAndSettle();
   return result;
-}
-
-/// Brings the advanced carousel into view, since it sits below the quality
-/// chips and subtitle switches in a scrolling sheet.
-///
-/// Scrolls the sheet's own scroll view rather than the whole page: the bottom
-/// sheet is a draggable, and a page-level scroll does not move its content.
-Future<void> _scrollToAdvanced(WidgetTester tester) async {
-  await tester.dragUntilVisible(
-    find.widgetWithText(Tab, 'Advanced'),
-    find.byType(SingleChildScrollView).first,
-    const Offset(0, -220),
-  );
-  await tester.pumpAndSettle();
-}
-
-/// Moves the carousel to the file name page.
-///
-/// A [PageView] only builds the page it is on, so the output template's field
-/// does not exist until the tab is tapped. Every lookup is therefore scoped to
-/// the visible page rather than indexing a list of both fields.
-Future<void> _openFileNamePage(WidgetTester tester) async {
-  await tester.tap(find.widgetWithText(Tab, 'File name'));
-  await tester.pumpAndSettle();
-}
-
-/// The one text field on whichever carousel page is up.
-Finder get _visibleField => find.byType(TextField);
-
-String _fieldText(WidgetTester tester) =>
-    tester.widget<TextField>(_visibleField).controller!.text;
-
-Future<void> _enterField(WidgetTester tester, String text) async {
-  await tester.enterText(_visibleField, text);
-  await tester.pumpAndSettle();
 }
 
 Future<void> _tapDownload(WidgetTester tester) async {
@@ -483,63 +447,36 @@ void main() {
     expect(find.text('German (auto)'), findsOneWidget);
   });
 
-  group('advanced: extra arguments', () {
-    testWidgets('the field is seeded from the Settings default', (
+  group('no advanced section', () {
+    testWidgets('the sheet offers no argument or file name override', (
       tester,
     ) async {
+      // Both live in Settings now. A per-download override on a sheet that is
+      // already carrying a format grid is one more thing to get wrong, and the
+      // settings value applies to every download anyway.
       await _openSheet(
         tester,
         video: _video(),
-        settings: const AppSettings(extraArgs: '--concurrent-fragments 4'),
+        settings: const AppSettings(
+          extraArgs: '--concurrent-fragments 4',
+          outputTemplate: '%(title)s [%(id)s].%(ext)s',
+        ),
       );
-      await _scrollToAdvanced(tester);
 
-      expect(_fieldText(tester), '--concurrent-fragments 4');
-
-      await _openFileNamePage(tester);
-      expect(_fieldText(tester), isEmpty, reason: 'template starts unset');
-    });
-
-    testWidgets('the override comes back on the result', (tester) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-
-      await _enterField(tester, '--embed-metadata');
-      await _tapDownload(tester);
-
-      expect(result.picked?.extraArgs, '--embed-metadata');
-    });
-
-    testWidgets('a managed flag warns but does not block', (tester) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-
-      await _enterField(tester, '-o /elsewhere');
-
-      expect(find.textContaining('is ignored'), findsOneWidget);
-      await _tapDownload(tester);
-      expect(
-        result.picked,
-        isNotNull,
-        reason: 'a duplicate managed flag is a warning, not an error',
-      );
-    });
-
-    testWidgets('a syntax error blocks the download', (tester) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-
-      await _enterField(tester, "--a 'oops");
-
-      expect(find.textContaining('never closed'), findsOneWidget);
+      expect(find.text('Advanced'), findsNothing);
+      expect(find.text('Advanced flags'), findsNothing);
+      expect(find.text('File name template'), findsNothing);
+      expect(find.textContaining('Saves as:'), findsNothing);
+      expect(find.byType(TextField), findsNothing);
+      // The Download button is what a plain download needs, and it is enabled:
+      // nothing in Settings can block a download from here any more.
       final button = tester.widget<FilledButton>(
         find.widgetWithText(FilledButton, 'Download'),
       );
-      expect(button.onPressed, isNull);
-      expect(result.picked, isNull);
+      expect(button.onPressed, isNotNull);
     });
 
-    testWidgets('a template chip fills the field', (tester) async {
+    testWidgets('a saved template does not appear as a chip', (tester) async {
       await _openSheet(
         tester,
         video: _video(),
@@ -547,118 +484,8 @@ void main() {
           CommandTemplate(name: 'Sponsorblock', args: '--sponsorblock-remove'),
         ],
       );
-      await _scrollToAdvanced(tester);
 
-      await tester.tap(find.widgetWithText(ChoiceChip, 'Sponsorblock'));
-      await tester.pumpAndSettle();
-
-      expect(_fieldText(tester), '--sponsorblock-remove');
-    });
-
-    testWidgets('an empty template list is fine', (tester) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-      await _tapDownload(tester);
-      expect(result.picked, isNotNull);
-    });
-  });
-
-  group('advanced: output template', () {
-    testWidgets('an empty field falls back to the default for the download', (
-      tester,
-    ) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-      await _openFileNamePage(tester);
-      await _tapDownload(tester);
-
-      // Empty means "use the Settings default", resolved at spawn time.
-      expect(result.picked?.outputTemplate, isEmpty);
-    });
-
-    testWidgets('the preview renders the current field', (tester) async {
-      await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-      await _openFileNamePage(tester);
-
-      await _enterField(tester, '%(title)s.%(ext)s');
-
-      expect(find.textContaining('Saves as: Sample video.mp4'), findsOneWidget);
-    });
-
-    testWidgets('a template without an extension blocks the download', (
-      tester,
-    ) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-      await _openFileNamePage(tester);
-
-      await _enterField(tester, '%(title)s');
-
-      // The error text, not the hint, is what mentions %(ext)s.
-      expect(find.textContaining('sidecars'), findsOneWidget);
-      final button = tester.widget<FilledButton>(
-        find.widgetWithText(FilledButton, 'Download'),
-      );
-      expect(button.onPressed, isNull);
-      expect(result.picked, isNull);
-    });
-
-    testWidgets('a literal extension is accepted', (tester) async {
-      final result = await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-      await _openFileNamePage(tester);
-
-      await _enterField(tester, '%(title)s.mp4');
-      await _tapDownload(tester);
-
-      expect(result.picked?.outputTemplate, '%(title)s.mp4');
-    });
-  });
-
-  group('advanced carousel', () {
-    testWidgets('both pages are reachable from the tab strip', (tester) async {
-      await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-
-      // The flags field is on the first page, the template on the second, and a
-      // PageView only builds the page it is showing.
-      expect(_fieldText(tester), isEmpty);
-      expect(find.text('File name template'), findsNothing);
-
-      await _openFileNamePage(tester);
-      expect(find.text('File name template'), findsOneWidget);
-    });
-
-    testWidgets('a swipe moves to the file name page and the tab follows', (
-      tester,
-    ) async {
-      await _openSheet(tester, video: _video());
-      await _scrollToAdvanced(tester);
-
-      // Dragged from a point that is actually on screen: the carousel sits at
-      // the bottom of a scrolling sheet, so a centre-based drag can land off
-      // the viewport and hit nothing at all. The distance is a fraction of the
-      // measured width rather than a constant, because a page only turns past
-      // half its width and the sheet is a different width per screen size.
-      // Dragged from a point that is actually on screen: the carousel sits at
-      // the bottom of a scrolling sheet, so a centre-based drag can land off
-      // the viewport and hit nothing at all. Started near the top edge, above
-      // the text field — a pan that begins inside a field is claimed by the
-      // field's own gesture recogniser rather than the page. The distance is a
-      // fraction of the measured width rather than a constant, because a page
-      // only turns past half its width and the sheet is a different width on
-      // every screen size.
-      final rect = tester.getRect(find.byType(TabCarousel));
-      await tester.dragFrom(
-        rect.topLeft + Offset(rect.width * 0.8, 8),
-        Offset(-rect.width * 0.7, 0),
-      );
-      await tester.pumpAndSettle();
-
-      expect(find.text('File name template'), findsOneWidget);
-      final tabBar = tester.widget<TabBar>(find.byType(TabBar));
-      expect(tabBar.controller!.index, 1, reason: 'strip tracks the swipe');
+      expect(find.widgetWithText(ChoiceChip, 'Sponsorblock'), findsNothing);
     });
   });
 }

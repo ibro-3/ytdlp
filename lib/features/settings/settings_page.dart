@@ -563,66 +563,23 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           settings.copyWith(defaultIncludeAutoSubs: v),
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Queue',
-                        style: Theme.of(context).textTheme.labelMedium,
-                      ),
-                      const SizedBox(height: 4),
-                      DropdownButtonFormField<int?>(
-                        initialValue: settings.maxConcurrency,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          labelText: 'Simultaneous downloads',
-                          helperText:
-                              'Higher values can slow a phone down; 1–2 suits '
-                              'most connections',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          const DropdownMenuItem(
-                            value: null,
-                            child: Text(
-                              'Automatic (1 on mobile, 2 on desktop)',
-                            ),
-                          ),
-                          for (
-                            var n = AppSettings.concurrencyMin;
-                            n <= AppSettings.concurrencyMax;
-                            n++
-                          )
-                            DropdownMenuItem(value: n, child: Text('$n')),
-                        ],
-                        onChanged: (v) => _patch(
-                          settings.copyWith(maxConcurrencySetter: () => v),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      DropdownButtonFormField<int>(
-                        initialValue: settings.maxQueueSize,
-                        isExpanded: true,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          labelText: 'Remembered queue entries',
-                          helperText:
-                              'How many downloads survive an app restart. '
-                              'Raise it for large playlists',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: [
-                          for (
-                            var n = AppSettings.queueSizeMin;
-                            n <= AppSettings.queueSizeMax;
-                            n += 10
-                          )
-                            DropdownMenuItem(value: n, child: Text('$n')),
-                        ],
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(maxQueueSize: v ?? 50)),
-                      ),
-                      const SizedBox(height: 16),
-                      _AdvancedSettings(settings: settings, onPatch: _patch),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _NetworkSection(settings: settings, onPatch: _patch),
+                const SizedBox(height: 12),
+                _PostProcessingSection(settings: settings, onPatch: _patch),
+                const SizedBox(height: 12),
+                _QueueSection(settings: settings, onPatch: _patch),
+                const SizedBox(height: 12),
+                _AdvancedSettings(settings: settings, onPatch: _patch),
+                const SizedBox(height: 12),
+                _Section(
+                  title: 'Privacy & data',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.cookie_outlined),
@@ -912,9 +869,8 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         ),
         const SizedBox(height: 12),
         // Sized from the pages' own laid-out heights, because a PageView is
-        // unbounded vertically and these two pages differ by roughly 3x: the
-        // flags page carries two whole capability sections. See [_PageCarousel]
-        // for why the height is measured rather than hard-coded.
+        // unbounded vertically. See [TabCarousel] for why the height is
+        // measured rather than hard-coded.
         TabCarousel(
           controller: _pageController,
           pages: [
@@ -944,10 +900,14 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
 
   /// Height used until a page reports its own, and if one never does.
   ///
-  /// Deliberately generous: on the first frame this is all the carousel has, so
-  /// too small a value would briefly clip a page. Once measured it is replaced
-  /// by the real content height, and a short page simply has space under it.
-  static const double _fallbackHeight = 1200;
+  /// Only the raw flags, the saved-template chips and the YouTube section are
+  /// in here now — the capability controls moved to their own top-level
+  /// sections — so the flags page is a few hundred pixels rather than the
+  /// thousand-plus this used to need. Deliberately generous anyway: on the
+  /// first frame this is all the carousel has, so too small a value would
+  /// briefly clip a page. Once measured it is replaced by the real content
+  /// height, and a short page simply has space under it.
+  static const double _fallbackHeight = 700;
 
   Widget _buildPage(int index, ThemeData theme, ColorScheme scheme) =>
       switch (index) {
@@ -1052,8 +1012,6 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         const SizedBox(height: 8),
         _SaveTemplateButton(args: _args.text, store: store),
         const SizedBox(height: 24),
-        _YtPrefsSection(settings: widget.settings, onPatch: widget.onPatch),
-        const SizedBox(height: 24),
         _YoutubeSection(settings: widget.settings, onPatch: widget.onPatch),
       ],
     );
@@ -1144,14 +1102,211 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
   }
 }
 
-/// First-class yt-dlp capability controls.
+/// A dense labelled text field, the one every free-text setting uses.
+Widget _prefField({
+  required String label,
+  required String hint,
+  required String value,
+  required ValueChanged<String> onChanged,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextFormField(
+      initialValue: value,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        hintText: hint,
+        border: const OutlineInputBorder(),
+      ),
+    ),
+  );
+}
+
+/// A whole-number text field, for the few values that have no sensible slider.
+Widget _prefIntField({
+  required String label,
+  required int value,
+  required ValueChanged<int> onChanged,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextFormField(
+      initialValue: '$value',
+      keyboardType: TextInputType.number,
+      onChanged: (v) => onChanged(int.tryParse(v.trim()) ?? 0),
+      decoration: InputDecoration(
+        isDense: true,
+        labelText: label,
+        border: const OutlineInputBorder(),
+      ),
+    ),
+  );
+}
+
+/// A chip row picking one of a fixed set of values.
+Widget _prefChips(
+  BuildContext context, {
+  required String label,
+  required List<String> options,
+  required String selected,
+  required ValueChanged<String> onChanged,
+}) {
+  return Padding(
+    padding: const EdgeInsets.only(bottom: 10, left: 8),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final o in options)
+              ChoiceChip(
+                label: Text(o.toUpperCase()),
+                selected: selected == o,
+                onSelected: (_) => onChanged(o),
+              ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+/// A slider whose current value is named in a label above it.
+Widget _prefSlider(
+  BuildContext context, {
+  required String label,
+  required int value,
+  required int min,
+  required int max,
+  required String helper,
+  required ValueChanged<int> onChanged,
+}) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('$label: $value', style: Theme.of(context).textTheme.bodyMedium),
+      Slider(
+        value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
+        min: min.toDouble(),
+        max: max.toDouble(),
+        divisions: max - min,
+        label: '$value',
+        onChanged: (v) => onChanged(v.round()),
+      ),
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          helper,
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+        ),
+      ),
+    ],
+  );
+}
+
+/// Patches only the yt-dlp prefs, so a change in one section cannot clobber an
+/// unrelated setting like the download folder.
+void _patchPrefs(
+  AppSettings settings,
+  Future<void> Function(AppSettings) onPatch,
+  YtPrefs next,
+) {
+  onPatch(settings.copyWith(ytPrefs: next));
+}
+
+/// Resolves ffprobe availability without blocking the first frame.
+Future<bool> _canPostprocess(WidgetRef ref) async {
+  try {
+    return await ref.read(binaryManagerProvider).hasFfprobe();
+  } catch (_) {
+    return false;
+  }
+}
+
+/// How the app reaches the network, and how hard it pushes.
+class _NetworkSection extends ConsumerWidget {
+  const _NetworkSection({required this.settings, required this.onPatch});
+
+  final AppSettings settings;
+  final Future<void> Function(AppSettings) onPatch;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final prefs = settings.ytPrefs;
+    final theme = Theme.of(context);
+    void patch(YtPrefs next) => _patchPrefs(settings, onPatch, next);
+
+    return _Section(
+      title: 'Network',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Route every download through a proxy, and pace requests so a busy '
+            'host is not hammered.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _prefField(
+            label: 'Proxy',
+            hint: 'socks5://host:port — empty for none',
+            value: prefs.proxy,
+            onChanged: (v) => patch(prefs.copyWith(proxy: v.trim())),
+          ),
+          _prefField(
+            label: 'Referer',
+            hint: 'Some hosts require one',
+            value: prefs.referer,
+            onChanged: (v) => patch(prefs.copyWith(referer: v.trim())),
+          ),
+          _prefField(
+            label: 'Rate limit',
+            hint: 'e.g. 2M, 500K — empty for no limit',
+            value: prefs.limitRate,
+            onChanged: (v) => patch(prefs.copyWith(limitRate: v.trim())),
+          ),
+          _prefSlider(
+            context,
+            label: 'Parallel fragments',
+            value: prefs.concurrentFragments,
+            min: 1,
+            max: YtPrefs.maxConcurrentFragments,
+            // A low cap is the point: 16 fragments on a phone can fail the
+            // download outright for a few percent of throughput.
+            helper: prefs.concurrentFragments == 1
+                ? "yt-dlp's default. Raise it to download DASH/HLS "
+                      'fragments in parallel.'
+                : 'Higher can fail on a memory-constrained device.',
+            onChanged: (v) => patch(prefs.copyWith(concurrentFragments: v)),
+          ),
+          _prefIntField(
+            label: 'Delay between requests (s)',
+            value: prefs.sleepRequests,
+            onChanged: (v) => patch(prefs.copyWith(sleepRequests: v)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Everything that runs through ffmpeg after the bytes are down.
 ///
-/// Split from the raw extra-args field because each of these has a value that
-/// must be *right* rather than merely typed: a fragment count that is too high
-/// fails a download outright, and a conversion into a container that cannot
-/// hold the chosen extras silently drops them.
-class _YtPrefsSection extends ConsumerWidget {
-  const _YtPrefsSection({required this.settings, required this.onPatch});
+/// A real top-level section rather than a divider buried in the Advanced
+/// carousel: these are common choices, they are the ones that silently do
+/// nothing without ffprobe, and burying them is why the carousel was over a
+/// thousand pixels tall.
+class _PostProcessingSection extends ConsumerWidget {
+  const _PostProcessingSection({required this.settings, required this.onPatch});
 
   final AppSettings settings;
   final Future<void> Function(AppSettings) onPatch;
@@ -1161,10 +1316,7 @@ class _YtPrefsSection extends ConsumerWidget {
     final prefs = settings.ytPrefs;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-
-    // Patches only the prefs, so a change here cannot clobber an unrelated
-    // setting like the download folder.
-    void patch(YtPrefs next) => onPatch(settings.copyWith(ytPrefs: next));
+    void patch(YtPrefs next) => _patchPrefs(settings, onPatch, next);
 
     // Postprocessing needs ffprobe, not just ffmpeg — the same gate the format
     // sheet's embed toggles use. Resolved asynchronously so the section paints
@@ -1176,325 +1328,227 @@ class _YtPrefsSection extends ConsumerWidget {
         // Shown when postprocessing is configured but the capability is
         // missing, since the flags are then silently dropped.
         final unavailableButOn = prefs.needsPostprocessing && !canPost;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'yt-dlp capabilities',
-                style: theme.textTheme.labelMedium,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Common flags as controls. Everything here is also available as a '
-              'raw flag below, but these validate their own values.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text('Speed', style: theme.textTheme.labelSmall),
-            _intSlider(
-              context,
-              label: 'Parallel fragments',
-              value: prefs.concurrentFragments,
-              min: 1,
-              max: YtPrefs.maxConcurrentFragments,
-              // A low cap is the point: 16 fragments on a phone can fail the
-              // download outright for a few percent of throughput.
-              helper: prefs.concurrentFragments == 1
-                  ? "yt-dlp's default. Raise it to download DASH/HLS "
-                        'fragments in parallel.'
-                  : 'Higher can fail on a memory-constrained device.',
-              onChanged: (v) => patch(prefs.copyWith(concurrentFragments: v)),
-            ),
-            _textField(
-              theme: theme,
-              label: 'Rate limit',
-              hint: 'e.g. 2M, 500K — empty for no limit',
-              value: prefs.limitRate,
-              onChanged: (v) => patch(prefs.copyWith(limitRate: v.trim())),
-            ),
-            _intField(
-              theme: theme,
-              label: 'Delay between requests (s)',
-              value: prefs.sleepRequests,
-              onChanged: (v) => patch(prefs.copyWith(sleepRequests: v)),
-            ),
-            const Divider(height: 28),
-            Text('Post-processing', style: theme.textTheme.labelSmall),
-            _postprocessingNote(theme, canPost),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Convert to audio only'),
-              subtitle: Text(
-                !canPost
-                    ? 'Needs ffmpeg and ffprobe (not available)'
-                    : 'Re-encodes the audio into another container',
-              ),
-              value: prefs.extractAudio,
-              onChanged: canPost
-                  ? (v) => patch(prefs.copyWith(extractAudio: v))
-                  : null,
-            ),
-            if (prefs.extractAudio)
-              _choiceChips(
-                context,
-                label: 'Audio format',
-                options: YtPrefs.audioFormats,
-                selected: prefs.audioFormat,
-                onChanged: (v) => patch(prefs.copyWith(audioFormat: v)),
-              ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Remux (no re-encode)'),
-              subtitle: Text(
-                !canPost
-                    ? 'Needs ffmpeg and ffprobe (not available)'
-                    : 'Change container without re-encoding — quality is kept',
-              ),
-              value: prefs.remuxVideo.isNotEmpty,
-              onChanged: canPost
-                  ? (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : ''))
-                  : null,
-            ),
-            if (prefs.remuxVideo.isNotEmpty)
-              _choiceChips(
-                context,
-                label: 'Remux target',
-                options: YtPrefs.remuxFormats,
-                selected: prefs.remuxVideo,
-                onChanged: (v) => patch(prefs.copyWith(remuxVideo: v)),
-              ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Embed metadata'),
-              subtitle: Text(
-                !canPost
-                    ? 'Needs ffmpeg and ffprobe (not available)'
-                    : 'Title, artist and date in the file',
-              ),
-              value: prefs.embedMetadata,
-              onChanged: canPost
-                  ? (v) => patch(prefs.copyWith(embedMetadata: v))
-                  : null,
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Embed chapters'),
-              value: prefs.embedChapters,
-              onChanged: canPost
-                  ? (v) => patch(prefs.copyWith(embedChapters: v))
-                  : null,
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Remove sponsor segments'),
-              subtitle: Text(
-                !canPost
-                    ? 'Needs ffmpeg and ffprobe (not available)'
-                    : 'Cuts out SponsorBlock segments',
-              ),
-              value: prefs.sponsorblockRemove,
-              onChanged: canPost
-                  ? (v) => patch(prefs.copyWith(sponsorblockRemove: v))
-                  : null,
-            ),
-            if (unavailableButOn)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  'Post-processing is switched on but ffprobe is not '
-                  'available, so these flags are left off the command line.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.error,
-                  ),
+        return _Section(
+          title: 'Post-processing',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'ffmpeg rewrites the file after it downloads: converting the '
+                'container, or writing tags into it. Each of these needs ffmpeg '
+                'and ffprobe.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
                 ),
               ),
-            const Divider(height: 28),
-            Text('Network', style: theme.textTheme.labelSmall),
-            _textField(
-              theme: theme,
-              label: 'Proxy',
-              hint: 'socks5://host:port — empty for none',
-              value: prefs.proxy,
-              onChanged: (v) => patch(prefs.copyWith(proxy: v.trim())),
-            ),
-            _textField(
-              theme: theme,
-              label: 'Referer',
-              hint: 'Some hosts require one',
-              value: prefs.referer,
-              onChanged: (v) => patch(prefs.copyWith(referer: v.trim())),
-            ),
-            const Divider(height: 28),
-            Text('Behaviour', style: theme.textTheme.labelSmall),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Record livestreams from the start'),
-              value: prefs.liveFromStart,
-              onChanged: (v) => patch(prefs.copyWith(liveFromStart: v)),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Skip already-downloaded videos'),
-              subtitle: const Text(
-                'Keeps a ledger in the app folder and skips anything in it',
+              if (!canPost)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8, bottom: 4),
+                  child: Text(
+                    'ffprobe is not available here, so these are disabled.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.error,
+                    ),
+                  ),
+                ),
+              if (unavailableButOn)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Post-processing is switched on but ffprobe is not '
+                    'available, so these flags are left off the command line.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.error,
+                    ),
+                  ),
+                ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Convert to audio only'),
+                subtitle: Text(
+                  !canPost
+                      ? 'Needs ffmpeg and ffprobe (not available)'
+                      : 'Re-encodes the audio into another container',
+                ),
+                value: prefs.extractAudio,
+                onChanged: canPost
+                    ? (v) => patch(prefs.copyWith(extractAudio: v))
+                    : null,
               ),
-              value: prefs.downloadArchive,
-              onChanged: (v) => patch(prefs.copyWith(downloadArchive: v)),
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              title: const Text('Write without a .part file'),
-              subtitle: const Text(
-                'No resume after a failure, but the file is visible while '
-                'downloading',
+              if (prefs.extractAudio)
+                _prefChips(
+                  context,
+                  label: 'Audio format',
+                  options: YtPrefs.audioFormats,
+                  selected: prefs.audioFormat,
+                  onChanged: (v) => patch(prefs.copyWith(audioFormat: v)),
+                ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Remux (no re-encode)'),
+                subtitle: Text(
+                  !canPost ? 'Needs ffmpeg and ffprobe (not available)' : 'Change container without re-encoding — quality is kept',
+                ),
+                value: prefs.remuxVideo.isNotEmpty,
+                onChanged: canPost
+                    ? (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : ''))
+                    : null,
               ),
-              value: prefs.noPart,
-              onChanged: (v) => patch(prefs.copyWith(noPart: v)),
-            ),
-          ],
+              if (prefs.remuxVideo.isNotEmpty)
+                _prefChips(
+                  context,
+                  label: 'Remux target',
+                  options: YtPrefs.remuxFormats,
+                  selected: prefs.remuxVideo,
+                  onChanged: (v) => patch(prefs.copyWith(remuxVideo: v)),
+                ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Embed metadata'),
+                subtitle: Text(
+                  !canPost
+                      ? 'Needs ffmpeg and ffprobe (not available)'
+                      : 'Title, artist and date in the file',
+                ),
+                value: prefs.embedMetadata,
+                onChanged: canPost
+                    ? (v) => patch(prefs.copyWith(embedMetadata: v))
+                    : null,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Embed chapters'),
+                value: prefs.embedChapters,
+                onChanged: canPost
+                    ? (v) => patch(prefs.copyWith(embedChapters: v))
+                    : null,
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('Remove sponsor segments'),
+                subtitle: Text(
+                  !canPost
+                      ? 'Needs ffmpeg and ffprobe (not available)'
+                      : 'Cuts out SponsorBlock segments',
+                ),
+                value: prefs.sponsorblockRemove,
+                onChanged: canPost
+                    ? (v) => patch(prefs.copyWith(sponsorblockRemove: v))
+                    : null,
+              ),
+            ],
+          ),
         );
       },
     );
   }
+}
 
-  /// Resolves ffprobe availability without blocking the first frame.
-  static Future<bool> _canPostprocess(WidgetRef ref) async {
-    try {
-      return await ref.read(binaryManagerProvider).hasFfprobe();
-    } catch (_) {
-      return false;
-    }
-  }
+/// How the queue itself behaves: how many run at once, what survives a
+/// restart, and how a download is written to disk.
+class _QueueSection extends ConsumerWidget {
+  const _QueueSection({required this.settings, required this.onPatch});
 
-  Widget _postprocessingNote(ThemeData theme, bool canPost) {
-    if (canPost) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        'These run through ffmpeg and ffprobe, which are not both available '
-        'here, so they are disabled.',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
+  final AppSettings settings;
+  final Future<void> Function(AppSettings) onPatch;
 
-  Widget _intSlider(
-    BuildContext context, {
-    required String label,
-    required int value,
-    required int min,
-    required int max,
-    required String helper,
-    required ValueChanged<int> onChanged,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text('$label: $value', style: Theme.of(context).textTheme.bodyMedium),
-        Slider(
-          value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
-          min: min.toDouble(),
-          max: max.toDouble(),
-          divisions: max - min,
-          label: '$value',
-          onChanged: (v) => onChanged(v.round()),
-        ),
-        Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Text(
-            helper,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _textField({
-    required ThemeData theme,
-    required String label,
-    required String hint,
-    required String value,
-    required ValueChanged<String> onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextFormField(
-        initialValue: value,
-        onChanged: onChanged,
-        decoration: InputDecoration(
-          isDense: true,
-          labelText: label,
-          hintText: hint,
-          border: const OutlineInputBorder(),
-        ),
-      ),
-    );
-  }
-
-  Widget _intField({
-    required ThemeData theme,
-    required String label,
-    required int value,
-    required ValueChanged<int> onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: TextFormField(
-        initialValue: '$value',
-        keyboardType: TextInputType.number,
-        onChanged: (v) => onChanged(int.tryParse(v.trim()) ?? 0),
-        decoration: InputDecoration(
-          isDense: true,
-          labelText: label,
-          border: const OutlineInputBorder(),
-        ),
-      ),
-    );
-  }
-
-  Widget _choiceChips(
-    BuildContext context, {
-    required String label,
-    required List<String> options,
-    required String selected,
-    required ValueChanged<String> onChanged,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10, left: 8),
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final prefs = settings.ytPrefs;
+    return _Section(
+      title: 'Queue',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final o in options)
-                ChoiceChip(
-                  label: Text(o.toUpperCase()),
-                  selected: selected == o,
-                  onSelected: (_) => onChanged(o),
-                ),
+          DropdownButtonFormField<int?>(
+            initialValue: settings.maxConcurrency,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              isDense: true,
+              labelText: 'Simultaneous downloads',
+              helperText:
+                  'Higher values can slow a phone down; 1–2 suits most '
+                  'connections',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              const DropdownMenuItem(
+                value: null,
+                child: Text('Automatic (1 on mobile, 2 on desktop)'),
+              ),
+              for (
+                var n = AppSettings.concurrencyMin;
+                n <= AppSettings.concurrencyMax;
+                n++
+              )
+                DropdownMenuItem(value: n, child: Text('$n')),
             ],
+            onChanged: (v) =>
+                onPatch(settings.copyWith(maxConcurrencySetter: () => v)),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<int>(
+            initialValue: settings.maxQueueSize,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              isDense: true,
+              labelText: 'Remembered queue entries',
+              helperText:
+                  'How many downloads survive an app restart. Raise it for '
+                  'large playlists',
+              border: OutlineInputBorder(),
+            ),
+            items: [
+              for (
+                var n = AppSettings.queueSizeMin;
+                n <= AppSettings.queueSizeMax;
+                n += 10
+              )
+                DropdownMenuItem(value: n, child: Text('$n')),
+            ],
+            onChanged: (v) => onPatch(settings.copyWith(maxQueueSize: v ?? 50)),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Record livestreams from the start'),
+            value: prefs.liveFromStart,
+            onChanged: (v) => _patchPrefs(
+              settings,
+              onPatch,
+              prefs.copyWith(liveFromStart: v),
+            ),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Skip already-downloaded videos'),
+            subtitle: const Text(
+              'Keeps a ledger in the app folder and skips anything in it',
+            ),
+            value: prefs.downloadArchive,
+            onChanged: (v) => _patchPrefs(
+              settings,
+              onPatch,
+              prefs.copyWith(downloadArchive: v),
+            ),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Write without a .part file'),
+            subtitle: const Text(
+              'No resume after a failure, but the file is visible while '
+              'downloading',
+            ),
+            value: prefs.noPart,
+            onChanged: (v) =>
+                _patchPrefs(settings, onPatch, prefs.copyWith(noPart: v)),
           ),
         ],
       ),

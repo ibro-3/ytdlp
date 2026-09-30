@@ -11,7 +11,6 @@ import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/url_validator.dart';
 import '../../services/sharing/share_intent_service.dart';
-import '../../services/ytdlp/arg_tokenizer.dart';
 import '../queue/batch_queue_controller.dart';
 import 'home_controller.dart';
 import 'widgets/format_picker_sheet.dart';
@@ -150,35 +149,18 @@ class _HomePageState extends ConsumerState<HomePage> {
       templates: templates,
     );
     if (result != null && mounted) {
-      _enqueue(
-        video,
-        result.format,
-        result.options,
-        // Empty means "use the Settings default", resolved at spawn time.
-        extraArgs: result.extraArgs ?? '',
-        outputTemplate: result.outputTemplate ?? '',
-      );
+      _enqueue(video, result.format, result.options);
     }
   }
 
-  void _enqueue(
-    VideoInfo video,
-    Format format,
-    DownloadOptions options, {
-    String extraArgs = '',
-    String outputTemplate = '',
-  }) {
+  /// Queues a download with the settings' own arguments and file name.
+  ///
+  /// Neither is overridable per download any more; `DownloadManager` resolves
+  /// both from the stored settings when the task is spawned.
+  void _enqueue(VideoInfo video, Format format, DownloadOptions options) {
     ref
         .read(downloadManagerProvider)
-        .enqueue(
-          video: video,
-          format: format,
-          options: options,
-          extraArgs: extraArgs.trim().isEmpty
-              ? const []
-              : tokenizeArgs(extraArgs),
-          outputTemplate: outputTemplate.trim(),
-        );
+        .enqueue(video: video, format: format, options: options);
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(
