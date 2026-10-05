@@ -69,6 +69,25 @@ void main() {
       expect(YtPrefs.fromMap({'sleepRequests': 5}).sleepRequests, 5);
     });
 
+    test('clamps the retry counts', () {
+      // A retry count is a small non-negative integer; a corrupt or
+      // hand-edited value must not turn into thousands of retries.
+      expect(YtPrefs.fromMap({'retries': -1}).retries, YtPrefs.minRetries);
+      expect(YtPrefs.fromMap({'retries': 999}).retries, YtPrefs.maxRetries);
+      expect(YtPrefs.fromMap({'retries': 3}).retries, 3);
+      expect(
+        YtPrefs.fromMap({'fragmentRetries': -5}).fragmentRetries,
+        YtPrefs.minRetries,
+      );
+      expect(
+        YtPrefs.fromMap({'fragmentRetries': 999}).fragmentRetries,
+        YtPrefs.maxRetries,
+      );
+      // A missing field falls back to yt-dlp's own default.
+      expect(YtPrefs.fromMap(null).retries, 10);
+      expect(YtPrefs.fromMap(null).fragmentRetries, 10);
+    });
+
     test('tolerates a non-map', () {
       // A corrupt settings box must not stop the app from starting.
       expect(() => YtPrefs.fromMap(const {}), returnsNormally);
@@ -77,6 +96,8 @@ void main() {
     test('copyWith re-clamps', () {
       const p = YtPrefs();
       expect(p.copyWith(concurrentFragments: 50).concurrentFragments, 4);
+      expect(p.copyWith(retries: 999).retries, YtPrefs.maxRetries);
+      expect(p.copyWith(fragmentRetries: -1).fragmentRetries, 0);
     });
   });
 
@@ -162,6 +183,8 @@ void main() {
         downloadArchive: true,
         noPart: true,
         sleepRequests: 3,
+        retries: 4,
+        fragmentRetries: 7,
       );
       expect(YtPrefs.fromMap(p.toMap()), p);
     });

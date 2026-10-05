@@ -82,6 +82,17 @@ void main() {
       expect(s.outputTemplate, isEmpty);
     });
 
+    test('wifiOnly defaults off and round-trips', () {
+      // Off by default: an untouched install must not start holding
+      // downloads hostage to a setting the user never chose.
+      expect(const AppSettings().wifiOnly, isFalse);
+      const s = AppSettings(wifiOnly: true);
+      expect(AppSettings.fromMap(s.toMap()).wifiOnly, isTrue);
+      expect(const AppSettings().copyWith(wifiOnly: true).wifiOnly, isTrue);
+      // An older stored map has no key at all.
+      expect(AppSettings.fromMap({'themeMode': 'dark'}).wifiOnly, isFalse);
+    });
+
     test('ytPrefs default to the neutral configuration', () {
       expect(const AppSettings().ytPrefs, const YtPrefs());
       expect(const AppSettings().ytPrefs.concurrentFragments, 1);

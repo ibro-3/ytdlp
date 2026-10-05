@@ -118,6 +118,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           }
           final view = buildLibraryView(
             records: all,
+            query: _query,
             filter: _filter,
             sort: _sort,
             grouping: _grouping,

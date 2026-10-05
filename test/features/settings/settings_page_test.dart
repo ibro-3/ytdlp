@@ -97,6 +97,14 @@ void main() {
       await pump(tester);
       expect(find.text('Network'), findsOneWidget);
       expect(find.text('Post-processing'), findsOneWidget);
+      // The Queue section sits below the fold now that the network
+      // controls grew, so scroll to it before asserting it exists.
+      await tester.dragUntilVisible(
+        find.text('Queue'),
+        find.byType(Scrollable).first,
+        const Offset(0, -260),
+      );
+      await settle(tester);
       expect(find.text('Queue'), findsOneWidget);
     });
 
@@ -111,11 +119,153 @@ void main() {
       );
     });
 
+    testWidgets('retry and data-use controls are top-level too', (
+      tester,
+    ) async {
+      await pump(tester);
+      // Retry policy is a first-class control, not something to
+      // hand-type into the raw-arguments field.
+      expect(find.text('Request retries'), findsOneWidget);
+      expect(find.text('Fragment retries'), findsOneWidget);
+      // So is the data-use rule.
+      expect(find.text('Unmetered connections only'), findsOneWidget);
+    });
+
     testWidgets('the queue controls sit together', (tester) async {
       await pump(tester);
+      await tester.dragUntilVisible(
+        find.text('Simultaneous downloads'),
+        find.byType(Scrollable).first,
+        const Offset(0, -260),
+      );
+      await settle(tester);
       expect(find.text('Simultaneous downloads'), findsOneWidget);
       expect(find.text('Remembered queue entries'), findsOneWidget);
       expect(find.text('Write without a .part file'), findsOneWidget);
+    });
+  });
+
+  group('browser cookies', () {
+    // Every `service.update` below is wrapped in `tester.runAsync`. A test body
+    // runs in a fake-async zone where the clock only advances while frames are
+    // pumped, so a Hive write started there never completes and the test hangs
+    // until the framework's timeout rather than failing. `runAsync` hands the
+    // write to the real event loop.
+
+    /// Scrolls the page down to the browser-cookie section.
+    Future<void> reveal(WidgetTester tester) async {
+      await tester.dragUntilVisible(
+        find.text('Browser cookies (desktop)'),
+        find.byType(Scrollable).first,
+        const Offset(0, -260),
+      );
+      await settle(tester);
+    }
+
+    testWidgets('a desktop build offers the browser as a cookie source', (
+      tester,
+    ) async {
+      // This suite runs on the host, so the desktop gate is the one in force.
+      // If the gate ever inverts, the control disappears and the reason
+      // disappears with it — which is the failure the pure-function tests in
+      // cookie_browser_test.dart cannot catch on their own.
+      await pump(tester);
+      await reveal(tester);
+
+      expect(find.text('Browser cookies (desktop)'), findsOneWidget);
+      expect(find.byType(DropdownButtonFormField<String>), findsWidgets);
+    });
+
+    testWidgets('with no browser chosen there is no profile picker', (
+      tester,
+    ) async {
+      // Showing one before a browser is chosen would offer a list of profile
+      // names that belong to no particular browser.
+      await pump(tester);
+      await reveal(tester);
+
+      expect(find.text('Profile folder'), findsOneWidget);
+      expect(find.text('Profile'), findsNothing);
+      // The row is disabled, so it has to say why rather than just going grey.
+      expect(find.text('Choose a browser first'), findsOneWidget);
+    });
+
+    testWidgets('the cookie tile says a set-aside jar is not being used', (
+      tester,
+    ) async {
+      await tester.runAsync(
+        () => service.update(
+          const AppSettings(
+            cookiesPath: '/x/cookies.txt',
+            cookieBrowser: 'chrome',
+          ),
+        ),
+      );
+      await pump(tester);
+      await reveal(tester);
+
+      // "On — every site in the file is sent" would be a straight lie here.
+      expect(
+        find.text('Set aside — the browser is the source now'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('says what happens to the withheld sites', (tester) async {
+      await tester.runAsync(
+        () => service.update(
+          const AppSettings(
+            cookiesPath: '/x/cookies.txt',
+            cookieBrowser: 'chrome',
+            cookieDisabledDomains: ['analytics.example', 'ads.example'],
+          ),
+        ),
+      );
+      await pump(tester);
+      await reveal(tester);
+
+      // Without this, the per-site page's switches look like they still
+      // govern what is sent.
+      expect(
+        find.textContaining('2 sites you switched off are still stored'),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('those switches have no effect'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('does not warn about withheld sites when none are stored', (
+      tester,
+    ) async {
+      await tester.runAsync(
+        () => service.update(
+          const AppSettings(
+            cookiesPath: '/x/cookies.txt',
+            cookieBrowser: 'chrome',
+          ),
+        ),
+      );
+      await pump(tester);
+      await reveal(tester);
+
+      expect(
+        find.textContaining('switched off are still stored'),
+        findsNothing,
+      );
+    });
+
+    testWidgets('warns that Safari cannot be read off macOS', (tester) async {
+      await tester.runAsync(
+        () => service.update(const AppSettings(cookieBrowser: 'safari')),
+      );
+      await pump(tester);
+      await reveal(tester);
+
+      // True on the Linux host running this suite, and the reason it is spelled
+      // out rather than left for a failed download to explain.
+      expect(find.textContaining('can only be read on macOS'), findsOneWidget);
     });
   });
 

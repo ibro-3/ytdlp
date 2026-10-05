@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/core/models/playlist_paging.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
 /// Deciding "playlist vs video" from the first-stage `-J --no-playlist` run is
@@ -108,6 +109,60 @@ void main() {
         detect(stdout: '{"entries": [{"id": "a"}]}', exitCode: 1),
         isFalse,
       );
+    });
+  });
+
+  // Detecting the collection is only half the job: once it is detected, the
+  // second stage has to *ask* for it in a way that can be resumed, or a channel
+  // with more videos than the stdout capture can hold still fails outright.
+  group('listing one slice', () {
+    const url = 'https://www.youtube.com/@somecreator/videos';
+    const slice = PlaylistPaging.sliceSize;
+
+    List<String> args({required int start}) =>
+        YtdlpService.buildPlaylistListArgs(url: url, start: start);
+
+    String flag(List<String> a, String name) => a[a.indexOf(name) + 1];
+
+    test('the first slice starts at the beginning', () {
+      // An explicit --playlist-start 1 is redundant, and some extractors treat
+      // an explicit start differently from its absence — so it is left out.
+      expect(args(start: 1), isNot(contains('--playlist-start')));
+    });
+
+    test('a later slice resumes where it was asked to', () {
+      final a = args(start: 201);
+      expect(flag(a, '--playlist-start'), '201');
+    });
+
+    test('every slice is capped at one slice of entries', () {
+      // The cap is what keeps a huge channel inside the bounded capture, so it
+      // has to be exactly one slice wide and move with the start index.
+      expect(flag(args(start: 1), '--playlist-end'), '$slice');
+      expect(flag(args(start: 201), '--playlist-end'), '${201 + slice - 1}');
+      expect(
+        flag(args(start: 100_001), '--playlist-end'),
+        '${100_000 + slice}',
+      );
+    });
+
+    test('the listing is flat, so no per-entry stream data is pulled', () {
+      expect(args(start: 1), contains('--flat-playlist'));
+    });
+
+    test('the url is the last argument', () {
+      // yt-dlp treats everything after the URL as another URL.
+      expect(args(start: 1).last, url);
+      expect(args(start: 201).last, url);
+    });
+
+    test('the paging cursor feeds straight back into the next request', () {
+      // The end-to-end contract: what a slice measured is what the next one
+      // resumes from, so a second call cannot re-request the first slice.
+      const firstSlice = PlaylistPaging(fetched: slice);
+      final second = args(start: firstSlice.nextStart);
+      expect(flag(second, '--playlist-start'), '${slice + 1}');
+      expect(flag(second, '--playlist-end'), '${2 * slice}');
     });
   });
 }

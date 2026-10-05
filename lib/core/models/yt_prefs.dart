@@ -26,6 +26,8 @@ class YtPrefs {
     this.downloadArchive = false,
     this.noPart = false,
     this.sleepRequests = 0,
+    this.retries = 10,
+    this.fragmentRetries = 10,
   });
 
   /// Parallel fragment downloads for DASH/HLS (`-N`).
@@ -78,9 +80,18 @@ class YtPrefs {
   /// Seconds to wait between requests (`--sleep-requests`). 0 = no delay.
   final int sleepRequests;
 
+  /// Retries for HTTP failures (`--retries`). The default of 10 is yt-dlp's.
+  final int retries;
+
+  /// Retries for individual DASH/HLS fragments (`--fragment-retries`).
+  final int fragmentRetries;
+
   /// Fragment parallelism bounds. Above 4 the gain is small and the memory
   /// cost is not, so the picker stops there.
   static const int maxConcurrentFragments = 4;
+
+  static const int minRetries = 0;
+  static const int maxRetries = 20;
 
   /// Containers yt-dlp can extract audio into without extra encoders.
   static const List<String> audioFormats = [
@@ -145,6 +156,8 @@ class YtPrefs {
     'downloadArchive': downloadArchive,
     'noPart': noPart,
     'sleepRequests': sleepRequests,
+    'retries': retries,
+    'fragmentRetries': fragmentRetries,
   };
 
   factory YtPrefs.fromMap(Map<String, dynamic>? m) {
@@ -166,6 +179,14 @@ class YtPrefs {
       downloadArchive: m['downloadArchive'] as bool? ?? false,
       noPart: m['noPart'] as bool? ?? false,
       sleepRequests: ((m['sleepRequests'] as num?)?.toInt() ?? 0).clamp(0, 60),
+      retries: ((m['retries'] as num?)?.toInt() ?? 10).clamp(
+        minRetries,
+        maxRetries,
+      ),
+      fragmentRetries: ((m['fragmentRetries'] as num?)?.toInt() ?? 10).clamp(
+        minRetries,
+        maxRetries,
+      ),
     );
   }
 
@@ -202,6 +223,8 @@ class YtPrefs {
     bool? downloadArchive,
     bool? noPart,
     int? sleepRequests,
+    int? retries,
+    int? fragmentRetries,
   }) {
     return YtPrefs(
       concurrentFragments: _clampFragments(
@@ -220,6 +243,11 @@ class YtPrefs {
       downloadArchive: downloadArchive ?? this.downloadArchive,
       noPart: noPart ?? this.noPart,
       sleepRequests: sleepRequests ?? this.sleepRequests,
+      retries: (retries ?? this.retries).clamp(minRetries, maxRetries),
+      fragmentRetries: (fragmentRetries ?? this.fragmentRetries).clamp(
+        minRetries,
+        maxRetries,
+      ),
     );
   }
 
@@ -239,7 +267,9 @@ class YtPrefs {
       other.liveFromStart == liveFromStart &&
       other.downloadArchive == downloadArchive &&
       other.noPart == noPart &&
-      other.sleepRequests == sleepRequests;
+      other.sleepRequests == sleepRequests &&
+      other.retries == retries &&
+      other.fragmentRetries == fragmentRetries;
 
   @override
   int get hashCode => Object.hashAll([
@@ -257,5 +287,7 @@ class YtPrefs {
     downloadArchive,
     noPart,
     sleepRequests,
+    retries,
+    fragmentRetries,
   ]);
 }

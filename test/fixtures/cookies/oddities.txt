@@ -1,0 +1,12 @@
+# Netscape HTTP Cookie File
+
+# A jar with a value that itself contains a tab, two truncated
+# lines, a session cookie with no expiry, and a secure cookie.
+
+.example.com	TRUE	/	FALSE	1735689600	split_value	part1	part2
+.example.com	TRUE	/	FALSE	1735689600
+
+.example.com	FALSE	/api	FALSE	0	session_id	not persisted
+
+not	enough	fields
+.example.net	TRUE	/	TRUE	1735689600	secure_cookie	s3cret

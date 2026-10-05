@@ -1,0 +1,59 @@
+version: 2
+
+updates:
+  # Flutter packages. Several are pinned to a major on purpose because a major
+  # bump is a real migration here, not a routine bump:
+  #   flutter_foreground_task 11.x and receive_sharing_intent 1.9.0 migrated to
+  #   Flutter's built-in Kotlin (requires AGP 9+ / android.builtInKotlin=true)
+  #   flutter_local_notifications 22 tracks the Flutter plugin API
+  # Grouped so a single PR carries a coherent set rather than one PR per package.
+  - package-ecosystem: pub
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - flutter
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      flutter-plugins:
+        patterns:
+          - flutter_foreground_task
+          - receive_sharing_intent
+          - flutter_local_notifications
+          - share_plus
+          - open_filex
+      storage:
+        patterns:
+          - hive
+          - hive_flutter
+          - path_provider
+      tooling:
+        patterns:
+          - flutter_lints
+          - archive
+          - file_picker
+          - path
+          - cached_network_image
+
+  # CI actions. flutter-action is pinned to Flutter 3.47.5 to match pubspec's
+  # `flutter: >=3.47.0`; a major bump here must not land silently alongside an
+  # engine change, so these are left ungrouped and reviewed one at a time.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "build(ci)"

@@ -9,11 +9,25 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 /// macOS get plain system notifications. Every plugin call is wrapped so a
 /// missing/unsupported plugin, revoked permission or platform error can never
 /// interrupt a download.
-class NotificationService {
-  NotificationService();
+bool _hostIsAndroid() => Platform.isAndroid;
 
-  final FlutterLocalNotificationsPlugin _plugin =
-      FlutterLocalNotificationsPlugin();
+bool _hostHasPermissionModel() => Platform.isAndroid || Platform.isMacOS;
+
+class NotificationService {
+  NotificationService({
+    FlutterLocalNotificationsPlugin? plugin,
+    bool Function()? isAndroid,
+    bool Function()? hasPermissionModel,
+  }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin(),
+       _isAndroid = isAndroid ?? _hostIsAndroid,
+       _hasPermissionModel = hasPermissionModel ?? _hostHasPermissionModel;
+
+  final FlutterLocalNotificationsPlugin _plugin;
+
+  /// Platform predicates, injected so the permission flow is testable on any
+  /// host. Production leaves them reading the real platform.
+  final bool Function() _isAndroid;
+  final bool Function() _hasPermissionModel;
 
   bool _ready = false;
   bool _initializing = false;
@@ -39,7 +53,7 @@ class NotificationService {
         ),
       );
       await _plugin.initialize(settings: settings);
-      if (Platform.isAndroid) {
+      if (_isAndroid()) {
         await _plugin
             .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin
@@ -67,9 +81,9 @@ class NotificationService {
   /// authorized before any notification is accepted. Linux and Windows have no
   /// permission model here, so they are treated as always allowed.
   Future<bool> requestPermission() async {
-    if (!Platform.isAndroid && !Platform.isMacOS) return true;
+    if (!_hasPermissionModel()) return true;
     try {
-      if (Platform.isAndroid) {
+      if (_isAndroid()) {
         final android = _plugin
             .resolvePlatformSpecificImplementation<
               AndroidFlutterLocalNotificationsPlugin

@@ -22,6 +22,7 @@ import '../ytdlp/arg_tokenizer.dart';
 import '../ytdlp/progress_parser.dart';
 import '../ytdlp/ytdlp_service.dart';
 import 'download_layout.dart';
+import 'network_probe.dart';
 import 'history_service.dart';
 import 'queue_store.dart';
 
@@ -40,8 +41,10 @@ class DownloadManager extends ChangeNotifier {
     this.notifications,
     this.queueStore,
     this.foregroundService,
+    NetworkProbe? networkProbe,
     int maxConcurrency = 1,
-  }) : _maxConcurrency = maxConcurrency.clamp(1, 8) {
+  }) : _maxConcurrency = maxConcurrency.clamp(1, 8),
+       _networkProbe = networkProbe ?? PluginNetworkProbe() {
     if (queueStore != null) unawaited(_restore());
   }
 
@@ -55,6 +58,7 @@ class DownloadManager extends ChangeNotifier {
 
   final List<DownloadTask> _tasks = [];
   final Map<String, DownloadProcess> _processes = {};
+  final NetworkProbe _networkProbe;
 
   /// Distinguishes tasks created within the same microsecond.
   ///
@@ -441,18 +445,28 @@ class DownloadManager extends ChangeNotifier {
     return n;
   }
 
-  /// Starts as many waiting downloads as the concurrency limit and pause state
-  /// allow, oldest queued first.
+  /// Starts as many waiting downloads as the concurrency limit and
+  /// pause state allow, oldest queued first.
   void _pump() {
-    // A run loop calls this from its `finally`, which can happen after dispose.
+    // A run loop calls this from its `finally`, which can happen
+    // after dispose.
     if (_disposed) return;
-    // A paused queue holds everything until resumed; running tasks are
-    // untouched.
+    // A paused queue holds everything until resumed; running tasks
+    // are untouched.
     if (_paused) return;
     if (_runningCount >= _maxConcurrency) return;
     final candidates = _tasks.reversed.where(
       (t) => t.status == DownloadStatus.queued,
     );
+    // Metered-data guard, consulted once per pump rather than per
+    // task: the setting is identical for every candidate, and the
+    // probe answers from the connectivity it last saw. Consulted per
+    // pump rather than polled on a timer, so nothing runs between a
+    // network change and the next natural pump.
+    if (!_networkProbe.mayStart(wifiOnly: _wifiOnlyFromSettings())) {
+      notifyListeners();
+      return;
+    }
     for (final task in candidates) {
       if (_runningCount >= _maxConcurrency) break;
       task.status = DownloadStatus.downloading;
@@ -464,6 +478,20 @@ class DownloadManager extends ChangeNotifier {
       notifyListeners();
       unawaited(_run(task));
     }
+  }
+
+  /// Re-examines the queue, e.g. because the network just changed.
+  ///
+  /// The metered-data gate is consulted on every pump, but a pump only
+  /// happens when work is queued, finishes or is resumed — so a queue
+  /// held back by the "unmetered only" rule stays held until something
+  /// calls this. The connectivity stream does; a test can too.
+  void onConnectivityChanged() {
+    unawaited(
+      // Refresh first so the gate answers on the new connectivity,
+      // not the one the previous pump saw.
+      _networkProbe.refresh().then((_) => _pump()),
+    );
   }
 
   /// Currently active downloads (started but not yet finished/canceled).
@@ -503,6 +531,8 @@ class DownloadManager extends ChangeNotifier {
           outputDir: staging.path,
           template: _stagingTemplate(task),
           cookiesPath: settings?.settings.cookiesPath,
+          cookieBrowser: settings?.settings.cookieBrowser,
+          cookieBrowserProfile: settings?.settings.cookieBrowserProfile ?? '',
           extraArgs: _extraArgsFor(task),
           prefs: task.prefs,
           youtube: task.youtube,
@@ -994,6 +1024,12 @@ class DownloadManager extends ChangeNotifier {
   }
 
   bool get _notificationsOn => settings?.settings.notificationsEnabled ?? true;
+
+  /// Whether the user asked for downloads to start only on an
+  /// unmetered network. Read per pump so a Settings change takes
+  /// effect without rebuilding the provider (which would discard the
+  /// live queue).
+  bool _wifiOnlyFromSettings() => settings?.settings.wifiOnly ?? false;
 
   /// Root folder for downloads: the user-configured one when set, otherwise
   /// the platform default.

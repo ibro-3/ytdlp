@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive/hive.dart';
 import 'package:path_provider/path_provider.dart';
@@ -10,6 +11,7 @@ import '../services/downloads/queue_store.dart';
 import '../services/foreground/foreground_service.dart';
 import '../services/notifications/notification_service.dart';
 import '../services/diagnostics/diagnostics_service.dart';
+import '../services/cookies/cookie_jar_service.dart';
 import '../services/settings/backup_service.dart';
 import '../services/settings/settings_service.dart';
 import '../services/settings/template_store.dart';
@@ -113,6 +115,22 @@ class SettingsController extends Notifier<AppSettings> {
 final settingsControllerProvider =
     NotifierProvider<SettingsController, AppSettings>(SettingsController.new);
 
+/// Where the two cookie-jar files live.
+///
+/// Resolved through an injected function rather than `path_provider` directly so
+/// tests can point it at a temp directory instead of the real one.
+final cookieSupportDirProvider = Provider<Future<String> Function()>((ref) {
+  return () => getApplicationSupportDirectory().then((d) => d.path);
+});
+
+/// Asynchronous because the support directory needs `path_provider`, which
+/// cannot answer synchronously — a provider that returned a placeholder path
+/// would silently write the jar to the wrong place.
+final cookieJarServiceProvider = FutureProvider<CookieJarService>((ref) async {
+  final resolve = ref.watch(cookieSupportDirProvider);
+  return CookieJarService(supportDir: await resolve());
+});
+
 final notificationServiceProvider = Provider<NotificationService>(
   (ref) => NotificationService(),
 );
@@ -142,6 +160,19 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
       isMobile: Platform.isAndroid || Platform.isIOS,
     );
   });
-  ref.onDispose(manager.dispose);
+  // A network change re-examines the queue: a queue held back by the
+  // "unmetered only" rule must start as soon as the connection allows,
+  // without waiting for the user to enqueue or resume something.
+  final connectivity = Connectivity();
+  final sub = connectivity.onConnectivityChanged.listen((_) {
+    manager.onConnectivityChanged();
+  });
+  // Prime the connectivity cache now, so the gate answers on the very
+  // first pump instead of holding everything as "unknown".
+  manager.onConnectivityChanged();
+  ref.onDispose(() {
+    sub.cancel();
+    manager.dispose();
+  });
   return manager;
 });

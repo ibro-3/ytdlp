@@ -5,10 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive/hive.dart';
+import 'package:ytdlp/core/models/collection_kind.dart';
 import 'package:ytdlp/core/models/download_options.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/download_task.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
+import 'package:ytdlp/core/models/playlist_paging.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/core/providers.dart';
 import 'package:ytdlp/features/playlist/playlist_page.dart';
@@ -40,6 +42,39 @@ PlaylistInfo _playlist({
   ],
 );
 
+/// A channel big enough to have arrived only in part.
+///
+/// [listed] is how many entries the payload carries, and [start] is the
+/// 1-based index of the first of them — so a slice fetched from index 4 yields
+/// `v3` and `v4`, exactly as a real resumed request would. That coupling is
+/// what makes the merge assertions meaningful rather than arithmetic on
+/// arbitrary numbers.
+PlaylistInfo _channel({
+  int listed = PlaylistPaging.sliceSize,
+  int? totalCount,
+  int start = 1,
+}) => PlaylistInfo(
+  id: 'UC1',
+  title: 'Deep Archive',
+  webUrl: 'https://www.youtube.com/@deeparchive/videos',
+  kind: CollectionKind.channel,
+  uploader: 'Deep Archive',
+  entries: [
+    for (var i = 0; i < listed; i++)
+      VideoInfo(
+        id: 'v${start - 1 + i}',
+        title: 'Clip ${start - 1 + i}',
+        webUrl: 'https://www.youtube.com/watch?v=v${start - 1 + i}',
+        duration: 60,
+      ),
+  ],
+  paging: PlaylistPaging(
+    startedAt: start,
+    fetched: listed,
+    totalCount: totalCount,
+  ),
+);
+
 /// Records enqueues without spawning a process.
 class _RecordingManager extends DownloadManager {
   _RecordingManager(HistoryService history, Directory dir)
@@ -69,8 +104,47 @@ class _RecordingManager extends DownloadManager {
   }
 }
 
+/// Serves "load more" slices from [slices] without spawning a process.
+///
+/// [slices] is consumed in order, so a test controls exactly what each resumed
+/// request returns — including a duplicate or a short slice, which is what
+/// makes the end-detection and de-duplication paths reachable.
+class _SlicedService extends YtdlpService {
+  _SlicedService() : super(BinaryManager());
+
+  /// One entry per slice request; the last is reused once they run out so a
+  /// stray second tap cannot fail the test for an unrelated reason.
+  final List<PlaylistInfo> slices = [];
+
+  /// Every `--playlist-start` the picker asked for, in order.
+  final List<int> sliceStarts = [];
+
+  /// When set, the next slice request throws this instead of returning.
+  String? failure;
+
+  @override
+  Future<PlaylistInfo> fetchPlaylistSlice({
+    required String url,
+    required int start,
+    required bool hasFfmpeg,
+    required bool canPostprocess,
+  }) async {
+    sliceStarts.add(start);
+    final error = failure;
+    if (error != null) {
+      failure = null;
+      throw YtdlpException(error);
+    }
+    if (slices.isEmpty) {
+      throw StateError('no slice queued for start $start');
+    }
+    return slices.length == 1 ? slices.first : slices.removeAt(0);
+  }
+}
+
 void main() {
   late _RecordingManager manager;
+  late _SlicedService service;
   late Directory tempRoot;
   late Box<dynamic> historyBox;
   late Box<dynamic> settingsBox;
@@ -84,6 +158,7 @@ void main() {
     settingsBox = await Hive.openBox<dynamic>('playlist-test-settings');
     final history = HistoryService(historyBox);
     manager = _RecordingManager(history, tempRoot);
+    service = _SlicedService();
   });
 
   tearDown(() async {
@@ -98,8 +173,9 @@ void main() {
     WidgetTester tester,
     PlaylistInfo playlist, {
     AppSettings settings = const AppSettings(),
+    double height = 1400,
   }) async {
-    tester.view.physicalSize = const Size(500, 1400);
+    tester.view.physicalSize = Size(500, height);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     // Written to the box rather than overridden in the provider, so the page
@@ -128,6 +204,7 @@ void main() {
         overrides: [
           downloadManagerProvider.overrideWithValue(manager),
           settingsBoxProvider.overrideWithValue(settingsBox),
+          ytdlpServiceProvider.overrideWithValue(service),
         ],
         child: MaterialApp.router(routerConfig: router),
       ),
@@ -323,6 +400,198 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(manager.options.single.embedThumb, isFalse);
+    });
+  });
+
+  group('a channel too large to list at once', () {
+    // Tall enough that every row of a five-entry channel is built. A ListView
+    // only builds what is on screen, so asserting on a row that has not been
+    // scrolled to would pass for the wrong reason — or fail for a reason that
+    // has nothing to do with the code under test.
+    const tall = 2200.0;
+
+    testWidgets('says how much of it is actually shown', (tester) async {
+      await pump(tester, _channel(listed: 3, totalCount: 5000), height: tall);
+
+      // A 3-row list presented as "5000 videos" would be a lie the user cannot
+      // detect, and a 3-row list presented as "3 videos" hides 4,997 videos
+      // they cannot reach.
+      expect(find.textContaining('3 videos'), findsOneWidget);
+      expect(find.text('Showing the first 3 of 5000'), findsOneWidget);
+    });
+
+    testWidgets('names the collection as a channel, not a playlist', (
+      tester,
+    ) async {
+      await pump(tester, _channel(listed: 3, totalCount: 5000), height: tall);
+
+      expect(find.widgetWithText(AppBar, 'Channel'), findsOneWidget);
+      expect(find.widgetWithText(AppBar, 'Playlist'), findsNothing);
+    });
+
+    testWidgets('offers to load the rest', (tester) async {
+      await pump(tester, _channel(listed: 3, totalCount: 5000), height: tall);
+
+      expect(find.widgetWithText(OutlinedButton, 'Load more'), findsOneWidget);
+    });
+
+    testWidgets('a complete collection has no load-more row', (tester) async {
+      // A curated playlist fits in one response, so a stray button would imply
+      // there is more when there is not.
+      await pump(tester, _playlist(count: 3), height: tall);
+
+      expect(find.widgetWithText(OutlinedButton, 'Load more'), findsNothing);
+      expect(find.textContaining('Showing the first'), findsNothing);
+    });
+
+    testWidgets('load more appends and keeps earlier entries selected', (
+      tester,
+    ) async {
+      service.slices.add(_channel(listed: 2, start: 4));
+      await pump(tester, _channel(listed: 3, totalCount: 5), height: tall);
+
+      // Deselect one so the append can be seen not to re-select it.
+      await tester.tap(rowTitle('Clip 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('2 selected'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      expect(rowTitle('Clip 3'), findsOneWidget);
+      expect(rowTitle('Clip 4'), findsOneWidget);
+      // 3 loaded, one turned off, plus the 2 just appended.
+      expect(find.text('4 selected'), findsOneWidget);
+      expect(
+        tester.widget<CheckboxListTile>(rowTitle('Clip 1')).value,
+        isFalse,
+        reason: 'appending must not re-select what the user turned off',
+      );
+      // The listing is now the whole collection, so the caveat goes away.
+      expect(find.textContaining('Showing the first'), findsNothing);
+      expect(find.widgetWithText(OutlinedButton, 'Load more'), findsNothing);
+    });
+
+    testWidgets('the next request resumes after the entries already fetched', (
+      tester,
+    ) async {
+      service.slices.add(_channel(listed: 2, start: 4));
+      await pump(tester, _channel(listed: 3, totalCount: 5), height: tall);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      // Resuming from the *listed* count (3) instead of the fetched one would
+      // re-request an entry the user can already see.
+      expect(service.sliceStarts, [4]);
+    });
+
+    testWidgets('an entry repeated by a slice is not listed twice', (
+      tester,
+    ) async {
+      // yt-dlp can re-read a tab across slice boundaries and hand back an entry
+      // that was already listed; showing it twice would queue it twice.
+      service.slices.add(_channel(listed: 2, start: 3));
+      await pump(tester, _channel(listed: 3, totalCount: 5), height: tall);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      expect(rowTitle('Clip 2'), findsOneWidget);
+      expect(rowTitle('Clip 3'), findsOneWidget);
+      // Three listed plus the one genuinely new entry.
+      expect(find.text('4 selected'), findsOneWidget);
+    });
+
+    testWidgets('a failed load keeps the list and offers a retry', (
+      tester,
+    ) async {
+      service.failure = 'The site is not responding.';
+      await pump(tester, _channel(listed: 3, totalCount: 5000), height: tall);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      // The failure belongs to the button that caused it: a snackbar that has
+      // already gone is no help after a long timeout, and the list is still
+      // short, so the button has to stay.
+      expect(find.text('The site is not responding.'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Load more'), findsOneWidget);
+      expect(find.textContaining('3 videos'), findsOneWidget);
+    });
+
+    testWidgets('a retried load succeeds after a failure', (tester) async {
+      service.failure = 'The site is not responding.';
+      service.slices.add(_channel(listed: 2, start: 4));
+      await pump(tester, _channel(listed: 3, totalCount: 5), height: tall);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      // A failed load must not leave a permanent error banner once a later
+      // attempt works, or the collection looks permanently broken.
+      expect(find.text('The site is not responding.'), findsNothing);
+      expect(find.text('5 selected'), findsOneWidget);
+    });
+
+    testWidgets('downloads use the merged listing', (tester) async {
+      service.slices.add(_channel(listed: 2, start: 4));
+      await pump(tester, _channel(listed: 3, totalCount: 5), height: tall);
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Download 5'));
+      await tester.pumpAndSettle();
+
+      expect(manager.selections.single, hasLength(5));
+      // The folder name comes from the collection, so it must not depend on
+      // which page the user happened to download from.
+      expect(manager.playlists.single.title, 'Deep Archive');
+      expect(manager.playlists.single.paging.fetched, 5);
+    });
+
+    testWidgets('the last page ends the offer rather than looping forever', (
+      tester,
+    ) async {
+      // Built through the production parser, because the end-of-collection
+      // signal is read there and nowhere else.
+      PlaylistInfo parseChannel({required int listed, int start = 1}) =>
+          PlaylistInfo.fromYtdlpJson(
+            {
+              'id': 'UC1',
+              'title': 'Deep Archive',
+              'playlist_count': 200,
+              'entries': [
+                for (var i = 0; i < listed; i++)
+                  {
+                    'id': 'v${start - 1 + i}',
+                    'title': 'Clip ${start - 1 + i}',
+                    'url': 'https://www.youtube.com/watch?v=v${start - 1 + i}',
+                  },
+              ],
+            },
+            hasFfmpeg: false,
+            canPostprocess: false,
+            requestedUrl: 'https://www.youtube.com/@deeparchive/videos',
+            paging: PlaylistPaging(startedAt: start),
+          );
+
+      service.slices.add(parseChannel(listed: 0, start: 3));
+      await pump(tester, parseChannel(listed: 2));
+
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Load more'));
+      await tester.pumpAndSettle();
+
+      // The site said 200 entries, so the cursor arithmetic on its own would
+      // keep asking: the cursor sits at 3, nowhere near 200, and a page that
+      // returns nothing cannot move it. A button left in place would fetch the
+      // same missing page for as long as the user cared to press it.
+      expect(find.widgetWithText(OutlinedButton, 'Load more'), findsNothing);
+      expect(find.textContaining('Showing the first'), findsNothing);
+      expect(service.sliceStarts, [3]);
     });
   });
 }

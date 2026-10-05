@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 
 import '../../core/utils/url_validator.dart';
@@ -23,7 +24,35 @@ class ShareIntentService {
 
   static final ShareIntentService instance = ShareIntentService._();
 
+  /// Builds a service driven by an arbitrary payload source instead of the
+  /// platform channel.
+  ///
+  /// Only Android can deliver a URL this way and only Android delivers it in
+  /// production, so the platform check lives in [init] rather than being baked
+  /// into the constructor — otherwise the URL extraction, the cold-start
+  /// buffering and the `reset()` bookkeeping would be untestable off-device.
+  @visibleForTesting
+  factory ShareIntentService.forTesting({
+    required Stream<List<SharedMediaFile>> media,
+    Future<List<SharedMediaFile>> Function()? initialMedia,
+    Future<void> Function()? reset,
+  }) {
+    final service = ShareIntentService._();
+    service._media = media;
+    service._initialMedia = initialMedia;
+    service._reset = reset;
+    return service;
+  }
+
   final StreamController<String> _controller = StreamController.broadcast();
+
+  /// The payload source. Defaults to the plugin's share stream; a test can
+  /// supply its own so the whole extraction path runs without a platform
+  /// channel.
+  Stream<List<SharedMediaFile>>? _media;
+  Future<List<SharedMediaFile>> Function()? _initialMedia;
+  Future<void> Function()? _reset;
+
   StreamSubscription<List<SharedMediaFile>>? _subscription;
 
   /// A link that arrived before anything listened.
@@ -52,11 +81,11 @@ class ShareIntentService {
   /// Starts listening. Safe to call more than once; only Android can deliver
   /// a URL this way, iOS is left to the clipboard flow.
   void init() {
-    if (!Platform.isAndroid) return;
-    _subscription ??= ReceiveSharingIntent.instance.getMediaStream().listen(
-      _handleBatch,
-      onError: (_) {},
-    );
+    // A test-supplied source is not platform-gated: the point of the seam is to
+    // exercise the extraction path on any host.
+    if (_media == null && !Platform.isAndroid) return;
+    _subscription ??= (_media ?? ReceiveSharingIntent.instance.getMediaStream())
+        .listen(_handleBatch, onError: (_) {});
 
     // A cold start from the share sheet does not emit on the stream, so the
     // initial payload has to be read explicitly.
@@ -65,11 +94,13 @@ class ShareIntentService {
 
   Future<void> _consumeInitial() async {
     try {
-      final initial = await ReceiveSharingIntent.instance.getInitialMedia();
+      final initial =
+          await (_initialMedia?.call() ??
+              ReceiveSharingIntent.instance.getInitialMedia());
       if (initial.isEmpty) return;
       _handleBatch(initial);
       // Mark it consumed so a restart does not replay the same link.
-      await ReceiveSharingIntent.instance.reset();
+      await (_reset?.call() ?? ReceiveSharingIntent.instance.reset());
     } catch (_) {
       // A missing or unavailable channel must never stop the app from starting.
     }

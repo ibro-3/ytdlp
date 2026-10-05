@@ -98,6 +98,104 @@ void main() {
       expect(report.text, isNot(contains('/secret/cookies.txt')));
     });
 
+    test('names the sites switched off', () async {
+      // A report saying only "3 sites disabled" leaves a user whose downloads
+      // 403 to bisect it by hand. Host names are safe to include: they are
+      // already in the cookie file, in the URL, and in any yt-dlp error.
+      await settings.update(
+        const AppSettings(
+          cookiesPath: '/secret/cookies.txt',
+          cookieDisabledDomains: ['youtube.com', 'analytics.example'],
+        ),
+      );
+      final report = await build();
+      expect(report.text, contains('## Cookies'));
+      expect(report.text, contains('sites switched off: 2'));
+      expect(report.text, contains('youtube.com, analytics.example'));
+    });
+
+    test('says plainly when no site is switched off', () async {
+      // "none" rather than an empty line, so the reader is not left wondering
+      // whether the section failed to load.
+      await settings.update(
+        const AppSettings(cookiesPath: '/secret/cookies.txt'),
+      );
+      final report = await build();
+      expect(report.text, contains('switched off: none'));
+    });
+
+    test('names the browser and its profile', () async {
+      // Both are safe to include — a fixed word and a directory name, both
+      // already visible in the user's own browser UI — and without them a
+      // report cannot tell "no cookies" from "cookies from the wrong profile".
+      await settings.update(
+        const AppSettings(
+          cookieBrowser: 'chrome',
+          cookieBrowserProfile: 'Profile 2',
+        ),
+      );
+      final report = await build();
+      expect(report.text, contains('browser source: chrome:Profile 2'));
+    });
+
+    test('says plainly when there is no browser source', () async {
+      final report = await build();
+      expect(report.text, contains('browser source: none'));
+    });
+
+    test('never prints the browser profile folder', () async {
+      // Same reason as the jar path: a folder can carry a username.
+      await settings.update(
+        const AppSettings(
+          cookieBrowser: 'firefox',
+          cookieBrowserRootPath: '/home/someone/.mozilla/firefox',
+        ),
+      );
+      final report = await build();
+      expect(report.text, contains('browser source: firefox'));
+      expect(report.text, isNot(contains('/home/someone')));
+      expect(report.text, isNot(contains('.mozilla')));
+    });
+
+    test('flags withheld sites that a browser store makes moot', () async {
+      // The one case where the withheld list is stored but *not* enforced.
+      // Reporting the count without this would read as "1 site is off",
+      // which is false while the browser is the source.
+      await settings.update(
+        const AppSettings(
+          cookiesPath: '/x/cookies.txt',
+          cookieBrowser: 'chrome',
+          cookieDisabledDomains: ['analytics.example'],
+        ),
+      );
+      final report = await build();
+      expect(report.text, contains('withheld sites not in effect: 1'));
+      expect(report.text, contains('the browser store is not filtered'));
+    });
+
+    test(
+      'says no withheld site is moot when no browser is configured',
+      () async {
+        await settings.update(
+          const AppSettings(
+            cookiesPath: '/x/cookies.txt',
+            cookieDisabledDomains: ['analytics.example'],
+          ),
+        );
+        final report = await build();
+        expect(report.text, contains('withheld sites not in effect: none'));
+      },
+    );
+
+    test('an unrecognised browser name does not reach the report', () async {
+      // A hand-edited box could hold anything; a report that echoed it would
+      // be quoting an unvalidated value as if it were a configuration.
+      await settings.update(const AppSettings(cookieBrowser: 'chrom'));
+      final report = await build();
+      expect(report.text, contains('browser source: none'));
+      expect(report.text, isNot(contains('chrom')));
+    });
+
     test('truncates a long free-text setting', () async {
       await settings.update(AppSettings(extraArgs: '--x ${'y' * 300}'));
       final report = await build();

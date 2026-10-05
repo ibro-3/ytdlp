@@ -17,7 +17,13 @@ class AppSettings {
     this.defaultEmbedSubs = false,
     this.defaultWriteSubs = false,
     this.defaultIncludeAutoSubs = false,
+    this.wifiOnly = false,
     this.cookiesPath = '',
+    this.cookieSourcePath = '',
+    this.cookieDisabledDomains = const [],
+    this.cookieBrowser = '',
+    this.cookieBrowserProfile = '',
+    this.cookieBrowserRootPath = '',
     this.downloadRoot = '',
     this.extraArgs = '',
     this.outputTemplate = '',
@@ -53,11 +59,63 @@ class AppSettings {
   final int? defaultAudioTier;
   final bool notificationsEnabled;
 
+  /// When true, new downloads only start on an unmetered network (Wi-Fi or
+  /// Ethernet). A running download is never killed when the network changes —
+  /// the restriction applies to *starting* work, which is the moment the cost
+  /// is incurred. Applies on Android; desktop always has a fixed connection.
+  final bool wifiOnly;
+
   /// Optional Netscape-format `cookies.txt` handed to yt-dlp via `--cookies`.
   /// Some sites (notably YouTube) refuse anonymous requests; a cookie jar
   /// lets the user authenticate without the app storing any credentials.
   /// Empty = no cookies.
+  ///
+  /// This points at the *generated* jar, which is the full import minus the
+  /// sites the user switched off in [cookieDisabledDomains]. yt-dlp is only
+  /// ever given this path.
   final String cookiesPath;
+
+  /// The jar exactly as imported, kept unmodified so a site can be switched
+  /// back on without asking the user to export it from their browser again.
+  ///
+  /// Empty when [cookiesPath] predates per-site management, in which case the
+  /// UI falls back to treating [cookiesPath] itself as the source.
+  final String cookieSourcePath;
+
+  /// Hosts whose cookies are withheld from yt-dlp, as keys from
+  /// `cookieHostKey` (lower-case, no leading dot).
+  ///
+  /// Hosts are not names of credentials — they are already in the file, the
+  /// download log and the diagnostics report — so storing and reporting these is
+  /// safe. What is never stored, logged or reported is a cookie *value*.
+  final List<String> cookieDisabledDomains;
+
+  /// yt-dlp's name for a browser to read cookies from, or empty for none.
+  ///
+  /// Set, this *replaces* [cookiesPath] on the command line rather than adding
+  /// to it — yt-dlp would merge the two and a site switched off in
+  /// [cookieDisabledDomains] would go out anyway. See `cookie_browser.dart` for
+  /// why that guarantee cannot be kept otherwise.
+  ///
+  /// The value is validated against `CookieBrowser` before use; an unrecognised
+  /// one falls back to the file jar rather than being passed through to a
+  /// download that would fail on an argument it does not understand.
+  final String cookieBrowser;
+
+  /// Which profile of [cookieBrowser] to read, by *name* (`Default`, `Profile
+  /// 2`). Empty means the browser's default profile.
+  ///
+  /// A name and never a path: yt-dlp splits the specification on `:`, so a
+  /// Windows path would parse as a different browser entirely.
+  final String cookieBrowserProfile;
+
+  /// The folder the user pointed [CookieProfilePicker] at, so the profile names
+  /// can be listed without asking again.
+  ///
+  /// Read by the app only. Never passed to yt-dlp, and never reported in
+  /// diagnostics: a path can carry a username, exactly like the jar path.
+  /// Surfaced by the cookie settings section's folder picker.
+  final String cookieBrowserRootPath;
 
   /// Root folder for downloads; empty means the platform default
   /// (`downloadsDir` in providers.dart). Videos and audio go into a
@@ -137,7 +195,13 @@ class AppSettings {
     bool? defaultEmbedSubs,
     bool? defaultWriteSubs,
     bool? defaultIncludeAutoSubs,
+    bool? wifiOnly,
     String? cookiesPath,
+    String? cookieSourcePath,
+    List<String>? cookieDisabledDomains,
+    String? cookieBrowser,
+    String? cookieBrowserProfile,
+    String? cookieBrowserRootPath,
     String? downloadRoot,
     String? extraArgs,
     String? outputTemplate,
@@ -161,7 +225,15 @@ class AppSettings {
       defaultWriteSubs: defaultWriteSubs ?? this.defaultWriteSubs,
       defaultIncludeAutoSubs:
           defaultIncludeAutoSubs ?? this.defaultIncludeAutoSubs,
+      wifiOnly: wifiOnly ?? this.wifiOnly,
       cookiesPath: cookiesPath ?? this.cookiesPath,
+      cookieSourcePath: cookieSourcePath ?? this.cookieSourcePath,
+      cookieDisabledDomains:
+          cookieDisabledDomains ?? this.cookieDisabledDomains,
+      cookieBrowser: cookieBrowser ?? this.cookieBrowser,
+      cookieBrowserProfile: cookieBrowserProfile ?? this.cookieBrowserProfile,
+      cookieBrowserRootPath:
+          cookieBrowserRootPath ?? this.cookieBrowserRootPath,
       downloadRoot: downloadRoot ?? this.downloadRoot,
       extraArgs: extraArgs ?? this.extraArgs,
       outputTemplate: outputTemplate ?? this.outputTemplate,
@@ -192,7 +264,13 @@ class AppSettings {
     'defaultEmbedSubs': defaultEmbedSubs,
     'defaultWriteSubs': defaultWriteSubs,
     'defaultIncludeAutoSubs': defaultIncludeAutoSubs,
+    'wifiOnly': wifiOnly,
     'cookiesPath': cookiesPath,
+    'cookieSourcePath': cookieSourcePath,
+    'cookieDisabledDomains': cookieDisabledDomains,
+    'cookieBrowser': cookieBrowser,
+    'cookieBrowserProfile': cookieBrowserProfile,
+    'cookieBrowserRootPath': cookieBrowserRootPath,
     'downloadRoot': downloadRoot,
     'extraArgs': extraArgs,
     'outputTemplate': outputTemplate,
@@ -217,7 +295,19 @@ class AppSettings {
       defaultEmbedSubs: (m['defaultEmbedSubs'] as bool?) ?? false,
       defaultWriteSubs: (m['defaultWriteSubs'] as bool?) ?? false,
       defaultIncludeAutoSubs: (m['defaultIncludeAutoSubs'] as bool?) ?? false,
+      wifiOnly: (m['wifiOnly'] as bool?) ?? false,
       cookiesPath: (m['cookiesPath'] as String?) ?? '',
+      cookieSourcePath: (m['cookieSourcePath'] as String?) ?? '',
+      // Read defensively: a hand-edited or downgraded box must not be able to
+      // store a non-string, and the sort makes the stored form deterministic so
+      // an unchanged jar does not rewrite the key on every save.
+      cookieDisabledDomains: [
+        for (final d in (m['cookieDisabledDomains'] as List?) ?? const [])
+          if (d is String && d.isNotEmpty) d,
+      ]..sort(),
+      cookieBrowser: (m['cookieBrowser'] as String?) ?? '',
+      cookieBrowserProfile: (m['cookieBrowserProfile'] as String?) ?? '',
+      cookieBrowserRootPath: (m['cookieBrowserRootPath'] as String?) ?? '',
       downloadRoot: (m['downloadRoot'] as String?) ?? '',
       extraArgs: (m['extraArgs'] as String?) ?? '',
       outputTemplate: (m['outputTemplate'] as String?) ?? '',

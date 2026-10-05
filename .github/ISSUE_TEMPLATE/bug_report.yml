@@ -1,0 +1,87 @@
+name: Bug report
+description: Something in the app does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this.
+
+        **Please paste the output of `Settings → Copy diagnostics` below.** It
+        contains versions, paths and your settings, and never includes cookies
+        or any credential. It usually answers version and configuration questions
+        in one go, so it saves a round trip.
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Output of Settings → Copy diagnostics
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Android
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: exact-error
+    attributes:
+      label: Exact error text
+      description: |
+        Copy it exactly, including any yt-dlp output. The app deliberately shows
+        the real error rather than a generic message, so the exact wording is
+        usually the most useful part of this report.
+      render: text
+
+  - type: textarea
+    id: url
+    attributes:
+      label: URL (if relevant)
+      description: The link you downloaded from, if it is public
+      render: text
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of failure is this?
+      options:
+        - Metadata fetch failed
+        - Download failed or stalled
+        - Wrong format, quality or file name
+        - Subtitles or cover art missing or wrong
+        - Notification or background download problem
+        - Library, history or folder scan
+        - Settings or backup/restore
+        - yt-dlp update
+        - Crash or freeze on launch
+        - Something else
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I read the README section for this area and the behaviour is not documented there
+        - label: This is reproducible, not a one-off
+        - label: I tried again after a restart

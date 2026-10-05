@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/models/cookie_browser.dart';
 import '../settings/settings_service.dart';
 import '../ytdlp/binary_manager.dart';
 
@@ -87,6 +88,43 @@ class DiagnosticsService {
       ..writeln('downloadRoot: ${_redact(settings.downloadRoot)}')
       ..writeln('cookies configured: ${settings.cookiesPath.isNotEmpty}')
       // The path itself can contain a username, so only whether one is set.
+      ..writeln();
+
+    // Domain *names* are safe to report: they are already in the cookie file,
+    // in the download URL and in any yt-dlp error. Cookie *values* are the
+    // credential and never appear here, in a log, or anywhere else.
+    //
+    // Both halves are worth reporting. A user whose downloads 403 has usually
+    // switched a site off and forgotten, and a report saying only "3 sites
+    // disabled" with no names leaves them to bisect it by hand.
+    final disabled = settings.cookieDisabledDomains;
+    final browser = CookieBrowser.byArgument(settings.cookieBrowser);
+    buffer
+      ..writeln('## Cookies')
+      ..writeln('sites switched off: ${disabled.length}')
+      ..writeln(
+        disabled.isEmpty
+            ? 'switched off: none'
+            : 'switched off: ${disabled.join(', ')}',
+      )
+      // The browser and its profile *name* are safe: both are a fixed word and
+      // a directory name, already visible in the user's own browser UI. The
+      // folder they live in is not — that path can carry a username, which is
+      // why `cookieBrowserRootPath` is never printed here either.
+      ..writeln(
+        browser == null
+            ? 'browser source: none'
+            : 'browser source: ${browser.argument}'
+                  '${settings.cookieBrowserProfile.trim().isEmpty ? '' : ':${settings.cookieBrowserProfile.trim()}'}',
+      )
+      // Only worth reporting when it changes what is actually sent: with a
+      // browser on, the withheld sites above are stored but not enforced.
+      ..writeln(
+        browser != null && disabled.isNotEmpty
+            ? 'withheld sites not in effect: '
+                  '${disabled.length} (the browser store is not filtered)'
+            : 'withheld sites not in effect: none',
+      )
       ..writeln();
 
     buffer

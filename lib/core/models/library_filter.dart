@@ -94,12 +94,14 @@ List<DownloadRecord> applyLibraryView({
 /// Applies [filter], [sort] and [grouping] to already-searched [records].
 LibraryView buildLibraryView({
   required List<DownloadRecord> records,
+  String query = '',
   LibraryFilter filter = LibraryFilter.all,
   LibrarySort sort = LibrarySort.newest,
   LibraryGrouping grouping = LibraryGrouping.none,
 }) {
   final filtered = applyLibraryView(
     records: records,
+    query: query,
     filter: filter,
     sort: sort,
   );

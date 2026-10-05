@@ -3,19 +3,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/models/collection_kind.dart';
 import '../../core/models/download_options.dart';
 import '../../core/models/playlist_info.dart';
+import '../../core/models/playlist_paging.dart';
 import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
 import '../../core/utils/formatters.dart';
+import '../../services/ytdlp/ytdlp_service.dart';
 
-/// Lets the user pick which entries of a playlist to download.
+/// Lets the user pick which entries of a playlist or channel to download.
 ///
-/// Reached from the Download tab when a link resolves to a playlist. Each
+/// Reached from the Download tab when a link resolves to a collection. Each
 /// selected entry becomes its own queue task, so the download manager's
 /// per-video progress, retry and cancel all keep working and one unavailable
 /// video cannot fail the rest.
+///
+/// A large collection arrives one [PlaylistPaging.sliceSize] slice at a time,
+/// so this page can grow its own listing: "load more" fetches the next slice
+/// and appends it, keeping the entries already selected selected.
 class PlaylistPage extends ConsumerStatefulWidget {
   const PlaylistPage({super.key, required this.playlist});
 
@@ -27,10 +34,28 @@ class PlaylistPage extends ConsumerStatefulWidget {
 
 class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   /// Ids of the selected entries. Keyed by id rather than index so the set
-  /// survives the list being reordered or filtered.
+  /// survives the list being reordered, filtered, or extended by a new slice.
   late final Set<String> _selected = {
     for (final e in widget.playlist.entries) e.id,
   };
+
+  /// The listing as it stands, which starts as the slice the fetch returned and
+  /// grows as slices are loaded.
+  ///
+  /// Kept in state rather than read from [PlaylistPage.playlist] because the
+  /// incoming playlist is the *first slice* and is immutable; merging into a
+  /// copy here is what keeps the loaded pages from being thrown away on a
+  /// rebuild.
+  late PlaylistInfo _playlist = widget.playlist;
+
+  bool _loadingMore = false;
+
+  /// Why the last "load more" failed, or null when there is nothing to report.
+  ///
+  /// Kept inline rather than as a snackbar because the failure belongs to the
+  /// button that caused it: the user needs to know the list is still short, and
+  /// a snackbar that has already gone is no help after a long network timeout.
+  String? _loadError;
 
   final TextEditingController _search = TextEditingController();
   String _query = '';
@@ -66,9 +91,61 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
     super.dispose();
   }
 
+  /// Fetches the next slice of a collection too large to arrive at once, and
+  /// appends it.
+  ///
+  /// Only entries the source has not been asked for yet are added: a slice
+  /// boundary can land on an entry that was already seen (yt-dlp re-reads the
+  /// tab), and a duplicated row would make the picker show the same video twice
+  /// and queue it twice.
+  Future<void> _loadMore() async {
+    if (_loadingMore) return;
+    setState(() {
+      _loadingMore = true;
+      _loadError = null;
+    });
+    try {
+      final slice = await ref
+          .read(ytdlpServiceProvider)
+          .fetchPlaylistSlice(
+            url: _playlist.webUrl,
+            start: _playlist.paging.nextStart,
+            hasFfmpeg: _playlist.hasFfmpeg,
+            canPostprocess: _playlist.canPostprocess,
+          );
+      if (!mounted) return;
+      final seen = {for (final e in _playlist.entries) e.id};
+      final fresh = slice.entries.where((e) => seen.add(e.id)).toList();
+      setState(() {
+        _playlist = _playlist.copyWith(
+          entries: [..._playlist.entries, ...fresh],
+          // Paging comes from the *merge*, not from the slice: the slice
+          // measures only itself, and the cursor has to account for every
+          // slice fetched so far.
+          paging: _playlist.paging.appended(slice.paging),
+        );
+        // A newly listed video joins selected, because that is the page's rule
+        // for every video it shows — the picker opens with the whole collection
+        // selected. Leaving new entries unselected would mean "download
+        // everything", the one shortcut this page exists to offer, silently
+        // stops covering everything after the first page.
+        _selected.addAll(fresh.map((e) => e.id));
+        _loadingMore = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingMore = false;
+        _loadError = e is YtdlpException
+            ? e.message
+            : 'Could not load more videos ($e)';
+      });
+    }
+  }
+
   /// Entries matching the search box, in playlist order.
   List<VideoInfo> get _visible {
-    final all = widget.playlist.entries;
+    final all = _playlist.entries;
     final q = _query.trim().toLowerCase();
     if (q.isEmpty) return all;
     return all
@@ -112,7 +189,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
 
   /// The selected entries in playlist order, not selection order.
   List<VideoInfo> get _chosen =>
-      widget.playlist.entries.where((e) => _selected.contains(e.id)).toList();
+      _playlist.entries.where((e) => _selected.contains(e.id)).toList();
 
   void _download() {
     final chosen = _chosen;
@@ -131,7 +208,11 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
     ref
         .read(downloadManagerProvider)
         .enqueuePlaylist(
-          playlist: widget.playlist,
+          // The merged listing, not the original slice: id, title and folder
+          // come from the collection's own metadata and are identical either
+          // way, but passing the slice would make the grouping depend on which
+          // page the user happened to download from.
+          playlist: _playlist,
           selected: chosen,
           format: _format,
           options: options,
@@ -143,7 +224,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
         SnackBar(
           content: Text(
             'Queued $count video${count == 1 ? '' : 's'} from '
-            '"${widget.playlist.title}"',
+            '"${_playlist.title}"',
           ),
         ),
       );
@@ -151,13 +232,13 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
 
   @override
   Widget build(BuildContext context) {
-    final playlist = widget.playlist;
+    final playlist = _playlist;
     final visible = _visible;
     final chosenCount = _selected.length;
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Playlist'),
+        title: Text(playlist.kind.label),
         actions: [
           IconButton(
             onPressed: () => _selectAllVisible(selected: !_allVisibleSelected),
@@ -181,8 +262,15 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
                       ? const _NoMatches()
                       : ListView.builder(
                           padding: const EdgeInsets.symmetric(vertical: 4),
-                          itemCount: visible.length,
+                          // One extra row for the "load more" footer. Counting
+                          // it only when there is something to load keeps the
+                          // list exactly as tall as its entries otherwise, so
+                          // the complete-playlist case is unchanged.
+                          itemCount: visible.length + (_buildsLoadMore ? 1 : 0),
                           itemBuilder: (context, i) {
+                            if (i >= visible.length) {
+                              return _buildLoadMore();
+                            }
                             final entry = visible[i];
                             return _EntryRow(
                               entry: entry,
@@ -203,6 +291,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
 
   Widget _buildHeader(PlaylistInfo playlist) {
     final theme = Theme.of(context);
+    final notice = playlist.paging.truncationNotice(playlist.count);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Column(
@@ -217,7 +306,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
           const SizedBox(height: 4),
           Text(
             [
-              '${playlist.count} video${playlist.count == 1 ? '' : 's'}',
+              CollectionKind.contentsLabel(playlist.count),
               if (playlist.uploader != null) playlist.uploader!,
               if (playlist.totalDuration > 0)
                 formatPlaylistDuration(playlist.totalDuration),
@@ -226,6 +315,75 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
+          // The count above counts what is *listed*. When the listing is a
+          // slice, this says so next to it — a 200-video channel shown as
+          // "200 videos" with no caveat reads as the whole channel, and the
+          // user has no way to learn otherwise.
+          if (notice != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.info_outline,
+                    size: 15,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      notice,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Whether the footer row is needed.
+  ///
+  /// Only when there is genuinely another slice to ask for, or when the last
+  /// attempt failed and the user needs the button back.
+  bool get _buildsLoadMore => _playlist.paging.hasMore || _loadError != null;
+
+  Widget _buildLoadMore() {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_loadError != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _loadError!,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
+            ),
+          OutlinedButton.icon(
+            // Disabled while in flight so a double tap cannot fire two
+            // requests for the same slice and duplicate its entries.
+            onPressed: _loadingMore ? null : _loadMore,
+            icon: _loadingMore
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.expand_more),
+            label: Text(_loadingMore ? 'Loading…' : 'Load more'),
+          ),
         ],
       ),
     );
@@ -233,7 +391,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
 
   Widget _buildSearch(int visibleCount) {
     final theme = Theme.of(context);
-    final total = widget.playlist.count;
+    final total = _playlist.count;
     final filtered = visibleCount != total;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),

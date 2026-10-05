@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v1.0.0). Defaults to creating no release.'
+        required: false
+        type: string
+
+jobs:
+  build-apk:
+    name: Android APKs (split per ABI, signed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      # Keystore arrives via secrets, matching the documented release setup.
+      # Without these the gradle file falls back to the debug key, which is
+      # fine for CI smoke builds but not for anything we would ship.
+      - name: Decode the keystore
+        if: ${{ secrets.ANDROID_KEYSTORE_B64 != '' }}
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_B64 }}" | base64 -d > android/app/keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          storeFile=keystore.jks
+          EOF
+
+      - name: Build release APKs per ABI
+        run: flutter build apk --release --split-per-abi
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release-apks
+          path: build/app/outputs/flutter-apk/app-*.apk
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux (release)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
+
+      - name: Build Linux
+        run: flutter build linux --release
+
+      - name: Archive the bundle
+        run: tar -czf linux-release.tar.gz -C build/linux/x64/release/bundle .
+
+      - name: Upload Linux bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          path: linux-release.tar.gz
+          if-no-files-found: error
+
+  build-windows:
+    name: Windows (release)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Build Windows
+        run: flutter build windows --release
+
+      - name: Archive the bundle
+        run: Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath windows-release.zip
+
+      - name: Upload Windows bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: windows-release.zip
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS (unsigned, release)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Enable command line tools
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Archive the app bundle
+        run: tar -czf macos-release.tar.gz -C build/macos/Build/Products/Release .
+
+      - name: Upload macOS bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: macos-release.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-apk, build-linux, build-windows, build-macos]
+    # Only attach artifacts to a real tag pushes; a manual run is a dry build.
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: true
+
+      - name: Create the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: '**/*'
+          # Auto-generate notes from the tag's commit, so the release page stays
+          # truthful about what shipped even when CHANGELOG wasn't updated.
+          generate_release_notes: true

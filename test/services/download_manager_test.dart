@@ -14,6 +14,7 @@ import 'package:ytdlp/core/models/youtube_prefs.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
 import 'package:ytdlp/services/downloads/download_layout.dart';
+import 'package:ytdlp/services/downloads/network_probe.dart';
 import 'package:ytdlp/services/downloads/queue_store.dart';
 import 'package:ytdlp/services/settings/settings_service.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
@@ -79,6 +80,8 @@ class _RecordingArgsEngine extends _FakeEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
@@ -141,6 +144,8 @@ class _FakeEngine implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
@@ -193,6 +198,8 @@ class _NoFileEngine implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
@@ -217,6 +224,8 @@ class _FailingAfterPartEngine implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
@@ -247,6 +256,26 @@ VideoInfo _video(String id) => VideoInfo(
     Format(kind: FormatKind.video, label: 'Best', selector: 'b'),
   ],
 );
+
+/// A [NetworkProbe] whose answer the test controls, so the gate can
+/// be exercised without the platform channel.
+class _FakeProbe implements NetworkProbe {
+  _FakeProbe({required this.allowed});
+
+  bool allowed;
+  int refreshCalls = 0;
+
+  @override
+  bool mayStart({required bool wifiOnly}) {
+    if (!wifiOnly) return true;
+    return allowed;
+  }
+
+  @override
+  Future<void> refresh() async {
+    refreshCalls++;
+  }
+}
 
 void main() {
   late Directory tempRoot;
@@ -1853,6 +1882,120 @@ void main() {
       final loaded = store.load();
       expect(loaded, hasLength(1));
       expect(loaded.single.id, 'ok');
+    });
+  });
+
+  group('DownloadManager metered-data gate', () {
+    Future<({DownloadManager manager, _FakeProbe probe})> gatedManager(
+      DownloadEngine engine, {
+      required bool allowed,
+      bool wifiOnly = true,
+    }) async {
+      final probe = _FakeProbe(allowed: allowed);
+      final settingsBox = await Hive.openBox<dynamic>('settings-gate');
+      final settings = SettingsService(settingsBox)..init();
+      await settings.update(AppSettings(wifiOnly: wifiOnly));
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        settings: settings,
+        networkProbe: probe,
+      );
+      addTearDown(m.dispose);
+      addTearDown(() => settingsBox.close());
+      return (manager: m, probe: probe);
+    }
+
+    test(
+      'holds new downloads when wifiOnly is on and the network is metered',
+      () async {
+        final engine = _FakeEngine();
+        final (:manager, :probe) = await gatedManager(engine, allowed: false);
+        expect(probe.refreshCalls, 0);
+
+        final t = manager.enqueue(
+          video: _video('a'),
+          format: _video('a').videoFormats.first,
+        );
+
+        // The task is queued, not started: the cost of the download is
+        // deferred until an unmetered network is available. Nothing was
+        // burned on the user's mobile data.
+        expect(t.status, DownloadStatus.queued);
+        expect(engine.started, 0);
+      },
+    );
+
+    test('starts held downloads once the network becomes unmetered', () async {
+      final engine = _FakeEngine();
+      final (:manager, :probe) = await gatedManager(engine, allowed: false);
+
+      final t = manager.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+      );
+      expect(t.status, DownloadStatus.queued);
+      expect(engine.started, 0);
+
+      // The network becomes unmetered, the connectivity stream fires,
+      // and the held queue is re-examined.
+      probe.allowed = true;
+      manager.onConnectivityChanged();
+      await waitUntil(() => t.status == DownloadStatus.completed);
+
+      expect(engine.started, 1);
+    });
+
+    test(
+      'a running download is not interrupted when the gate closes',
+      () async {
+        // An exit code that never arrives keeps the task in
+        // `downloading`, so the mid-flight state is observable.
+        final hang = Completer<int>();
+        final engine = _FakeEngine(exitCode: hang.future);
+        final (:manager, :probe) = await gatedManager(engine, allowed: true);
+
+        final t = manager.enqueue(
+          video: _video('a'),
+          format: _video('a').videoFormats.first,
+        );
+        // The gate was open, so it started.
+        await waitUntil(() => engine.started == 1);
+        expect(t.status, DownloadStatus.downloading);
+
+        // The network turning metered mid-download must not matter: the
+        // rule applies to *starting* work, so the bytes already being
+        // paid for keep flowing. The task is never moved back to
+        // `queued` and never cancelled.
+        probe.allowed = false;
+        expect(t.status, DownloadStatus.downloading);
+
+        // Let the process "exit" so the run loop unwinds cleanly.
+        hang.complete(0);
+        await waitUntil(() => t.status == DownloadStatus.completed);
+        expect(engine.started, 1);
+      },
+    );
+
+    test('wifiOnly off ignores the gate entirely', () async {
+      final engine = _FakeEngine();
+      final (:manager, :probe) = await gatedManager(
+        engine,
+        allowed: false,
+        wifiOnly: false,
+      );
+
+      final t = manager.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+      );
+
+      // The user did not ask for unmetered-only, so a metered network
+      // is no reason to hold the download.
+      expect(t.status, DownloadStatus.downloading);
+      await waitUntil(() => engine.started == 1);
+      await waitUntil(() => t.status == DownloadStatus.completed);
     });
   });
 }

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/core/models/collection_kind.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
+import 'package:ytdlp/core/models/playlist_paging.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/core/providers.dart';
 import 'package:ytdlp/features/home/home_page.dart';
@@ -34,6 +36,29 @@ PlaylistInfo _playlist() => PlaylistInfo(
   ],
 );
 
+/// A channel big enough to have been listed only in part, which is what a
+/// large one really looks like on arrival.
+PlaylistInfo _channel({
+  int listed = PlaylistPaging.sliceSize,
+  int? totalCount,
+}) => PlaylistInfo(
+  id: 'UC1',
+  title: 'Deep Archive',
+  webUrl: 'https://www.youtube.com/@deeparchive/videos',
+  kind: CollectionKind.channel,
+  uploader: 'Deep Archive',
+  entries: [
+    for (var i = 0; i < listed; i++)
+      VideoInfo(
+        id: 'v$i',
+        title: 'Clip $i',
+        webUrl: 'https://www.youtube.com/watch?v=v$i',
+        duration: 60,
+      ),
+  ],
+  paging: PlaylistPaging(fetched: listed, totalCount: totalCount),
+);
+
 /// Stands in for the real engine so the test never spawns a process or
 /// touches the network.
 class _FakeYtdlpService extends YtdlpService {
@@ -44,11 +69,15 @@ class _FakeYtdlpService extends YtdlpService {
   /// When set, [fetch] resolves to a playlist instead of a video.
   bool resolveAsPlaylist = false;
 
+  /// What [fetch] resolves to when [resolveAsPlaylist] is set. Lets a test swap
+  /// in a channel without touching the clipboard plumbing.
+  PlaylistInfo playlistOverride = _playlist();
+
   @override
   Future<FetchResult> fetch(String url) async {
     fetched.add(url);
     return resolveAsPlaylist
-        ? PlaylistResult(_playlist())
+        ? PlaylistResult(playlistOverride)
         : VideoResult(_video(url));
   }
 }
@@ -161,6 +190,78 @@ void main() {
         find.widgetWithText(FilledButton, 'Choose videos'),
         findsOneWidget,
       );
+    });
+
+    testWidgets('a playlist does not claim to be only partly loaded', (
+      tester,
+    ) async {
+      // A curated playlist that fitted in one response is the whole thing, so
+      // no truncation wording may appear.
+      _mockClipboard('https://example.com/playlist?list=PL1');
+      await pumpHome(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Showing the first'), findsNothing);
+      expect(find.textContaining('so far'), findsNothing);
+    });
+  });
+
+  group('channel links', () {
+    setUp(() {
+      service.resolveAsPlaylist = true;
+      service.playlistOverride = _channel(totalCount: 5000);
+    });
+
+    testWidgets('a channel gets its own card state and shortcut', (
+      tester,
+    ) async {
+      _mockClipboard('https://www.youtube.com/@deeparchive/videos');
+      await pumpHome(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Deep Archive'), findsOneWidget);
+      // The channel shortcut the plan asks for, distinct from the playlist's
+      // "Choose videos".
+      expect(
+        find.widgetWithText(FilledButton, 'Download everything'),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(FilledButton, 'Choose videos'), findsNothing);
+      // The uploader is the channel, so repeating it as a chip is noise.
+      expect(find.widgetWithText(Chip, 'Deep Archive'), findsNothing);
+    });
+
+    testWidgets('a partly-listed channel says so instead of claiming a size', (
+      tester,
+    ) async {
+      _mockClipboard('https://www.youtube.com/@deeparchive/videos');
+      await pumpHome(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      // The truncation has to be visible here, before the picker, because this
+      // is the screen where the user decides whether to go in.
+      expect(find.text('Showing the first 200 of 5000'), findsOneWidget);
+    });
+
+    testWidgets('an unknown channel size does not get a made-up total', (
+      tester,
+    ) async {
+      service.playlistOverride = _channel();
+      _mockClipboard('https://www.youtube.com/@deeparchive/videos');
+      await pumpHome(tester);
+
+      await tester.tap(find.byType(FloatingActionButton));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('of 5000'), findsNothing);
+      // Says how much is loaded rather than claiming that is all of it.
+      expect(find.text('200 videos so far'), findsOneWidget);
     });
   });
 }

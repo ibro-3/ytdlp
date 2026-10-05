@@ -1,6 +1,54 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+/// The foreground-service operations [ForegroundService] drives.
+///
+/// Split out so the lifecycle rules are testable off-device; production uses
+/// [PluginForegroundTaskDriver], which is the real plugin.
+abstract interface class ForegroundTaskDriver {
+  /// Whether this host can run a foreground service at all (Android only).
+  bool get isSupportedHost;
+
+  Future<bool> isRunning();
+
+  Future<void> start({required String title, required String headline});
+
+  Future<void> update({required String title, required String headline});
+
+  Future<void> stop();
+}
+
+/// Talks to `flutter_foreground_task` directly.
+class PluginForegroundTaskDriver implements ForegroundTaskDriver {
+  const PluginForegroundTaskDriver();
+
+  @override
+  bool get isSupportedHost => Platform.isAndroid;
+
+  @override
+  Future<bool> isRunning() => FlutterForegroundTask.isRunningService;
+
+  @override
+  Future<void> start({required String title, required String headline}) =>
+      FlutterForegroundTask.startService(
+        notificationTitle: headline,
+        notificationText: title,
+        notificationIcon: null,
+        callback: _foregroundTaskCallback,
+      );
+
+  @override
+  Future<void> update({required String title, required String headline}) =>
+      FlutterForegroundTask.updateService(
+        notificationTitle: headline,
+        notificationText: title,
+      );
+
+  @override
+  Future<void> stop() => FlutterForegroundTask.stopService();
+}
 
 /// Manages the Android foreground service that keeps downloads alive when
 /// the app is backgrounded.
@@ -13,11 +61,30 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 /// queue drains. It shows a notification with the current download's title
 /// and progress.
 class ForegroundService {
-  ForegroundService._();
+  ForegroundService._({ForegroundTaskDriver? driver})
+    : _driver = driver ?? const PluginForegroundTaskDriver();
+
+  /// Builds a service driven by [driver] rather than the platform plugin, so
+  /// the start/update/stop lifecycle can be tested without an emulator.
+  @visibleForTesting
+  factory ForegroundService.forTesting(ForegroundTaskDriver driver) =>
+      ForegroundService._(driver: driver);
 
   static final ForegroundService instance = ForegroundService._();
 
+  /// The platform operations this service drives.
+  ///
+  /// Extracted behind an interface so the lifecycle rules — do not re-issue a
+  /// start contract while running, do not call the plugin at all off Android —
+  /// are testable without an emulator. The plugin talks to a real service, and
+  /// the redundant-start behaviour it warns about is exactly what needs
+  /// asserting.
+  final ForegroundTaskDriver _driver;
+
   bool _initialized = false;
+
+  @visibleForTesting
+  bool isSupportedHost() => _driver.isSupportedHost;
 
   /// Initialize the foreground task. Must be called before [startService].
   void init() {
@@ -57,20 +124,15 @@ class ForegroundService {
     required String title,
     required double progress,
   }) async {
-    if (!Platform.isAndroid) return;
+    if (!_driver.isSupportedHost) return;
 
-    final isRunning = await FlutterForegroundTask.isRunningService;
+    final isRunning = await _driver.isRunning();
     if (isRunning) {
       await updateService(title: title, progress: progress);
       return;
     }
 
-    await FlutterForegroundTask.startService(
-      notificationTitle: _headline(progress),
-      notificationText: title,
-      notificationIcon: null,
-      callback: _foregroundTaskCallback,
-    );
+    await _driver.start(title: title, headline: _headline(progress));
   }
 
   /// Refresh the notification of an already-running service.
@@ -81,11 +143,8 @@ class ForegroundService {
     required String title,
     required double progress,
   }) async {
-    if (!Platform.isAndroid) return;
-    await FlutterForegroundTask.updateService(
-      notificationTitle: _headline(progress),
-      notificationText: title,
-    );
+    if (!_driver.isSupportedHost) return;
+    await _driver.update(title: title, headline: _headline(progress));
   }
 
   static String _headline(double progress) {
@@ -95,17 +154,17 @@ class ForegroundService {
 
   /// Stop the foreground service. Called when all downloads complete.
   Future<void> stopService() async {
-    if (!Platform.isAndroid) return;
-    final isRunning = await FlutterForegroundTask.isRunningService;
+    if (!_driver.isSupportedHost) return;
+    final isRunning = await _driver.isRunning();
     if (isRunning) {
-      await FlutterForegroundTask.stopService();
+      await _driver.stop();
     }
   }
 
   /// Whether the foreground service is currently running.
   Future<bool> get isRunning async {
-    if (!Platform.isAndroid) return false;
-    return FlutterForegroundTask.isRunningService;
+    if (!_driver.isSupportedHost) return false;
+    return _driver.isRunning();
   }
 }
 

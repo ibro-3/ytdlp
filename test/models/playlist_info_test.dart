@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/core/models/collection_kind.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
+import 'package:ytdlp/core/models/playlist_paging.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 
 Map<String, dynamic> _entry(
@@ -264,6 +266,236 @@ void main() {
       expect(formatPlaylistDuration(0), 'unknown length');
       expect(formatPlaylistDuration(45), '0 min');
       expect(formatPlaylistDuration(60 * 90), '1 h 30 min');
+    });
+  });
+
+  group('collection kind', () {
+    test('a channel link is a channel even when the payload looks like one', () {
+      // yt-dlp reports a channel's uploads tab as a /playlist?list=UU… URL, so
+      // the requested link is the only thing that identifies the collection.
+      final p = PlaylistInfo.fromYtdlpJson(
+        {
+          ..._playlist([_entry('a')]),
+          'webpage_url': 'https://www.youtube.com/playlist?list=UUabcdef',
+        },
+        hasFfmpeg: true,
+        canPostprocess: true,
+        requestedUrl: 'https://www.youtube.com/@somecreator/videos',
+      );
+      expect(p.kind, CollectionKind.channel);
+    });
+
+    test('a playlist link is a playlist', () {
+      final p = PlaylistInfo.fromYtdlpJson(
+        _playlist([_entry('a')]),
+        hasFfmpeg: true,
+        canPostprocess: true,
+        requestedUrl: 'https://www.youtube.com/playlist?list=PL123',
+      );
+      expect(p.kind, CollectionKind.playlist);
+    });
+
+    test('defaults to a playlist when nothing identifies the collection', () {
+      expect(_parse(_playlist([_entry('a')])).kind, CollectionKind.playlist);
+    });
+  });
+
+  group('paging', () {
+    PlaylistInfo parseWith(
+      List<Map<String, dynamic>> entries, {
+      int? playlistCount,
+      int startedAt = 1,
+    }) {
+      final json = _playlist(entries);
+      if (playlistCount != null) json['playlist_count'] = playlistCount;
+      return PlaylistInfo.fromYtdlpJson(
+        json,
+        hasFfmpeg: true,
+        canPostprocess: true,
+        requestedUrl: 'https://www.youtube.com/@somecreator/videos',
+        paging: PlaylistPaging(startedAt: startedAt),
+      );
+    }
+
+    test('counts raw entries, not the ones that survived filtering', () {
+      // The cursor has to line up with `--playlist-start`, which upstream
+      // indexes before unavailable entries are dropped. Counting the filtered
+      // list would re-request entries already seen.
+      final p = parseWith([
+        _entry('a'),
+        _entry('b', availability: 'private'),
+        <String, dynamic>{
+          'id': 'nourl',
+          'title': 'No URL',
+          'webpage_url': null,
+          'url': null,
+        },
+        _entry('d'),
+      ]);
+      expect(p.entries, hasLength(2));
+      expect(p.paging.fetched, 4);
+      expect(p.paging.nextStart, 5);
+    });
+
+    test('a short slice is complete', () {
+      final p = parseWith([_entry('a'), _entry('b')]);
+      expect(p.isComplete, isTrue);
+      expect(p.paging.hasMore, isFalse);
+    });
+
+    test('a reported total is carried through', () {
+      final p = parseWith([_entry('a')], playlistCount: 5000);
+      expect(p.paging.totalCount, 5000);
+      expect(p.isComplete, isFalse);
+    });
+
+    test('a reported total is only trusted when it is positive', () {
+      // A zero total would end the listing immediately and hide every later
+      // video; a negative one is plainly not a count.
+      for (final bogus in [0, -1, -5000]) {
+        final p = parseWith([_entry('a')], playlistCount: bogus);
+        expect(p.paging.totalCount, isNull, reason: '$bogus');
+      }
+    });
+
+    test('a non-numeric total is ignored rather than crashing', () {
+      final json = _playlist([_entry('a')])..['playlist_count'] = 'lots';
+      final p = PlaylistInfo.fromYtdlpJson(
+        json,
+        hasFfmpeg: true,
+        canPostprocess: true,
+      );
+      expect(p.paging.totalCount, isNull);
+    });
+
+    test('a numeric-string total is read', () {
+      final json = _playlist([_entry('a')])..['playlist_count'] = '5000';
+      final p = PlaylistInfo.fromYtdlpJson(
+        json,
+        hasFfmpeg: true,
+        canPostprocess: true,
+      );
+      expect(p.paging.totalCount, 5000);
+    });
+  });
+
+  group('copyWith', () {
+    test('keeps the collection identity and replaces the listing', () {
+      final p = PlaylistInfo.fromYtdlpJson(
+        _playlist([_entry('a')]),
+        hasFfmpeg: true,
+        canPostprocess: false,
+        requestedUrl: 'https://www.youtube.com/@somecreator',
+      );
+      final merged = p.copyWith(
+        entries: const [
+          VideoInfo(id: 'a', title: 'A', webUrl: 'https://x/a'),
+          VideoInfo(id: 'b', title: 'B', webUrl: 'https://x/b'),
+        ],
+        paging: const PlaylistPaging(fetched: 400),
+      );
+      expect(merged.id, p.id);
+      expect(merged.title, p.title);
+      expect(merged.webUrl, p.webUrl);
+      expect(merged.kind, p.kind);
+      expect(merged.uploader, p.uploader);
+      // Capability flags must survive: they gate the embed toggles, and a
+      // later slice must not silently re-enable an option the device cannot do.
+      expect(merged.hasFfmpeg, p.hasFfmpeg);
+      expect(merged.canPostprocess, p.canPostprocess);
+      expect(merged.entries, hasLength(2));
+      expect(merged.paging.fetched, 400);
+    });
+
+    group('a slice that came back short', () {
+      test('marks the end of a collection with no reported total', () {
+        // What the app does after asking for entries 201-400 of a collection
+        // that stopped at 200. Recording the end is the only way the picker
+        // learns there is nothing more to fetch.
+        final p = PlaylistInfo.fromYtdlpJson(
+          {'id': 'UC1', 'title': 'Deep Archive', 'entries': []},
+          hasFfmpeg: false,
+          canPostprocess: false,
+          requestedUrl: 'https://www.youtube.com/@deeparchive/videos',
+          paging: const PlaylistPaging(startedAt: 201),
+        );
+
+        expect(p.paging.fetched, 0);
+        expect(p.paging.endReached, isTrue);
+        expect(p.paging.hasMore, isFalse);
+      });
+
+      test('marks the end for a first slice under the window too', () {
+        // A curated playlist of 12 arrives whole. With no total reported it
+        // would otherwise look like a partial listing and offer to load more.
+        final p = PlaylistInfo.fromYtdlpJson(
+          {
+            'id': 'PL1',
+            'title': 'Shortlist',
+            'entries': [
+              for (var i = 0; i < 12; i++)
+                {'id': 'v$i', 'title': 'Clip $i', 'url': 'https://x/v$i'},
+            ],
+          },
+          hasFfmpeg: false,
+          canPostprocess: false,
+          requestedUrl: 'https://example.com/playlist?list=PL1',
+        );
+
+        expect(p.paging.endReached, isTrue);
+        expect(p.paging.hasMore, isFalse);
+        expect(p.paging.truncationNotice(12), isNull);
+      });
+
+      test('a full window leaves the listing open', () {
+        final p = PlaylistInfo.fromYtdlpJson(
+          {
+            'id': 'UC1',
+            'title': 'Deep Archive',
+            'entries': [
+              for (var i = 0; i < PlaylistPaging.sliceSize; i++)
+                {'id': 'v$i', 'title': 'Clip $i', 'url': 'https://x/v$i'},
+            ],
+          },
+          hasFfmpeg: false,
+          canPostprocess: false,
+          requestedUrl: 'https://www.youtube.com/@deeparchive/videos',
+        );
+
+        expect(p.paging.endReached, isFalse);
+        expect(p.paging.hasMore, isTrue);
+        expect(p.paging.truncationNotice(PlaylistPaging.sliceSize), isNotNull);
+      });
+
+      test('a short page does not overrule a total the site gave', () {
+        // The extractor said 5,000. Believing the short page instead would
+        // hide 4,999 videos behind a picker that insists there is nothing
+        // more, and the user would have no way to find out.
+        final p = PlaylistInfo.fromYtdlpJson(
+          _playlist([_entry('a')])..['playlist_count'] = 5000,
+          hasFfmpeg: true,
+          canPostprocess: true,
+        );
+
+        expect(p.paging.endReached, isFalse);
+        expect(p.paging.hasMore, isTrue);
+      });
+
+      test('an empty response ends it even against a total', () {
+        // Nothing at all came back, which is direct evidence rather than an
+        // inference — so it wins, and the picker stops asking.
+        final json = _playlist([])..['playlist_count'] = 5000;
+        final p = PlaylistInfo.fromYtdlpJson(
+          json,
+          hasFfmpeg: true,
+          canPostprocess: true,
+          paging: const PlaylistPaging(startedAt: 201),
+        );
+
+        expect(p.paging.totalCount, 5000);
+        expect(p.paging.endReached, isTrue);
+        expect(p.paging.hasMore, isFalse);
+      });
     });
   });
 }

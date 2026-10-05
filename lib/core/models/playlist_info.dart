@@ -1,4 +1,6 @@
 import '../utils/json_utils.dart';
+import 'collection_kind.dart';
+import 'playlist_paging.dart';
 import 'video_info.dart';
 
 /// A playlist (or channel) collection returned by yt-dlp.
@@ -18,15 +20,22 @@ class PlaylistInfo {
     required this.id,
     required this.title,
     required this.webUrl,
+    this.kind = CollectionKind.playlist,
     this.uploader,
     this.entries = const [],
     this.hasFfmpeg = false,
     this.canPostprocess = false,
+    this.paging = PlaylistPaging.empty,
   });
 
   final String id;
   final String title;
   final String webUrl;
+
+  /// Whether this is a curated playlist or a whole channel. See
+  /// [resolveCollectionKind] for why the requested link is the evidence.
+  final CollectionKind kind;
+
   final String? uploader;
   final List<VideoInfo> entries;
 
@@ -36,9 +45,18 @@ class PlaylistInfo {
   final bool hasFfmpeg;
   final bool canPostprocess;
 
+  /// How much of the collection [entries] covers. A complete curated playlist
+  /// leaves this [PlaylistPaging.empty]; a channel that was listed one slice at
+  /// a time carries the cursor needed to fetch the next one.
+  final PlaylistPaging paging;
+
   int get count => entries.length;
 
   bool get isEmpty => entries.isEmpty;
+
+  /// Whether [entries] is known to be the whole collection, which a curated
+  /// playlist is and a channel is not.
+  bool get isComplete => !paging.hasMore;
 
   /// Sum of the entries whose duration is known. Entries without a duration
   /// (live streams, some extractors) contribute nothing, so this is a lower
@@ -59,10 +77,16 @@ class PlaylistInfo {
     ];
   }
 
+  /// Builds a collection from a `--flat-playlist` payload.
+  ///
+  /// [requestedUrl] is the link the user gave, which is what decides
+  /// [CollectionKind]: see [resolveCollectionKind].
   factory PlaylistInfo.fromYtdlpJson(
     Map<String, dynamic> j, {
     required bool hasFfmpeg,
     required bool canPostprocess,
+    String requestedUrl = '',
+    PlaylistPaging paging = PlaylistPaging.empty,
   }) {
     final rawEntries = jsonList<Map<String, dynamic>>(j['entries']);
 
@@ -83,15 +107,83 @@ class PlaylistInfo {
       entries.add(entry);
     }
 
+    // The slice that was just fetched, measured from the payload: the raw count
+    // rather than `entries.length`, because the cursor has to line up with
+    // `--playlist-start`, which upstream indexes before the filtering above.
+    final total = _totalCount(j) ?? paging.totalCount;
+    final slice = PlaylistPaging(
+      startedAt: paging.startedAt,
+      fetched: rawEntries.length,
+      totalCount: total,
+      endReached: _endReached(rawEntries.length, total),
+    );
+
     return PlaylistInfo(
       id: (j['id'] as String?) ?? '',
       title: (j['title'] as String?) ?? 'Untitled playlist',
       webUrl: (j['webpage_url'] ?? j['original_url'] ?? '') as String,
+      kind: resolveCollectionKind(requestedUrl: requestedUrl, payload: j),
       uploader:
           (j['uploader'] ?? j['channel'] ?? j['playlist_uploader']) as String?,
       entries: entries,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess,
+      paging: slice,
+    );
+  }
+
+  /// The collection size the extractor reported, if it reported one that can be
+  /// believed.
+  ///
+  /// Extractors spell this `playlist_count`; some emit it as a string, some as
+  /// a float, and a zero or negative value means "not reported" rather than
+  /// "empty", so anything that is not a positive whole number is discarded.
+  /// A wrong total would be worse than none, because [PlaylistPaging.hasMore]
+  /// trusts it.
+  static int? _totalCount(Map<String, dynamic> j) {
+    final raw = j['playlist_count'];
+    final value = raw is num
+        ? raw.toInt()
+        : (raw is String ? int.tryParse(raw.trim()) : null);
+    return (value != null && value > 0) ? value : null;
+  }
+
+  /// Whether this response proves the collection has nothing after it.
+  ///
+  /// Two different signals, because they are not equally trustworthy.
+  ///
+  /// A window that came back short only means the end when nothing claimed a
+  /// total: with a total in hand the arithmetic already answers the question
+  /// exactly, and a short page can just as easily be a response the extractor
+  /// cut short. Overriding a stated total on that basis would silently hide
+  /// videos the site says are there.
+  ///
+  /// An empty response means it unconditionally. Asking for entries 201-400 of
+  /// a collection that stopped at 200 yields nothing, the fetched count stops
+  /// growing, and without this the cursor would sit still and the picker would
+  /// offer to load the same missing page forever.
+  static bool _endReached(int fetched, int? totalCount) =>
+      fetched == 0 ||
+      (totalCount == null && fetched < PlaylistPaging.sliceSize);
+
+  /// A copy with [entries] and [paging] replaced, used when another slice of a
+  /// paged collection arrives.
+  ///
+  /// Everything else — id, title, capability flags — comes from the slice that
+  /// first resolved the collection and is repeated identically by later ones,
+  /// so keeping it is both correct and the only way to keep a queued download's
+  /// folder name stable if it is downloaded between slices.
+  PlaylistInfo copyWith({List<VideoInfo>? entries, PlaylistPaging? paging}) {
+    return PlaylistInfo(
+      id: id,
+      title: title,
+      webUrl: webUrl,
+      kind: kind,
+      uploader: uploader,
+      entries: entries ?? this.entries,
+      hasFfmpeg: hasFfmpeg,
+      canPostprocess: canPostprocess,
+      paging: paging ?? this.paging,
     );
   }
 

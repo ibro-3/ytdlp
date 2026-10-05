@@ -1,0 +1,9 @@
+# Netscape HTTP Cookie File
+# This is a generated file.  Do not edit.
+
+#HttpOnly_.example.com	TRUE	/	FALSE	1735689600	VISITOR_INFO1_LIVE	abcdef1234567890
+.example.com	TRUE	/	FALSE	1735689600	PREF	f4=400
+.youtube.com	TRUE	/	TRUE	1767225600	LOGIN_INFO	AFmmF2swRAIgfake
+#HttpOnly_.youtube.com	TRUE	/	TRUE	1767225600	SIDCC	 fake-value
+.youtube.com	TRUE	/	FALSE		device_info	eyJjb29raWVzIjp0cnVlfQ%3D%3D
+.example.org	FALSE	/path	TRUE	1700000000	session_token	expired-by-now

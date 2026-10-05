@@ -4,8 +4,10 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 
+import '../../core/models/cookie_browser.dart';
 import '../../core/models/download_options.dart';
 import '../../core/models/playlist_info.dart';
+import '../../core/models/playlist_paging.dart';
 import '../../core/models/video_info.dart';
 import '../../core/models/yt_prefs.dart';
 import '../../core/models/youtube_prefs.dart';
@@ -28,6 +30,8 @@ List<String> buildDownloadArgs({
   required String outputDir,
   required String template,
   String? cookiesPath,
+  String? cookieBrowser,
+  String cookieBrowserProfile = '',
   bool hasFfmpeg = true,
   String? androidFfmpegPath,
   List<String> extraArgs = const [],
@@ -46,9 +50,9 @@ List<String> buildDownloadArgs({
     // future upstream change. --retry-sleep adds a capped linear backoff
     // (none by default), which matters a lot on flaky mobile networks.
     '--retries',
-    '10',
+    '${prefs.retries}',
     '--fragment-retries',
-    '10',
+    '${prefs.fragmentRetries}',
     '--retry-sleep',
     'linear=1:5:2',
     '--force-overwrites',
@@ -91,9 +95,16 @@ List<String> buildDownloadArgs({
     format.selector,
   ]);
 
-  if (cookiesPath != null && cookiesPath.isNotEmpty) {
-    args.addAll(['--cookies', cookiesPath]);
-  }
+  // One cookie source, never two: yt-dlp would merge a `--cookies` jar with a
+  // browser's store, and a site switched off in the per-site manager would then
+  // go out with the browser's copy anyway. See `cookie_browser.dart`.
+  args.addAll(
+    cookieArgs(
+      cookiesPath: cookiesPath,
+      cookieBrowser: cookieBrowser,
+      cookieBrowserProfile: cookieBrowserProfile,
+    ),
+  );
 
   // Subtitles: the format sheet already prevents embedding into audio files,
   // but the builder re-checks so a restored/retried task can never ask for
@@ -214,6 +225,8 @@ abstract interface class DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
@@ -375,20 +388,102 @@ class YtdlpService implements DownloadEngine {
     }
   }
 
-  /// Second-stage fetch: enumerate a playlist's entries without pulling stream
+  /// Second-stage fetch: enumerate a collection's entries without pulling stream
   /// data for each of them.
+  ///
+  /// The listing is requested one [PlaylistPaging.sliceSize] slice at a time
+  /// rather than in full. A channel can hold more entries than the bounded
+  /// capture can hold, and a capped slice that says it is capped is strictly
+  /// more useful than an overflow error: the user gets the first few hundred
+  /// videos and a "load more" rather than nothing.
   Future<FetchResult> _fetchPlaylistEntries(
     ProcessRunner r, {
     required String url,
     required bool hasFfmpeg,
     required bool canPostprocess,
   }) async {
-    final run = await _runCaptured(r, [
+    final playlist = await _fetchPlaylistSliceWith(
+      r,
+      url: url,
+      start: PlaylistPaging.empty.nextStart,
+      hasFfmpeg: hasFfmpeg,
+      canPostprocess: canPostprocess,
+    );
+    if (playlist.isEmpty) {
+      throw const YtdlpException(
+        'That playlist has no videos available to download.\n'
+        'They may be private, region-locked, or need a different extractor.',
+      );
+    }
+    return PlaylistResult(playlist);
+  }
+
+  /// Fetches the next slice of a collection's entries for a "load more".
+  ///
+  /// This is the public entry point the picker uses; [fetch] reuses the same
+  /// slice logic for its first page, so both paths cap identically.
+  Future<PlaylistInfo> fetchPlaylistSlice({
+    required String url,
+    required int start,
+    required bool hasFfmpeg,
+    required bool canPostprocess,
+  }) async {
+    final r = await _binary.ensureRunner();
+    return _fetchPlaylistSliceWith(
+      r,
+      url: url,
+      start: start,
+      hasFfmpeg: hasFfmpeg,
+      canPostprocess: canPostprocess,
+    );
+  }
+
+  /// The argument list for listing one slice of a collection's entries.
+  ///
+  /// Public and static for the same reason [buildDownloadArgs] is: the paging
+  /// contract is the whole point of this second stage, and it has to be
+  /// checkable without spawning yt-dlp.
+  ///
+  /// [start] is the 1-based index of the first entry to return. `--playlist-end`
+  /// caps the response one slice later, which is what keeps a huge channel
+  /// inside the bounded stdout capture. `--playlist-start` is emitted only when
+  /// it is not the first slice: passing `--playlist-start 1` is redundant, and
+  /// some extractors treat an explicit start differently from its absence.
+  ///
+  /// [url] is last, as everywhere else in this file.
+  static List<String> buildPlaylistListArgs({
+    required String url,
+    required int start,
+  }) {
+    return [
       '-J',
       '--flat-playlist',
       '--no-warnings',
+      if (start > 1) ...['--playlist-start', '$start'],
+      '--playlist-end',
+      '${start + PlaylistPaging.sliceSize - 1}',
       url,
-    ], timeout: _metadataTimeout);
+    ];
+  }
+
+  /// The slice fetch itself, against an already-resolved runner.
+  ///
+  /// The returned [PlaylistInfo] is a *slice*, not the whole collection: its
+  /// [PlaylistInfo.paging] carries the cursor for the next request and the
+  /// knowledge of whether one is needed. Callers merge slices with
+  /// [PlaylistInfo.copyWith].
+  Future<PlaylistInfo> _fetchPlaylistSliceWith(
+    ProcessRunner r, {
+    required String url,
+    required int start,
+    required bool hasFfmpeg,
+    required bool canPostprocess,
+  }) async {
+    final run = await _runCaptured(
+      r,
+      buildPlaylistListArgs(url: url, start: start),
+      timeout: _metadataTimeout,
+    );
     if (run.timedOut) {
       throw const YtdlpException(
         'Listing the playlist timed out. The site may be slow — try again.',
@@ -413,18 +508,13 @@ class YtdlpService implements DownloadEngine {
       if (decoded is! Map<String, dynamic>) {
         throw YtdlpException(jsonFailureMessage(run.stdout));
       }
-      final playlist = PlaylistInfo.fromYtdlpJson(
+      return PlaylistInfo.fromYtdlpJson(
         decoded,
         hasFfmpeg: hasFfmpeg,
         canPostprocess: canPostprocess,
+        requestedUrl: url,
+        paging: PlaylistPaging(startedAt: start),
       );
-      if (playlist.isEmpty) {
-        throw const YtdlpException(
-          'That playlist has no videos available to download.\n'
-          'They may be private, region-locked, or need a different extractor.',
-        );
-      }
-      return PlaylistResult(playlist);
     } on FormatException {
       throw const YtdlpException(
         'yt-dlp sent playlist details the app could not understand.\n'
@@ -574,6 +664,8 @@ class YtdlpService implements DownloadEngine {
     required String outputDir,
     required String template,
     String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
     List<String> extraArgs = const [],
     YtPrefs prefs = const YtPrefs(),
     String? archivePath,
@@ -588,6 +680,8 @@ class YtdlpService implements DownloadEngine {
       outputDir: outputDir,
       template: template,
       cookiesPath: cookiesPath,
+      cookieBrowser: cookieBrowser,
+      cookieBrowserProfile: cookieBrowserProfile,
       // This defaulted to true before, so embed/conversion flags were added
       // even on a desktop without ffmpeg — where yt-dlp then fails in
       // postprocessing. Probe the real capability instead.

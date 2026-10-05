@@ -20,6 +20,8 @@ List<String> _args({
   Format format = _video,
   DownloadOptions options = const DownloadOptions(),
   String? cookiesPath,
+  String? cookieBrowser,
+  String cookieBrowserProfile = '',
   bool hasFfmpeg = true,
   String? androidFfmpegPath,
   List<String> extraArgs = const [],
@@ -32,6 +34,8 @@ List<String> _args({
   outputDir: '/tmp/stg',
   template: '%(title)s [%(id)s].%(ext)s',
   cookiesPath: cookiesPath,
+  cookieBrowser: cookieBrowser,
+  cookieBrowserProfile: cookieBrowserProfile,
   hasFfmpeg: hasFfmpeg,
   androidFfmpegPath: androidFfmpegPath,
   extraArgs: extraArgs,
@@ -60,6 +64,80 @@ void main() {
       expect(_args(cookiesPath: ''), isNot(contains('--cookies')));
       final a = _args(cookiesPath: '/x/cookies.txt');
       expect(a, containsAllInOrder(['--cookies', '/x/cookies.txt']));
+    });
+
+    group('cookie source', () {
+      test('a browser becomes --cookies-from-browser', () {
+        expect(
+          _args(cookieBrowser: 'firefox'),
+          containsAllInOrder(['--cookies-from-browser', 'firefox']),
+        );
+      });
+
+      test('a profile rides along with a colon', () {
+        expect(
+          _args(cookieBrowser: 'chrome', cookieBrowserProfile: 'Profile 2'),
+          containsAllInOrder(['--cookies-from-browser', 'chrome:Profile 2']),
+        );
+      });
+
+      test('never carries both a jar and a browser', () {
+        // The guarantee the per-site manager rests on. yt-dlp would merge them,
+        // so a site switched off in the jar would still go out from the
+        // browser — a switch that looks like it works and does nothing.
+        final a = _args(cookiesPath: '/x/cookies.txt', cookieBrowser: 'chrome');
+        expect(a, isNot(contains('--cookies')));
+        expect(a, contains('--cookies-from-browser'));
+      });
+
+      test('an unknown browser name falls back to the jar', () {
+        // Better a working login than a download that dies on an argument
+        // yt-dlp does not recognise.
+        final a = _args(cookiesPath: '/x/cookies.txt', cookieBrowser: 'chrom');
+        expect(a, containsAllInOrder(['--cookies', '/x/cookies.txt']));
+        expect(a, isNot(contains('--cookies-from-browser')));
+      });
+
+      test('an unknown browser with no jar sends no cookie flag at all', () {
+        final a = _args(cookieBrowser: 'chrom');
+        expect(a, isNot(contains('--cookies-from-browser')));
+        expect(a, isNot(contains('--cookies')));
+      });
+
+      test('passes a profile with special characters through', () {
+        final a = _args(
+          cookieBrowser: 'chrome',
+          cookieBrowserProfile: r'C:\Users\me\Profile 2',
+        );
+        expect(
+          a,
+          containsAllInOrder([
+            '--cookies-from-browser',
+            r'chrome:C:\Users\me\Profile 2',
+          ]),
+        );
+      });
+    });
+
+    test('carries the configured retry counts', () {
+      // The controls exist so a flaky network can be given more
+      // chances than the default — and the values must actually
+      // reach the command line.
+      final a = _args(prefs: const YtPrefs(retries: 20, fragmentRetries: 0));
+      expect(a, containsAllInOrder(['--retries', '20']));
+      expect(a, containsAllInOrder(['--fragment-retries', '0']));
+    });
+
+    test('a raw --retries in extra args still wins', () {
+      // The managed flags come first, so a user who knows better can
+      // override them the way yt-dlp intends: last occurrence wins.
+      final a = _args(
+        prefs: const YtPrefs(retries: 3),
+        extraArgs: ['--retries', '1'],
+      );
+      expect(a.indexOf('--retries'), lessThan(a.lastIndexOf('--retries')));
+      expect(a.last, 'https://example.com/watch?v=abc');
+      expect(a[a.lastIndexOf('--retries') + 1], '1');
     });
 
     test('sidecar subtitles: write-subs + sub-langs, no conversion', () {
