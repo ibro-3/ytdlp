@@ -39,7 +39,7 @@ dependencies:
   path_provider: ^2.1.6
   cached_network_image: ^4.0.0
   open_filex: ^4.7.0
-  share_plus: ^13.3.0
+  share_plus: ^13.3.1
   flutter_local_notifications: ^22.3.1
   # Reads the app's own version (from pubspec) at runtime, so the update check
   # and the diagnostics report report the real version rather than a constant.
