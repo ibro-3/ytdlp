@@ -11,7 +11,7 @@ jobs:
     name: Analyze & test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: analyze-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -79,7 +79,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: analyze-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -107,7 +107,7 @@ jobs:
     runs-on: windows-latest
     needs: analyze-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
@@ -134,7 +134,7 @@ jobs:
     runs-on: macos-latest
     needs: analyze-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: subosito/flutter-action@v2
         with:
