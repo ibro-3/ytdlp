@@ -21,7 +21,10 @@ class BoundedCapture {
     this.windowChars = 64 * 1024,
   });
 
-  /// The stream is considered flooded past this many bytes.
+  /// The stream is considered flooded past this many UTF-16 code units.
+  ///
+  /// Named "bytes" for historical reasons; see [add] for what it actually
+  /// measures.
   final int maxBytes;
 
   /// Which end to retain.
@@ -34,7 +37,10 @@ class BoundedCapture {
   bool _overflowed = false;
   String _buf = '';
 
-  /// Characters seen on the stream, including those dropped after the budget.
+  /// Units seen on the stream, including those dropped after the budget.
+  ///
+  /// UTF-16 code units, not bytes — see [add]. Reported to the user through
+  /// `formatBytesShort`, so it can overstate a multi-byte payload by up to 3×.
   int get bytes => _seen;
 
   bool get overflowed => _overflowed;
@@ -45,6 +51,14 @@ class BoundedCapture {
 
   /// Feeds a chunk. Returns false once the budget is exhausted, so a caller
   /// can stop a process that is flooding it.
+  ///
+  /// The budget is measured in UTF-16 code units, not bytes: [maxBytes] is
+  /// compared against `chunk.length`, so a multi-byte payload under-counts by up
+  /// to three times per character. Callers decode with `lenientDecoder` before
+  /// reaching here, which is what makes that worth stating. For the numbers
+  /// actually used (16 MB of stdout) the difference is a ceiling of tens of MB
+  /// of heap on a phone rather than an unbounded buffer — the flood *detection*
+  /// is what matters, and it still happens.
   bool add(String chunk) {
     if (chunk.isEmpty) return !_overflowed;
     _seen += chunk.length;

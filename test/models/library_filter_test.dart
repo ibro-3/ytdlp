@@ -41,6 +41,25 @@ void main() {
     ),
   ];
 
+  group('DownloadRecord.fromMap', () {
+    // A hand-edited or downgraded box must not be able to crash the library,
+    // which loads through this factory at startup.
+    test('tolerates fields of the wrong type', () {
+      final back = DownloadRecord.fromMap({
+        'id': 7,
+        'title': null,
+        'filePath': 3,
+        'createdAt': 'not a number',
+      });
+
+      expect(back.id, '');
+      expect(back.title, 'Unknown');
+      expect(back.filePath, '');
+      // A string date is not a number, so it falls back rather than throwing.
+      expect(back.createdAt, isNotNull);
+    });
+  });
+
   group('search', () {
     test('an empty query matches everything', () {
       expect(applyLibraryView(records: records).length, 3);

@@ -51,3 +51,17 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Desktop yt-dlp binaries — ~56 MB that the app never ships.
+#
+# Deliberately NOT committed, unlike the Android runtime and ffmpeg assets: those
+# are packaged into the APK and must be present to build or test, whereas the
+# desktop binaries are only a developer convenience. `BinaryManager` resolves a
+# system install first and otherwise downloads the official build, so a fresh
+# clone works without them. `tool/fetch_binaries.sh` puts them back if wanted.
+#
+# They are also not registered in `pubspec.yaml`'s `flutter.assets` — that has no
+# per-platform scoping, so declaring them would pack ~56 MB into every APK.
+/assets/bin/linux/
+/assets/bin/macos/
+/assets/bin/windows/

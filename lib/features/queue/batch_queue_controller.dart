@@ -62,13 +62,6 @@ class BatchState {
       if (i.video != null) i.video!,
   ];
 
-  List<BatchItem> get playlists => [
-    for (final i in items)
-      if (i.isPlaylist) i,
-  ];
-
-  bool get canEnqueue => videos.isNotEmpty;
-
   BatchState copyWith({List<BatchItem>? items, bool? isResolving}) {
     return BatchState(
       items: items ?? this.items,
@@ -84,9 +77,20 @@ class BatchState {
 /// others, which is the whole point: a bad link in a pasted list should not
 /// cost the good ones.
 class BatchQueueController extends Notifier<BatchState> {
-  /// Guards against a superseded run: a second "resolve all" while the first is
-  /// still fetching discards the first's results.
-  int _run = 0;
+  /// Bumped when the whole batch is replaced or emptied.
+  ///
+  /// Only a wholesale replacement may abort the [resolveAll] loop — the list it
+  /// is walking no longer describes what the user asked for. Per-item edits used
+  /// to bump this too, which made [retryOne] abort the loop and strand every
+  /// item after the retried one at `loading` with no fetch in flight, so their
+  /// spinners never resolved.
+  int _batchRun = 0;
+
+  /// Bumped when individual items disappear.
+  ///
+  /// Discards a late result for an item that is no longer in the list, without
+  /// disturbing the loop resolving the rest of the batch.
+  int _itemEpoch = 0;
 
   @override
   BatchState build() => const BatchState();
@@ -94,16 +98,18 @@ class BatchQueueController extends Notifier<BatchState> {
   /// Replaces the batch with [urls] and resolves each one.
   Future<void> resolveAll(List<String> urls) async {
     if (urls.isEmpty) {
+      _batchRun++;
+      _itemEpoch++;
       state = const BatchState();
       return;
     }
-    final run = ++_run;
-    state = BatchState(
+    final run = ++_batchRun;
+    _itemEpoch++;
+    _write(
       items: [
         for (final u in urls)
           BatchItem(url: u, status: BatchItemStatus.loading),
       ],
-      isResolving: true,
     );
 
     // Sequential rather than concurrent: yt-dlp is a subprocess per URL, and a
@@ -111,20 +117,25 @@ class BatchQueueController extends Notifier<BatchState> {
     // device. Results are written back per item, so the list fills in
     // progressively.
     for (var i = 0; i < urls.length; i++) {
-      if (run != _run) return; // A newer run superseded this one.
-      await _resolveOne(i, urls[i]);
-      if (run != _run) return;
+      if (run != _batchRun) return; // The batch was replaced or cleared.
+      await _resolveOne(i, urls[i], run);
+      if (run != _batchRun) return;
     }
-    if (run != _run) return;
-    state = state.copyWith(isResolving: false);
+    // Nothing is loading any more, unless a per-item retry is still in flight —
+    // so this is derived rather than forced false, which would hide that.
+    _write();
   }
 
-  Future<void> _resolveOne(int index, String url) async {
-    // Captured before the await so a later run can be detected after it.
-    final run = _run;
+  /// Fetches one URL into [index].
+  ///
+  /// Takes the batch token explicitly rather than reading it, so a per-item
+  /// retry can join the run already in progress instead of superseding it.
+  Future<void> _resolveOne(int index, String url, int run) async {
+    // Captured before the await so a later edit can be detected after it.
+    final epoch = _itemEpoch;
     // Marked loading up front so the row shows a spinner; the result below
     // replaces it.
-    state = state.copyWith(
+    _write(
       items: _replace(
         index,
         BatchItem(url: url, status: BatchItemStatus.loading),
@@ -132,8 +143,8 @@ class BatchQueueController extends Notifier<BatchState> {
     );
     try {
       final result = await ref.read(ytdlpServiceProvider).fetch(url);
-      if (run != _run) return;
-      state = state.copyWith(
+      if (epoch != _itemEpoch || run != _batchRun) return;
+      _write(
         items: _replace(index, switch (result) {
           VideoResult(:final video) => BatchItem(
             url: url,
@@ -148,9 +159,9 @@ class BatchQueueController extends Notifier<BatchState> {
         }),
       );
     } catch (e) {
-      if (run != _run) return;
+      if (epoch != _itemEpoch || run != _batchRun) return;
       final message = e is YtdlpException ? e.message : e.toString();
-      state = state.copyWith(
+      _write(
         items: _replace(
           index,
           BatchItem(url: url, status: BatchItemStatus.failed, error: message),
@@ -160,45 +171,58 @@ class BatchQueueController extends Notifier<BatchState> {
   }
 
   /// Retries one failed item, leaving the rest of the batch alone.
+  ///
+  /// Joins the run already in progress instead of superseding it, so a batch
+  /// that is still resolving its remaining items keeps going. Only this item's
+  /// result is guarded, by the shared `_itemEpoch` check inside [_resolveOne].
   Future<void> retryOne(int index) async {
     final item = state.items[index];
     if (item.status != BatchItemStatus.failed) return;
-    _run++;
-    state = state.copyWith(
-      items: _replace(
-        index,
-        BatchItem(url: item.url, status: BatchItemStatus.loading),
-      ),
-      isResolving: true,
-    );
-    await _resolveOne(index, item.url);
-    if (state.isResolving) state = state.copyWith(isResolving: false);
+    await _resolveOne(index, item.url, _batchRun);
   }
 
   /// Removes one item from the batch.
   void removeAt(int index) {
     if (index < 0 || index >= state.items.length) return;
-    // Invalidate any in-flight fetch so a late result cannot resurrect it.
-    _run++;
+    // Invalidate any in-flight fetch so a late result cannot resurrect the
+    // removed item — but not the batch run, which is still resolving the rest.
+    _itemEpoch++;
     final next = [...state.items]..removeAt(index);
-    state = state.copyWith(items: next, isResolving: false);
+    _write(items: next);
   }
 
   /// Discards resolved and failed items, keeping the ones still loading.
   void clearFinished() {
-    // Bumping the run id discards any in-flight result, so a late fetch cannot
-    // repopulate an item the user just cleared.
-    _run++;
-    final next = [
+    // A run in progress walks the list by index, so the list changing under it
+    // stops it outright — hence the batch bump. The items it was going to
+    // resolve are kept, but demoted from `loading` to `pending`: nothing is
+    // fetching them any more, and leaving them `loading` would show a spinner
+    // that nothing will ever resolve.
+    _batchRun++;
+    _itemEpoch++;
+    _write(items: [
       for (final i in state.items)
-        if (i.status == BatchItemStatus.loading) i,
-    ];
-    state = state.copyWith(items: next, isResolving: next.isNotEmpty);
+        if (i.status == BatchItemStatus.loading) BatchItem(url: i.url),
+    ]);
   }
 
   void clear() {
-    _run++;
+    _batchRun++;
+    _itemEpoch++;
     state = const BatchState();
+  }
+
+  /// Publishes [items], deriving `isResolving` from them.
+  ///
+  /// Deriving rather than tracking the flag alongside every mutation means it
+  /// cannot drift: an item left `loading` by a superseded run keeps the
+  /// indicator honest instead of the whole batch claiming to be idle.
+  void _write({List<BatchItem>? items}) {
+    final next = items ?? state.items;
+    state = state.copyWith(
+      items: next,
+      isResolving: next.any((i) => i.status == BatchItemStatus.loading),
+    );
   }
 
   List<BatchItem> _replace(int index, BatchItem item) {

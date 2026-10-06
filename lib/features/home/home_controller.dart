@@ -86,6 +86,15 @@ class HomeController extends Notifier<HomeState> {
     }
   }
 
+  /// Clears the fetched video and any error.
+  ///
+  /// Bumping the request sequence invalidates an in-flight fetch, so a late
+  /// result cannot put the video back after the user has moved on.
+  ///
+  /// Currently uncalled. The shell's indexed stack keeps this state across tab
+  /// switches on purpose — the same reason the playlist picker holds its
+  /// selection — so clearing it on every switch would be a behaviour change, not
+  /// a fix. Kept as the seam for that if it is ever wanted.
   void reset() {
     _requestSeq++;
     state = const HomeState();

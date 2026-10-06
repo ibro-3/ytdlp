@@ -87,6 +87,113 @@ void main() {
     await settle(tester);
   }
 
+  group('post-processing capability', () {
+    testWidgets('toggles stay enabled while typing in an unrelated field', (
+      tester,
+    ) async {
+      // The capability probe was a FutureBuilder argument, so every rebuild of
+      // the section restarted the probe and dropped the answer back to
+      // "unavailable" — the switches visibly flickered greyed out on every
+      // keystroke in the Proxy field above them.
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsBoxProvider.overrideWithValue(settingsBox),
+            ffprobeAvailableProvider.overrideWith((ref) async => true),
+          ],
+          child: const MaterialApp(home: SettingsPage()),
+        ),
+      );
+      await settle(tester);
+
+      final enabledBefore = tester
+          .widgetList<SwitchListTile>(find.byType(SwitchListTile))
+          .where((t) => t.onChanged != null)
+          .length;
+      expect(
+        enabledBefore,
+        greaterThan(0),
+        reason: 'the toggles settled as enabled once the probe answered',
+      );
+
+      // Type into the Proxy field, which rebuilds this section on every change.
+      await tester.enterText(find.byType(TextField).first, 'socks5://1.2.3.4');
+      await tester.pump();
+      await tester.pump();
+
+      expect(
+        find.textContaining('not available'),
+        findsNothing,
+        reason: 'the capability is not lost mid-edit',
+      );
+      expect(
+        tester
+            .widgetList<SwitchListTile>(find.byType(SwitchListTile))
+            .where((t) => t.onChanged != null)
+            .length,
+        enabledBefore,
+        reason: 'the toggles did not lose their capability mid-edit',
+      );
+    });
+
+    testWidgets('a device without ffprobe reports it instead of blinking', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            settingsBoxProvider.overrideWithValue(settingsBox),
+            ffprobeAvailableProvider.overrideWith((ref) async => false),
+          ],
+          child: const MaterialApp(home: SettingsPage()),
+        ),
+      );
+      await settle(tester);
+
+      expect(
+        find.text('ffprobe is not available here, so these are disabled.'),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('restore', () {
+    test('a restored backup updates the live app state', () async {
+      // A restore rewrites the settings box behind the service. `init` did not
+      // notify, so nothing downstream re-read it and the app kept showing the
+      // pre-restore theme and defaults until it was restarted.
+      final container = ProviderContainer(
+        overrides: [settingsBoxProvider.overrideWithValue(settingsBox)],
+      );
+      addTearDown(container.dispose);
+
+      expect(
+        container.read(settingsControllerProvider).maxConcurrency,
+        isNull,
+        reason: 'nothing has been written yet',
+      );
+
+      // Rewrite the box directly, as a restore does.
+      await settingsBox.put(
+        'app_settings',
+        const AppSettings(maxConcurrency: 7).toMap(),
+      );
+      expect(
+        container.read(settingsControllerProvider).maxConcurrency,
+        isNull,
+        reason: 'the controller still holds the old value',
+      );
+
+      container.read(settingsControllerProvider.notifier).reload();
+
+      expect(
+        container.read(settingsControllerProvider).maxConcurrency,
+        7,
+        reason: 'the restored value is now the one the app is using',
+      );
+    });
+  });
+
   group('sections', () {
     testWidgets('the yt-dlp capabilities have their own top-level sections', (
       tester,

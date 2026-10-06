@@ -336,7 +336,7 @@ void main() {
 
       await tester.tap(find.text('Audio'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(ChoiceChip, '128 kbps'));
+      await tester.tap(find.widgetWithText(ChoiceChip, 'Medium'));
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(FilledButton, 'Download 2'));
       await tester.pumpAndSettle();

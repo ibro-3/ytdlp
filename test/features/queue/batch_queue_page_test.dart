@@ -187,6 +187,52 @@ void main() {
       );
       expect(find.textContaining('Fetching details'), findsOneWidget);
     });
+
+    testWidgets('an unresolved row renders instead of throwing', (tester) async {
+      // `clearFinished` keeps the rows a run in progress had not reached yet, so
+      // a video-less, error-less, non-playlist item is reachable. It used to be
+      // forced non-null, which threw on a perfectly ordinary state.
+      await pump(
+        tester,
+        const BatchState(
+          items: [BatchItem(url: 'https://example.com/pending')],
+        ),
+      );
+      expect(find.textContaining('Not resolved yet'), findsOneWidget);
+    });
+
+    testWidgets('every row can be removed on its own', (tester) async {
+      // The only action was "clear the list", so one bad link in a large paste
+      // cost the user every good one alongside it.
+      await pump(
+        tester,
+        BatchState(
+          items: [
+            BatchItem(
+              url: 'https://example.com/watch?v=ok',
+              status: BatchItemStatus.ready,
+              video: _video('ok'),
+            ),
+            const BatchItem(
+              url: 'https://example.com/gone',
+              status: BatchItemStatus.failed,
+              error: 'Video unavailable',
+            ),
+          ],
+        ),
+      );
+
+      expect(find.byTooltip('Remove this link'), findsNWidgets(2));
+
+      await tester.tap(find.byTooltip('Remove this link').first);
+      await settleIo(tester);
+
+      expect(
+        find.text('https://example.com/watch?v=ok'),
+        findsNothing,
+        reason: 'the tapped row is gone',
+      );
+    });
   });
 
   group('failed items', () {

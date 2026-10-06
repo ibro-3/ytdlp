@@ -131,22 +131,27 @@ class _QueueMenu extends StatelessWidget {
               ? 'Resume every held download'
               : 'Hold back everything still waiting',
         ),
-        PopupMenuButton<String>(
-          icon: const Icon(Icons.more_vert),
-          onSelected: (v) => _onSelect(context, v),
-          itemBuilder: (context) => [
-            if (hasFinished)
-              PopupMenuItem(
-                value: 'clear',
-                child: Text('Clear finished (${manager.finishedCount})'),
-              ),
-            if (hasWork)
-              const PopupMenuItem(
-                value: 'cancel_all',
-                child: Text('Cancel all'),
-              ),
-          ],
-        ),
+        // Hidden rather than shown-and-empty: with nothing to clear and nothing to
+        // cancel — every task dismissed, say — tapping the overflow opened a
+        // blank sheet with no way out but the bar.
+        if (hasFinished || hasWork)
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            tooltip: 'More queue actions',
+            onSelected: (v) => _onSelect(context, v),
+            itemBuilder: (context) => [
+              if (hasFinished)
+                PopupMenuItem(
+                  value: 'clear',
+                  child: Text('Clear finished (${manager.finishedCount})'),
+                ),
+              if (hasWork)
+                const PopupMenuItem(
+                  value: 'cancel_all',
+                  child: Text('Cancel all'),
+                ),
+            ],
+          ),
       ],
     );
   }

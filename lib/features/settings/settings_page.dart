@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -6,6 +7,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -74,13 +76,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _patch(AppSettings next) =>
       ref.read(settingsControllerProvider.notifier).patch(next);
 
-  static String _audioTierLabel(int? t) => switch (t) {
-    null => 'Best audio',
-    192 => 'High',
-    128 => 'Medium',
-    96 => 'Low',
-    _ => '$t',
-  };
+  
 
   Future<void> _loadVersion() async {
     setState(() {
@@ -112,6 +108,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           _engineMessage = 'Updated — yt-dlp $v';
         });
       }
+      // The capability probe is cached for the life of the container, so a
+      // freshly installed ffmpeg would otherwise go unnoticed until a restart.
+      ref.invalidate(ffprobeAvailableProvider);
     } catch (e) {
       if (mounted) setState(() => _engineMessage = e.toString());
     } finally {
@@ -142,8 +141,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  void _resetDownloadFolder() =>
-      _patch(ref.read(settingsControllerProvider).copyWith(downloadRoot: ''));
+  void _resetDownloadFolder() {
+    unawaited(
+      _patch(ref.read(settingsControllerProvider).copyWith(downloadRoot: '')),
+    );
+  }
 
   /// Imports a Netscape-format `cookies.txt`.
   ///
@@ -258,11 +260,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       _say("That backup is from a newer version of the app");
       return;
     }
-    // The settings service caches its value, so it has to re-read the box for
-    // the new preferences to take effect.
-    ref.read(settingsServiceProvider).init();
+    // The restore rewrites the box behind the settings service, so the controller
+    // has to re-read and republish it. An empty `setState` only repainted this
+    // page from its own stale copy, so `App` kept the old theme and seed and the
+    // app showed pre-restore values until it was restarted.
+    ref.read(settingsControllerProvider.notifier).reload();
     if (!mounted) return;
-    setState(() {});
     _say('Settings restored');
   }
 
@@ -434,7 +437,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
     if (picked == null) return; // Cancelled.
 
-    final names = profileNamesIn(picked);
+    final names = await profileNamesIn(picked);
+    if (!mounted) return;
     if (names.isEmpty) {
       messenger
         ..hideCurrentSnackBar()
@@ -513,8 +517,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           ),
                         ],
                         selected: {settings.themeMode},
-                        onSelectionChanged: (s) =>
-                            _patch(settings.copyWith(themeMode: s.first)),
+                        onSelectionChanged: (s) => unawaited(
+                          _patch(settings.copyWith(themeMode: s.first)),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -531,8 +536,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               name: name,
                               color: Color(value),
                               selected: settings.seedColor == value,
-                              onTap: () =>
-                                  _patch(settings.copyWith(seedColor: value)),
+                              onTap: () => unawaited(
+                                _patch(settings.copyWith(seedColor: value)),
+                              ),
                             ),
                         ],
                       ),
@@ -596,10 +602,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         children: [
                           for (final t in AppSettings.videoTierOptions)
                             ChoiceChip(
-                              label: Text(t == null ? 'Best quality' : '${t}p'),
+                              label: Text(AppSettings.videoTierLabel(t)),
                               selected: settings.defaultVideoTier == t,
-                              onSelected: (_) => _patch(
-                                settings.copyWith(defaultVideoTier: () => t),
+                              onSelected: (_) => unawaited(
+                                _patch(
+                                  settings.copyWith(defaultVideoTier: () => t),
+                                ),
                               ),
                             ),
                         ],
@@ -616,10 +624,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         children: [
                           for (final t in AppSettings.audioTierOptions)
                             ChoiceChip(
-                              label: Text(_audioTierLabel(t)),
+                              label: Text(AppSettings.audioTierLabel(t)),
                               selected: settings.defaultAudioTier == t,
-                              onSelected: (_) => _patch(
-                                settings.copyWith(defaultAudioTier: () => t),
+                              onSelected: (_) => unawaited(
+                                _patch(
+                                  settings.copyWith(defaultAudioTier: () => t),
+                                ),
                               ),
                             ),
                         ],
@@ -632,8 +642,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           'format sheet',
                         ),
                         value: settings.defaultAudioOnly,
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(defaultAudioOnly: v)),
+                        onChanged: (v) => unawaited(
+                          _patch(settings.copyWith(defaultAudioOnly: v)),
+                        ),
                       ),
                       const SizedBox(height: 16),
                       Text(
@@ -647,8 +658,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         title: const Text('Subtitles next to the file'),
                         subtitle: const Text('.srt/.vtt sidecar'),
                         value: settings.defaultWriteSubs,
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(defaultWriteSubs: v)),
+                        onChanged: (v) => unawaited(
+                          _patch(settings.copyWith(defaultWriteSubs: v)),
+                        ),
                       ),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
@@ -656,8 +668,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         title: const Text('Embed subtitles'),
                         subtitle: const Text('Only when ffmpeg is available'),
                         value: settings.defaultEmbedSubs,
-                        onChanged: (v) =>
-                            _patch(settings.copyWith(defaultEmbedSubs: v)),
+                        onChanged: (v) => unawaited(
+                          _patch(settings.copyWith(defaultEmbedSubs: v)),
+                        ),
                       ),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
@@ -665,8 +678,10 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         title: const Text('Include auto-generated captions'),
                         subtitle: const Text('Machine captions, marked "auto"'),
                         value: settings.defaultIncludeAutoSubs,
-                        onChanged: (v) => _patch(
-                          settings.copyWith(defaultIncludeAutoSubs: v),
+                        onChanged: (v) => unawaited(
+                          _patch(
+                            settings.copyWith(defaultIncludeAutoSubs: v),
+                          ),
                         ),
                       ),
                     ],
@@ -716,11 +731,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                     ? 'Choose which sites are sent — not '
                                           'available for a browser'
                                     : 'Choose which sites are sent',
-                                onPressed: () => Navigator.of(context).push(
-                                  MaterialPageRoute<void>(
-                                    builder: (_) => const CookieDomainsPage(),
-                                  ),
-                                ),
+                                onPressed: () => context.push('/settings/cookies'),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.close),
@@ -734,10 +745,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               IconButton(
                                 icon: const Icon(Icons.close),
                                 tooltip: 'Stop using browser cookies',
-                                onPressed: () => _patch(
-                                  settings.copyWith(
-                                    cookieBrowser: '',
-                                    cookieBrowserProfile: '',
+                                onPressed: () => unawaited(
+                                  _patch(
+                                    settings.copyWith(
+                                      cookieBrowser: '',
+                                      cookieBrowserProfile: '',
+                                    ),
                                   ),
                                 ),
                               ),
@@ -981,13 +994,23 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
   List<String> get _templateIssues {
     final t = OutputTemplate(_template.text);
     if (t.raw.trim().isEmpty) return const [];
+    final issues = <String>[];
     if (!t.isUsable) {
-      return [
+      issues.add(
         'Must include ${OutputTemplate.extField} so the app can tell the media '
-            'file from a subtitle or thumbnail sidecar.',
-      ];
+        'file from a subtitle or thumbnail sidecar.',
+      );
     }
-    return const [];
+    // Blocking, not advisory: the template is resolved relative to the staging
+    // directory, so `..` writes the finished file outside it — where the app
+    // neither finds it as the download's result nor cleans it up.
+    if (!t.staysInDirectory) {
+      issues.add(
+        'Cannot step outside the download folder with "..". The app writes '
+        'each download into a staging directory first.',
+      );
+    }
+    return issues;
   }
 
   bool get _valid =>
@@ -1034,15 +1057,21 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
               _buildPage(i, theme, scheme),
           ],
           fallbackHeight: _fallbackHeight,
+          // Capped to the window rather than left unbounded: the carousel is
+          // inside a scrolling page, so on a short window an uncapped natural
+          // height would push the save button far below the fold.
+          maxHeight: MediaQuery.sizeOf(context).height - 240,
           onPageChanged: (i) => _tabController.index = i,
         ),
         const SizedBox(height: 8),
         FilledButton.tonalIcon(
           onPressed: _valid
-              ? () => widget.onPatch(
-                  widget.settings.copyWith(
-                    extraArgs: _args.text,
-                    outputTemplate: _template.text,
+              ? () => unawaited(
+                  widget.onPatch(
+                    widget.settings.copyWith(
+                      extraArgs: _args.text,
+                      outputTemplate: _template.text,
+                    ),
                   ),
                 )
               : null,
@@ -1285,16 +1314,25 @@ Widget _prefIntField({
   required String label,
   required int value,
   required ValueChanged<int> onChanged,
+  String? helper,
 }) {
   return Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: TextFormField(
       initialValue: '$value',
       keyboardType: TextInputType.number,
-      onChanged: (v) => onChanged(int.tryParse(v.trim()) ?? 0),
+      // An unparseable value — a cleared field, a stray letter — falls back to the
+      // current value rather than 0, so deleting the contents to retype does not
+      // momentarily write a zero into the settings.
+      onChanged: (v) {
+        final parsed = int.tryParse(v.trim());
+        if (parsed != null) onChanged(parsed);
+      },
       decoration: InputDecoration(
         isDense: true,
         labelText: label,
+        helperText: helper,
+        helperMaxLines: 2,
         border: const OutlineInputBorder(),
       ),
     ),
@@ -1369,21 +1407,16 @@ Widget _prefSlider(
 
 /// Patches only the yt-dlp prefs, so a change in one section cannot clobber an
 /// unrelated setting like the download folder.
+///
+/// `unawaited` rather than discarded: `onPatch` returns the Hive write, and a
+/// rejection with nothing listening becomes an unhandled async error instead of
+/// something the caller can report.
 void _patchPrefs(
   AppSettings settings,
   Future<void> Function(AppSettings) onPatch,
   YtPrefs next,
 ) {
-  onPatch(settings.copyWith(ytPrefs: next));
-}
-
-/// Resolves ffprobe availability without blocking the first frame.
-Future<bool> _canPostprocess(WidgetRef ref) async {
-  try {
-    return await ref.read(binaryManagerProvider).hasFfprobe();
-  } catch (_) {
-    return false;
-  }
+  unawaited(onPatch(settings.copyWith(ytPrefs: next)));
 }
 
 /// How the app reaches the network, and how hard it pushes.
@@ -1448,6 +1481,12 @@ class _NetworkSection extends ConsumerWidget {
             label: 'Delay between requests (s)',
             value: prefs.sleepRequests,
             onChanged: (v) => patch(prefs.copyWith(sleepRequests: v)),
+            // Stated here because the field accepts anything: a large number is
+            // clamped rather than rejected, and the user should know that
+            // before typing it rather than after.
+            helper:
+                'Clamped to ${YtPrefs.minSleepRequests}–'
+                '${YtPrefs.maxSleepRequests} seconds.',
           ),
           _prefIntField(
             label: 'Request retries',
@@ -1478,7 +1517,8 @@ class _NetworkSection extends ConsumerWidget {
               style: theme.textTheme.bodySmall,
             ),
             value: settings.wifiOnly,
-            onChanged: (v) => onPatch(settings.copyWith(wifiOnly: v)),
+            onChanged: (v) =>
+                unawaited(onPatch(settings.copyWith(wifiOnly: v))),
           ),
         ],
       ),
@@ -1501,140 +1541,219 @@ class _PostProcessingSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = settings.ytPrefs;
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
     void patch(YtPrefs next) => _patchPrefs(settings, onPatch, next);
 
     // Postprocessing needs ffprobe, not just ffmpeg — the same gate the format
     // sheet's embed toggles use. Resolved asynchronously so the section paints
     // immediately and the toggles enable once the probe is known.
-    return FutureBuilder<bool>(
-      future: _canPostprocess(ref),
-      builder: (context, snapshot) {
-        final canPost = snapshot.data ?? false;
-        // Shown when postprocessing is configured but the capability is
-        // missing, since the flags are then silently dropped.
-        final unavailableButOn = prefs.needsPostprocessing && !canPost;
-        return _Section(
-          title: 'Post-processing',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'ffmpeg rewrites the file after it downloads: converting the '
-                'container, or writing tags into it. Each of these needs ffmpeg '
-                'and ffprobe.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
-              ),
-              if (!canPost)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 4),
-                  child: Text(
-                    'ffprobe is not available here, so these are disabled.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.error,
-                    ),
-                  ),
-                ),
-              if (unavailableButOn)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(
-                    'Post-processing is switched on but ffprobe is not '
-                    'available, so these flags are left off the command line.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.error,
-                    ),
-                  ),
-                ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: const Text('Convert to audio only'),
-                subtitle: Text(
-                  !canPost
-                      ? 'Needs ffmpeg and ffprobe (not available)'
-                      : 'Re-encodes the audio into another container',
-                ),
-                value: prefs.extractAudio,
-                onChanged: canPost
-                    ? (v) => patch(prefs.copyWith(extractAudio: v))
-                    : null,
-              ),
-              if (prefs.extractAudio)
-                _prefChips(
-                  context,
-                  label: 'Audio format',
-                  options: YtPrefs.audioFormats,
-                  selected: prefs.audioFormat,
-                  onChanged: (v) => patch(prefs.copyWith(audioFormat: v)),
-                ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: const Text('Remux (no re-encode)'),
-                subtitle: Text(
-                  !canPost ? 'Needs ffmpeg and ffprobe (not available)' : 'Change container without re-encoding — quality is kept',
-                ),
-                value: prefs.remuxVideo.isNotEmpty,
-                onChanged: canPost
-                    ? (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : ''))
-                    : null,
-              ),
-              if (prefs.remuxVideo.isNotEmpty)
-                _prefChips(
-                  context,
-                  label: 'Remux target',
-                  options: YtPrefs.remuxFormats,
-                  selected: prefs.remuxVideo,
-                  onChanged: (v) => patch(prefs.copyWith(remuxVideo: v)),
-                ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: const Text('Embed metadata'),
-                subtitle: Text(
-                  !canPost
-                      ? 'Needs ffmpeg and ffprobe (not available)'
-                      : 'Title, artist and date in the file',
-                ),
-                value: prefs.embedMetadata,
-                onChanged: canPost
-                    ? (v) => patch(prefs.copyWith(embedMetadata: v))
-                    : null,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: const Text('Embed chapters'),
-                value: prefs.embedChapters,
-                onChanged: canPost
-                    ? (v) => patch(prefs.copyWith(embedChapters: v))
-                    : null,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                title: const Text('Remove sponsor segments'),
-                subtitle: Text(
-                  !canPost
-                      ? 'Needs ffmpeg and ffprobe (not available)'
-                      : 'Cuts out SponsorBlock segments',
-                ),
-                value: prefs.sponsorblockRemove,
-                onChanged: canPost
-                    ? (v) => patch(prefs.copyWith(sponsorblockRemove: v))
-                    : null,
-              ),
-            ],
-          ),
-        );
-      },
+    //
+    // `pending` is deliberately distinct from "no ffprobe": showing the
+    // "ffmpeg not found" warning before the probe has answered would flash an
+    // error at a device that is perfectly fine.
+    return ref.watch(ffprobeAvailableProvider).when(
+      loading: () => _PostProcessingBody(
+        settings: settings,
+        prefs: prefs,
+        patch: patch,
+        canPost: null,
+      ),
+      error: (_, _) => _PostProcessingBody(
+        settings: settings,
+        prefs: prefs,
+        patch: patch,
+        canPost: false,
+      ),
+      data: (canPost) => _PostProcessingBody(
+        settings: settings,
+        prefs: prefs,
+        patch: patch,
+        canPost: canPost,
+      ),
     );
   }
 }
+
+/// Body of the post-processing section, shared by the loading and settled
+/// states of the ffprobe probe.
+///
+/// [canPost] is null while the probe is still running, which keeps the toggles
+/// disabled without claiming ffmpeg is missing.
+class _PostProcessingBody extends StatelessWidget {
+  const _PostProcessingBody({
+    required this.settings,
+    required this.prefs,
+    required this.patch,
+    required this.canPost,
+  });
+
+  final AppSettings settings;
+  final YtPrefs prefs;
+  final ValueChanged<YtPrefs> patch;
+
+  /// null means "not known yet".
+  final bool? canPost;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final available = canPost ?? false;
+    final probePending = canPost == null;
+    // Shown when postprocessing is configured but the capability is missing,
+    // since the flags are then silently dropped.
+    final unavailableButOn = prefs.needsPostprocessing && !available;
+    // The reason shown on each disabled switch. While the probe runs this says
+    // "checking", not "not available" — claiming a missing ffmpeg before it has
+    // been looked for would be a lie, and would flash at every device.
+    final unavailableReason = probePending
+        ? 'Checking for ffmpeg and ffprobe…'
+        : 'Needs ffmpeg and ffprobe (not available)';
+    return _Section(
+      title: 'Post-processing',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'ffmpeg rewrites the file after it downloads: converting the '
+            'container, or writing tags into it. Each of these needs ffmpeg '
+            'and ffprobe.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          if (!available)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, bottom: 4),
+              child: Text(
+                probePending
+                    ? 'Looking for ffmpeg and ffprobe…'
+                    : 'ffprobe is not available here, so these are disabled.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: probePending
+                      ? scheme.onSurfaceVariant
+                      : scheme.error,
+                ),
+              ),
+            ),
+          if (unavailableButOn)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Post-processing is switched on but ffprobe is not '
+                'available, so these flags are left off the command line.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.error,
+                ),
+              ),
+            ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Convert to audio only'),
+            subtitle: Text(
+              available
+                  ? 'Re-encodes the audio into another container'
+                  : unavailableReason,
+            ),
+            value: prefs.extractAudio,
+            onChanged: available
+                ? (v) => patch(prefs.copyWith(extractAudio: v))
+                : null,
+          ),
+          if (prefs.extractAudio)
+            _prefChips(
+              context,
+              label: 'Audio format',
+              options: YtPrefs.audioFormats,
+              selected: prefs.audioFormat,
+              onChanged: (v) => patch(prefs.copyWith(audioFormat: v)),
+            ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Remux (no re-encode)'),
+            subtitle: Text(
+              available
+                  ? 'Change container without re-encoding — quality is kept'
+                  : unavailableReason,
+            ),
+            value: prefs.remuxVideo.isNotEmpty,
+            onChanged: available
+                ? (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : ''))
+                : null,
+          ),
+          if (prefs.remuxVideo.isNotEmpty)
+            _prefChips(
+              context,
+              label: 'Remux target',
+              options: YtPrefs.remuxFormats,
+              selected: prefs.remuxVideo,
+              onChanged: (v) => patch(prefs.copyWith(remuxVideo: v)),
+            ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Embed metadata'),
+            subtitle: Text(
+              available
+                  ? 'Title, artist and date in the file'
+                  : unavailableReason,
+            ),
+            value: prefs.embedMetadata,
+            onChanged: available
+                ? (v) => patch(prefs.copyWith(embedMetadata: v))
+                : null,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Embed chapters'),
+            subtitle: Text(
+              available ? 'Chapter markers in the file' : unavailableReason,
+            ),
+            value: prefs.embedChapters,
+            onChanged: available
+                ? (v) => patch(prefs.copyWith(embedChapters: v))
+                : null,
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text('Remove sponsor segments'),
+            subtitle: Text(
+              available
+                  ? 'Cuts out SponsorBlock segments'
+                  : unavailableReason,
+            ),
+            value: prefs.sponsorblockRemove,
+            onChanged: available
+                ? (v) => patch(prefs.copyWith(sponsorblockRemove: v))
+                : null,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The queue sizes offered by the dropdown, in steps of ten.
+///
+/// Shared by the items and by the value-snapping above, so the two cannot drift
+/// apart the way an inline range and a stored value can.
+///
+/// `final`, not `const`: a collection-`for` over a local `var` loop counter is
+/// not a constant expression, and the list only has to be built once per app.
+final List<int> _queueSizeOptions = [
+  for (
+    var n = AppSettings.queueSizeMin;
+    n <= AppSettings.queueSizeMax;
+    n += 10
+  )
+    n,
+];
+
+/// What to show when the stored size is not one of the options.
+const int _defaultQueueSizeOption = 50;
 
 /// How the queue itself behaves: how many run at once, what survives a
 /// restart, and how a download is written to disk.
@@ -1675,12 +1794,20 @@ class _QueueSection extends ConsumerWidget {
               )
                 DropdownMenuItem(value: n, child: Text('$n')),
             ],
-            onChanged: (v) =>
-                onPatch(settings.copyWith(maxConcurrencySetter: () => v)),
+            onChanged: (v) => unawaited(
+              onPatch(settings.copyWith(maxConcurrencySetter: () => v)),
+            ),
           ),
           const SizedBox(height: 12),
           DropdownButtonFormField<int>(
-            initialValue: settings.maxQueueSize,
+            // Snapped to the option set rather than passed through. The stored
+            // value is clamped on read but not rounded, so a restored backup or
+            // a hand-edited box holding (say) 33 produced a value matching no
+            // item, which trips the "exactly one item must have this value"
+            // assertion and takes the page down in debug.
+            initialValue: _queueSizeOptions.contains(settings.maxQueueSize)
+                ? settings.maxQueueSize
+                : _defaultQueueSizeOption,
             isExpanded: true,
             decoration: const InputDecoration(
               isDense: true,
@@ -1691,14 +1818,16 @@ class _QueueSection extends ConsumerWidget {
               border: OutlineInputBorder(),
             ),
             items: [
-              for (
-                var n = AppSettings.queueSizeMin;
-                n <= AppSettings.queueSizeMax;
-                n += 10
-              )
+              for (final n in _queueSizeOptions)
                 DropdownMenuItem(value: n, child: Text('$n')),
             ],
-            onChanged: (v) => onPatch(settings.copyWith(maxQueueSize: v ?? 50)),
+            onChanged: (v) => unawaited(
+              onPatch(
+                settings.copyWith(
+                  maxQueueSize: v ?? _defaultQueueSizeOption,
+                ),
+              ),
+            ),
           ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
@@ -1832,7 +1961,7 @@ class _SaveTemplateButtonState extends ConsumerState<_SaveTemplateButton> {
 /// control it cannot honour — the same shape as the ffmpeg-gated post-processing
 /// switches. A control that is merely hidden would leave a user with a working
 /// browser wondering whether this app can do it at all.
-class _BrowserCookieSection extends StatelessWidget {
+class _BrowserCookieSection extends StatefulWidget {
   const _BrowserCookieSection({
     required this.settings,
     required this.onPatch,
@@ -1840,8 +1969,55 @@ class _BrowserCookieSection extends StatelessWidget {
   });
 
   final AppSettings settings;
-  final void Function(AppSettings) onPatch;
+
+  /// The same `Future<void>` signature every other section takes. It was `void`
+  /// here, which is how a failed Hive write became an unhandled async error
+  /// rather than something the caller could see.
+  final Future<void> Function(AppSettings) onPatch;
   final VoidCallback onBrowse;
+
+  @override
+  State<_BrowserCookieSection> createState() => _BrowserCookieSectionState();
+}
+
+class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
+  AppSettings get settings => widget.settings;
+
+  /// The profiles found in the chosen folder, or null while the scan is running.
+  ///
+  /// A `FutureBuilder` would do this too, but the scan is asynchronous
+  /// filesystem work whose result has to survive a rebuild — the section is
+  /// rebuilt on every settings change, and a future created in the builder would
+  /// restart the walk each time.
+  List<String>? _profiles;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfiles();
+  }
+
+  @override
+  void didUpdateWidget(_BrowserCookieSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Only when the folder actually changed; a theme change must not re-walk it.
+    if (oldWidget.settings.cookieBrowserRootPath !=
+        widget.settings.cookieBrowserRootPath) {
+      _loadProfiles();
+    }
+  }
+
+  Future<void> _loadProfiles() async {
+    final root = widget.settings.cookieBrowserRootPath;
+    if (root.isEmpty) {
+      if (mounted) setState(() => _profiles = null);
+      return;
+    }
+    final names = await profileNamesIn(root);
+    // The scan is awaited, so this State can be gone by the time it finishes.
+    if (!mounted) return;
+    setState(() => _profiles = names);
+  }
 
   /// Why this cannot be used here, or null when it can.
   static String? unavailableReason() => cookieBrowserBlock(
@@ -1861,9 +2037,11 @@ class _BrowserCookieSection extends StatelessWidget {
       cookieBrowser: settings.cookieBrowser,
     );
 
-    final profiles = settings.cookieBrowserRootPath.isEmpty
-        ? const <String>[]
-        : profileNamesIn(settings.cookieBrowserRootPath);
+    // Null while scanning, which the section reports rather than showing an
+    // empty list that looks like "this folder has no profiles".
+    final profiles = _profiles ?? const <String>[];
+    final scanning =
+        _profiles == null && settings.cookieBrowserRootPath.isNotEmpty;
     final profileProblem = checkProfileName(settings.cookieBrowserProfile);
 
     return _Section(
@@ -1935,7 +2113,7 @@ class _BrowserCookieSection extends StatelessWidget {
                           '${profiles.length == 1 ? "profile" : "profiles"} found',
               ),
               trailing: const Icon(Icons.folder_open),
-              onTap: selected == null ? null : onBrowse,
+              onTap: selected == null ? null : widget.onBrowse,
             ),
             if (selected != null) ...[
               const SizedBox(height: 4),
@@ -1958,11 +2136,18 @@ class _BrowserCookieSection extends StatelessWidget {
                 ],
                 onChanged: profiles.isEmpty
                     ? null
-                    : (value) => onPatch(
-                        settings.copyWith(cookieBrowserProfile: value ?? ''),
+                    : (value) => unawaited(
+                        widget.onPatch(
+                          settings.copyWith(cookieBrowserProfile: value ?? ''),
+                        ),
                       ),
               ),
-              if (profiles.isEmpty)
+              if (scanning)
+                const Padding(
+                  padding: EdgeInsets.only(top: 8),
+                  child: LinearProgressIndicator(),
+                )
+              else if (profiles.isEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
@@ -1985,7 +2170,13 @@ class _BrowserCookieSection extends StatelessWidget {
                   // The stored name is still passed to yt-dlp, minus this
                   // profile, so saying so is what makes it honest rather than
                   // merely blocked.
-                  'That profile is being ignored: ${profileProblem.message}',
+                  profileProblem == ProfileProblem.notAProfileName
+                      // A path is not merely ignored — it would be handed to
+                      // yt-dlp, which reads a leading separator as an absolute
+                      // path. Say what actually happens.
+                      ? 'That is a path, not a profile name, so yt-dlp was '
+                            'not pointed at it: ${profileProblem.message}'
+                      : 'That profile is being ignored: ${profileProblem.message}',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.error,
                   ),
@@ -2030,7 +2221,7 @@ class _BrowserCookieSection extends StatelessWidget {
   /// restore, because the jar was never touched.
   void _pick(CookieBrowser? previous, String argument) {
     if (argument == previous?.argument) return;
-    onPatch(settings.copyWith(cookieBrowser: argument));
+    unawaited(widget.onPatch(settings.copyWith(cookieBrowser: argument)));
   }
 }
 
@@ -2275,8 +2466,9 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
     final yt = widget.settings.youtube;
     final ejs = _ejs;
 
-    void patch(YoutubePrefs next) =>
-        widget.onPatch(widget.settings.copyWith(youtube: next));
+    void patch(YoutubePrefs next) {
+      unawaited(widget.onPatch(widget.settings.copyWith(youtube: next)));
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -31,8 +31,13 @@ jobs:
       # Coverage is collected but not gated: a threshold would fail CI on day
       # one for a repo whose service layer is only now being grown, which does
       # not produce signal, just noise that trains people to ignore the check.
+      #
+      # `--exclude-tags network` keeps the suite hermetic. The tagged test
+      # reaches the real GitHub API, which fails on a plane or behind a proxy
+      # and says nothing about the code — CONTRIBUTING promises `test/` needs no
+      # network, and this is what keeps that true.
       - name: Test
-        run: flutter test --coverage
+        run: flutter test --coverage --exclude-tags network
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4
@@ -118,4 +123,34 @@ jobs:
         with:
           name: windows-bundle
           path: build/windows/x64/runner/Release
+          if-no-files-found: error
+
+  # macOS was missing here and only built for releases, which is how a shipped
+  # build ended up with no network at all: the app sandbox needs the
+  # `com.apple.security.network.client` entitlement, and nothing in the PR
+  # workflow was compiling the macOS target to notice.
+  build-macos:
+    name: Build macOS (release)
+    runs-on: macos-latest
+    needs: analyze-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build macOS
+        run: flutter build macos --release
+
+      - name: Upload macOS bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-bundle
+          path: build/macos/Build/Products/Release/ytdlp.app
           if-no-files-found: error

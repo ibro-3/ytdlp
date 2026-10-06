@@ -109,14 +109,26 @@ void main() {
     );
   });
 
+  // Not part of the default run: this reaches the real GitHub API, so it fails
+  // on a plane, behind a proxy that blocks api.github.com, or during a GitHub
+  // outage — none of which say anything about the code under test. It is here
+  // because the service's real behaviour against a real endpoint is worth
+  // checking deliberately.
+  //
+  // Run it with:
+  //   flutter test test/services/app_update_service_test.dart --tags network
   group('a real check', () {
-    test('the live endpoint answers honestly', () async {
-      // Runs the real HTTP client against the real GitHub API. Whatever it
-      // finds — available, current, unreachable — it must land on an honest
-      // state and never throw.
-      final result = await AppUpdater(currentVersion: () async => '1.0.0')
-          .check();
-      expect(result.status, isIn(AppUpdateStatus.values));
-    });
+    test(
+      'the live endpoint answers honestly',
+      () async {
+        // Whatever it finds — available, current, unreachable — it must land on
+        // an honest state and never throw.
+        final result = await AppUpdater(
+          currentVersion: () async => '1.0.0',
+        ).check();
+        expect(result.status, isIn(AppUpdateStatus.values));
+      },
+      tags: const ['network'],
+    );
   });
 }

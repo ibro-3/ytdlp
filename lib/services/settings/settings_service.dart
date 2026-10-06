@@ -12,11 +12,19 @@ class SettingsService extends ChangeNotifier {
   late AppSettings _settings;
   AppSettings get settings => _settings;
 
-  void init() {
+  /// Reloads settings from storage and tells listeners.
+///
+/// Called once at construction, and again after a backup restore — which
+/// rewrites the stored map behind this object's back. Nothing reactive watches
+/// the notifier itself (a Riverpod provider yielding one always-equal instance
+/// never notifies), so this is for `ChangeNotifier` listeners; the reactive
+/// path is `SettingsController.reload`.
+void init() {
     final raw = _box.get(_key);
     _settings = raw is Map
         ? AppSettings.fromMap(Map<String, dynamic>.from(raw))
         : const AppSettings();
+    notifyListeners();
   }
 
   Future<void> update(AppSettings next) async {

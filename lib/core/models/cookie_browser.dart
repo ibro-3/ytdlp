@@ -69,10 +69,13 @@ enum CookieBrowser {
   }
 }
 
-/// Why a profile folder cannot be used.
+/// Why a profile cannot be used.
 enum ProfileProblem {
   /// A folder with no browser profiles in it.
   notAProfileRoot,
+
+  /// A path where a profile name belongs.
+  notAProfileName,
 }
 
 extension ProfileProblemMessage on ProfileProblem {
@@ -81,18 +84,29 @@ extension ProfileProblemMessage on ProfileProblem {
     ProfileProblem.notAProfileRoot =>
       'That folder has no browser profiles in it. Pick the folder that '
           'contains them, not a profile itself.',
+    ProfileProblem.notAProfileName =>
+      'That is a path, not a profile name. Give just the profile folder name, '
+          'such as "Default" or "Profile 2" — the browser directory itself is '
+          'chosen above.',
   };
 }
 
 /// Returns the problem with [profile], or `null` when it is fine to pass to
 /// yt-dlp.
 ///
-/// yt-dlp accepts `:` and `+` in a profile name, so an empty name is the only
-/// case worth returning a special answer. An empty string becomes the browser's
-/// own default.
+/// yt-dlp treats a profile argument beginning with a path separator as an
+/// *absolute path* rather than a name, so without this check a hand-edited
+/// settings box could aim the cookie read at any directory on the device. An
+/// empty name is fine: it means the browser's own default profile.
+///
+/// `:` and `+` are legal in profile names (Firefox and Chromium use them), so
+/// only genuine path syntax is rejected.
 ProfileProblem? checkProfileName(String profile) {
   final name = profile.trim();
   if (name.isEmpty) return null;
+  if (name.startsWith('/') || name.startsWith(r'\')) {
+    return ProfileProblem.notAProfileName;
+  }
   return null;
 }
 

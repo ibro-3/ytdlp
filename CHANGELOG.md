@@ -67,17 +67,127 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   to list. Selection and the pages already fetched survive a tab switch.
   The **Load more** offer is withdrawn once a page comes back empty or
   short, so it cannot re-request a page the site has no entries for.
+- **Per-link removal in the batch queue** — the only action was "clear the
+  list", so one bad link in a pasted batch cost the user every good one
+  alongside it.
+- **Start-up failures are reported instead of being fatal** — anything thrown
+  before the first frame (a store that will not open, notifications that will
+  not initialise) killed the app with a blank screen and nothing to explain
+  it. Each step is now attempted on its own and any failure is described in
+  the app, which stays usable.
+- **A failed folder scan says so** — an unreadable download folder and an
+  empty one looked identical, with no way to tell that anything went wrong.
 
 ### Changed
 
 - **CI** now builds release APKs split per ABI, plus Linux, Windows and
   macOS bundles, and uploads a coverage report. The Android release
   workflow signs with a keystore from secrets when provided.
+- **macOS is built on every pull request**, not only for releases. Its
+  sandbox entitlements are not verifiable any other way, which is how a
+  release shipped with no network at all.
+- **The desktop yt-dlp binaries are no longer committed.** They were ~56 MB
+  that the app never packaged and does not need — `BinaryManager` prefers a
+  system install and otherwise downloads the official build — so they are
+  gitignored and `tool/fetch_binaries.sh` verifies that what it fetches
+  actually runs. The Android runtime and ffmpeg remain committed, because
+  those are packaged into the APK.
+- **The one networked test is tagged** and excluded from CI, keeping the
+  documented promise that the suite needs no network.
 - **iOS and web scaffolds removed** — there was no engine for either, so
   they were present-but-broken rather than supported.
 
+### Security
+
+- **Cookie jars are written owner-only.** Both files are session credentials
+  and were created world-readable on desktop.
+- **An output template can no longer climb out of the download folder.** `..`
+  in a template made yt-dlp write the finished file anywhere on the
+  filesystem — somewhere the app neither reported nor cleaned up.
+- **A path is refused where a browser profile name belongs.** yt-dlp reads a
+  profile argument beginning with a separator as an absolute path, so a
+  hand-edited settings box could aim the cookie read anywhere. The check that
+  was meant to catch this always returned "fine", leaving the explanatory UI
+  unreachable.
+- **Dismissing a task no longer deletes an arbitrary directory.** The staging
+  path comes back from the queue snapshot; the resume path already refused one
+  outside the staging root but the destructive paths did not.
+- **The JavaScript-runtime installer keeps its backup until it has verified
+  the install**, so a rejected package restores the previous one instead of
+  throwing a filesystem error and leaving nothing. Concurrent installs are
+  serialised rather than racing over one staging directory.
+
 ### Fixed
 
+- **Queue state was not persisted while a download ran** — the snapshot write
+  was debounced, and the debounce restarted on every yt-dlp output line.
+  Progress arrives many times a second, so the timer never fired for the whole
+  duration of a download and the queue snapshot that exists to survive the app
+  being killed was never written. Writes are now throttled rather than
+  debounced, and every visible transition — enqueue, cancel, hold, retry,
+  completion, removal — is written straight away.
+- **Reordering dated finished downloads to 1970** — moving a waiting task
+  re-stamped its creation time to a microsecond after the epoch, and that value
+  is what reaches the library. Queue position now lives in its own field, so a
+  reordered download keeps its real date. Reordering also stopped sinking the
+  waiting tasks below the finished ones.
+- **Two downloads resolving to one filename could destroy each other** — the
+  final name was chosen by checking for a collision and then renaming, with
+  nothing held across the gap. Concurrent downloads finishing together both saw
+  the name as free, and `rename` deletes an existing destination, so one
+  finished file was silently overwritten and both tasks reported the same path.
+  A move that crosses a filesystem boundary — an SD card, a removable volume —
+  also failed outright and discarded a complete download; it now falls back to
+  copy-then-delete.
+- **yt-dlp responses were intermittently read truncated** — the stdout and
+  stderr subscriptions were cancelled the moment the exit status arrived,
+  discarding bytes the pipes had not yet delivered. Anything past the pipe
+  buffer was lost, which showed up as an intermittent "response the app could
+  not read" and, for a large playlist, an intermittent failure to recognise the
+  output as a playlist.
+- **Cancelling left the download process unreaped** — the run loop returned
+  without waiting for the child, then dropped the only handle on it. yt-dlp
+  handles SIGTERM by finishing the fragment it is on, and its `ffmpeg`
+  children never see the signal at all, so a cancelled or held download could
+  keep writing into a staging directory the UI had already deleted. Cancellation
+  now escalates to SIGKILL and the child is waited for; a hold that could never
+  complete — which left the task `downloading` and stalled the whole queue — is
+  no longer possible.
+- **Retrying a batch item stranded the rest of the batch** — retrying one
+  failed link invalidated the resolve-all run, so every item after it stayed
+  `loading` with no fetch in flight: a spinner nothing would ever resolve.
+- **The post-processing switches flickered while typing** — the ffmpeg/ffprobe
+  capability check ran as a future created inside a builder, so every keystroke
+  anywhere in Settings restarted it and dropped the answer back to
+  "unavailable". It is resolved once per session, and says "checking" rather
+  than claiming ffmpeg is missing before it has looked.
+- **Restoring a settings backup did not change the running app** — the restore
+  rewrote the stored settings but nothing re-read them, so the theme and
+  download defaults stayed as they were until the next launch, right after the
+  UI said "Settings restored".
+- **A changed concurrency limit needed a restart** — the download manager
+  listened to the settings *service*, which always yields the same instance, so
+  the listener never fired. It now follows the settings state.
+- **A corrupt history record could stop the app from starting** — one
+  unreadable entry in the box threw while the library loaded. The other readers
+  already skipped such an entry; this one now does too.
+- **A dismissed library row could throw** — the "does this file still exist?"
+  check handled its own after-dispose case by returning nothing from a
+  `Future<bool>` error handler, which is itself a type error.
+- **An unknown sort or group option could crash the library tab** — the value
+  was looked up by name and threw on a miss. Names that disagree can only come
+  from a persisted setting written by a different build.
+- **The remembered-queue-size dropdown could assert** — a restored or
+  hand-edited value between the offered steps matched no item. It now snaps to
+  the nearest offered one instead.
+- **`--sleep-requests` was not clamped when edited** — a large number typed
+  into Settings reached the command line until the app restarted and read it
+  back clamped.
+- **A library sort/filter menu value could throw**, as above; and the queue
+  overflow menu opened empty when there was nothing to clear or cancel.
+- **The scheduler could raise `ConcurrentModificationError`** — it iterated the
+  live task list while notifying listeners, so a listener that dismissed a card
+  mid-pump mutated the list being iterated.
 - **Library search** — the search field never filtered the library: the
   query was built but not passed to the view. It now filters live.
 - **Cookie file validation** — the picker accepted anything with a

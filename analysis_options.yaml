@@ -10,11 +10,12 @@
 include: package:flutter_lints/flutter.yaml
 
 analyzer:
+  # `ios/` and `web/` have no directory in this repo — they were removed along
+  # with the platform itself. Listing them costs nothing, but it implies targets
+  # the project does not have.
   exclude:
     - build/**
     - android/**
-    - ios/**
-    - web/**
     - windows/**
     - macos/**
     - linux/**
@@ -31,8 +32,22 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
+    # Nothing added to the `flutter_lints` baseline, deliberately. Three rules
+    # this codebase would benefit from are left off because enabling them
+    # without first running the analyzer over all of `lib/` and `test/` risks
+    # failing CI's `--fatal-infos` on pre-existing violations rather than on
+    # anything new:
+    #
+    #   unawaited_futures     every discarded Hive write in the settings screen
+    #                         had to be wrapped in `unawaited` first; `test/`
+    #                         has many more
+    #   avoid_slow_async_io  `test/` legitimately uses sync IO to set up
+    #                         deterministically
+    #   discarded_futures    the shape behind the disposed-widget TypeError
+    #
+    # Each needs a pass making it green, then a separate commit enabling it.
+    # Worth doing; not worth doing blind.
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

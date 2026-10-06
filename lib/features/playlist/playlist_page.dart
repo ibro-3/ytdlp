@@ -478,7 +478,11 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
             children: [
               for (final tier in tiers)
                 ChoiceChip(
-                  label: Text(_tierLabel(tier, isAudio: isAudio)),
+                  label: Text(
+                    isAudio
+                        ? AppSettings.audioTierLabel(tier)
+                        : AppSettings.videoTierLabel(tier),
+                  ),
                   selected: _tier == tier,
                   onSelected: (_) => setState(() => _tier = tier),
                 ),
@@ -558,11 +562,6 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
         ),
       ),
     );
-  }
-
-  static String _tierLabel(int? tier, {required bool isAudio}) {
-    if (tier == null) return 'Best';
-    return isAudio ? '$tier kbps' : '$tier p';
   }
 }
 

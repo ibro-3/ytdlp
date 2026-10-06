@@ -238,23 +238,31 @@ class YtdlpProcess implements DownloadProcess {
   YtdlpProcess(this._process);
   final Process _process;
 
+  Timer? _escalate;
+  bool _canceled = false;
+
+  /// Decodes one of the child's pipes into lines.
+  ///
+  /// Lenient, like [_runCaptured]: yt-dlp writes its own output but the pipe
+  /// also carries whatever a downloaded page or a misbehaving extractor made it
+  /// print, and a single malformed byte would otherwise fail the whole download
+  /// with a raw FormatException instead of a useful error.
+  Stream<String> _lines(Stream<List<int>> pipe) =>
+      pipe.transform(const Utf8Decoder(allowMalformed: true))
+          .transform(const LineSplitter());
+
   @override
   Stream<String> get lines {
-    final out = _process.stdout
-        .transform(utf8.decoder)
-        .transform(const LineSplitter());
-    final err = _process.stderr
-        .transform(utf8.decoder)
-        .transform(const LineSplitter());
-    // Merge without extra dependency
     final controller = StreamController<String>();
+    StreamSubscription<String>? outSub;
+    StreamSubscription<String>? errSub;
     var doneOut = false;
     var doneErr = false;
     void checkDone() {
       if (doneOut && doneErr && !controller.isClosed) controller.close();
     }
 
-    out.listen(
+    outSub = _lines(_process.stdout).listen(
       controller.add,
       onDone: () {
         doneOut = true;
@@ -262,7 +270,7 @@ class YtdlpProcess implements DownloadProcess {
       },
       onError: controller.addError,
     );
-    err.listen(
+    errSub = _lines(_process.stderr).listen(
       controller.add,
       onDone: () {
         doneErr = true;
@@ -270,21 +278,59 @@ class YtdlpProcess implements DownloadProcess {
       },
       onError: controller.addError,
     );
+    // The consumer abandons this stream whenever the download is canceled or
+    // paused. Without this the two inner subscriptions stay live until the
+    // pipes close — and on a cancel the child is precisely what we just asked
+    // to die, so they would outlive the task and keep buffering into nothing.
+    // `checkDone` is called too, so a cancel racing the child's exit still ends
+    // the controller rather than leaving it open forever.
+    controller.onCancel = () async {
+      await outSub?.cancel();
+      await errSub?.cancel();
+      doneOut = true;
+      doneErr = true;
+      checkDone();
+    };
     return controller.stream;
   }
 
   @override
-  Future<int> get exitCode => _process.exitCode;
+  Future<int> get exitCode async {
+    final code = await _process.exitCode;
+    _escalate?.cancel();
+    _escalate = null;
+    return code;
+  }
+
+  /// How long a canceled process is given to shut down cleanly before being
+  /// killed outright.
+  static const Duration _killGrace = Duration(seconds: 5);
 
   @override
   void cancel() {
+    if (_canceled) return;
+    _canceled = true;
+    bool sent = false;
     try {
       _process.kill(ProcessSignal.sigterm);
+      sent = true;
     } catch (_) {
       try {
         _process.kill();
+        sent = true;
       } catch (_) {}
     }
+    if (!sent) return;
+    // yt-dlp installs a SIGTERM handler and finishes the fragment it is on, so a
+    // wedged child can outlive the cancel indefinitely — and the Android runtime
+    // is a Python parent whose ffmpeg children never see the signal at all.
+    // Escalating means a pause can always complete, rather than leaving the task
+    // stuck in `downloading` with no slot ever freed again.
+    _escalate = Timer(_killGrace, () {
+      try {
+        _process.kill(ProcessSignal.sigkill);
+      } catch (_) {}
+    });
   }
 }
 
@@ -310,10 +356,18 @@ class PlaylistResult extends FetchResult {
 }
 
 class YtdlpService implements DownloadEngine {
-  YtdlpService(this._binary);
+  YtdlpService(this._binary, {Duration metadataTimeout = _defaultMetadataTimeout})
+    : _metadataTimeout = metadataTimeout;
+
   final BinaryManager _binary;
 
-  static const _metadataTimeout = Duration(seconds: 90);
+  static const _defaultMetadataTimeout = Duration(seconds: 90);
+
+  /// Ceiling on a metadata fetch.
+  ///
+  /// Injectable so a test can exercise the timeout without waiting 90 seconds
+  /// of real time.
+  final Duration _metadataTimeout;
 
   /// Fetches metadata for [url], resolving it to either a single video or a
   /// playlist.
@@ -571,8 +625,17 @@ class YtdlpService implements DownloadEngine {
   }
 
   /// Explains an oversized metadata response.
+  ///
+  /// Says whether the app stopped the process itself, because those are two
+  /// different problems from the user's point of view: a site that genuinely sent
+  /// too much, versus one still sending after the app had read enough.
   static String _oversizeMessage(_CapturedRun run) {
     final size = formatBytesShort(run.stdoutBytes);
+    if (run.killedForFlood) {
+      return 'The site sent more than $size and was still going; the app '
+          'stopped reading there.\nTry a different link, or report it with the '
+          'site name.';
+    }
     return 'The site sent a very large response ($size) that the app could '
         'not read.\nTry a different link, or report it with the site name.';
   }
@@ -639,10 +702,31 @@ class YtdlpService implements DownloadEngine {
       kill();
     });
 
-    final code = await process.exitCode;
-    timer.cancel();
-    await outSub.cancel();
-    await errSub.cancel();
+    // Both pipes are drained exactly once whether or not the exit status
+    // arrives: `asFuture` must not be called twice on one subscription.
+    var drained = false;
+    Future<void> drain() async {
+      if (drained) return;
+      drained = true;
+      await _drain(outSub);
+      await _drain(errSub);
+    }
+
+    late final int code;
+    try {
+      code = await process.exitCode;
+    } finally {
+      timer.cancel();
+      // Exit status and pipe output arrive on separate channels, so bytes can
+      // still be buffered when the child is reaped. Cancelling the
+      // subscriptions at that point throws away the tail of the payload, which
+      // shows up as an intermittent "yt-dlp sent a response the app could not
+      // read" and — for a large playlist — an intermittent failure to notice the
+      // output is a playlist at all. Wait for the pipes to finish draining
+      // instead. Neither subscription has an `onError`, so a decode failure at
+      // the very end would otherwise surface as an unhandled async error.
+      await drain();
+    }
 
     return _CapturedRun(
       code: code,
@@ -654,6 +738,23 @@ class YtdlpService implements DownloadEngine {
       stderrOverflowed: err.overflowed,
       killedForFlood: killedForFlood,
     );
+  }
+
+  /// Waits for [sub]'s stream to finish, cancelling it afterwards.
+  ///
+  /// Swallows errors deliberately: a decode failure on the last few bytes must
+  /// not discard the payload that *was* read, and the caller has already
+  /// recorded the real failure (non-zero exit, timeout, or flood kill).
+  static Future<void> _drain(StreamSubscription<String> sub) async {
+    try {
+      // `Object?` with an explicit null rather than `void`: `asFuture` rejects a
+      // null default for a non-nullable type argument, and spelling it out is
+      // cheaper than reasoning about whether `void` counts.
+      await sub.asFuture<Object?>(null);
+    } catch (_) {
+      // Intentionally ignored; see above.
+    }
+    await sub.cancel();
   }
 
   @override
@@ -762,7 +863,15 @@ class _CapturedRun {
   final bool stdoutOverflowed;
 
   /// Only a diagnostic hint: stderr overflow never fails a successful command.
+  ///
+  /// Read by the oversize message so it can say how much was dropped, rather
+  /// than quoting a byte count the user has no way to interpret.
   final bool stderrOverflowed;
 
+  /// Whether the child was killed because it blew the stdout budget.
+  ///
+  /// Distinct from [stdoutOverflowed] only in principle — the kill happens on the
+  /// same condition — but it is kept because it answers a different question for
+  /// diagnostics: was the process still running, or did we stop it?
   final bool killedForFlood;
 }

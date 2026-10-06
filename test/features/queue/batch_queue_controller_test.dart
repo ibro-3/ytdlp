@@ -51,6 +51,30 @@ class _FakeService extends YtdlpService {
   }
 }
 
+/// Fails a designated URL on its first request and resolves it on every one
+/// after that, so a retry can be observed recovering while the surrounding batch
+/// is still resolving.
+class _RetryingService extends YtdlpService {
+  _RetryingService({required this.flakyUrl, this.delay = Duration.zero})
+    : super(BinaryManager());
+
+  final String flakyUrl;
+  bool _failedOnce = false;
+
+  /// Per-request delay, so a run is still in flight when the retry starts.
+  final Duration delay;
+
+  @override
+  Future<FetchResult> fetch(String url) async {
+    await Future<void>.delayed(delay);
+    if (url == flakyUrl && !_failedOnce) {
+      _failedOnce = true;
+      throw const YtdlpException('Video unavailable.');
+    }
+    return VideoResult(_video(url));
+  }
+}
+
 /// Fails until [succeed] is set, for testing a retry that actually recovers.
 class _FlakyService extends YtdlpService {
   _FlakyService() : super(BinaryManager());
@@ -102,7 +126,6 @@ void main() {
     expect(state.ready, 3);
     expect(state.failed, 0);
     expect(state.videos.map((v) => v.id), ['a1', 'a2', 'a3']);
-    expect(state.canEnqueue, isTrue);
     expect(state.isResolving, isFalse);
   });
 
@@ -137,10 +160,10 @@ void main() {
         .resolveAll(['https://a.example.com/1', 'https://p.example.com/pl']);
 
     final state = c.read(batchQueueControllerProvider);
-    expect(state.playlists, hasLength(1));
-    expect(state.playlists.single.playlist!.title, 'A Playlist');
     // Only the video is offered for enqueue; the playlist needs its own picker.
     expect(state.videos.map((v) => v.id), ['a1']);
+    final playlist = state.items.singleWhere((i) => i.isPlaylist).playlist;
+    expect(playlist?.title, 'A Playlist');
   });
 
   test('an empty list clears the batch', () async {
@@ -216,6 +239,50 @@ void main() {
     expect(flaky.calls, 2, reason: 'exactly one extra fetch');
   });
 
+  test('retryOne does not strand the rest of a batch in loading', () async {
+    // The regression this guards: retryOne used to bump the same token the
+    // resolve-all loop watched, so the loop bailed and every item after the
+    // retried one stayed `loading` with no fetch in flight — a spinner that
+    // never resolves, with nothing left to resolve it.
+    const flaky = 'https://b.example.com/2';
+    // 40ms per URL, resolved in order: 'a' settles at ~40ms, 'b' fails at ~80ms,
+    // 'c' is still in flight at ~90ms. Retrying there is exactly the window the
+    // old code got wrong — the retry is what used to kill the loop before 'c'.
+    const perUrl = Duration(milliseconds: 40);
+    final c = ProviderContainer(
+      overrides: [
+        ytdlpServiceProvider.overrideWithValue(
+          _RetryingService(flakyUrl: flaky, delay: perUrl),
+        ),
+      ],
+    );
+    addTearDown(c.dispose);
+    final notifier = controller(c);
+    final pending = notifier.resolveAll([
+      'https://a.example.com/1',
+      'https://b.example.com/2',
+      'https://c.example.com/3',
+    ]);
+    await Future<void>.delayed(perUrl + perUrl + const Duration(milliseconds: 10));
+    expect(
+      c.read(batchQueueControllerProvider).items[1].status,
+      BatchItemStatus.failed,
+      reason: 'the middle item failed on the first pass',
+    );
+    await notifier.retryOne(1);
+    await pending;
+
+    final state = c.read(batchQueueControllerProvider);
+    expect(
+      state.items.where((i) => i.status == BatchItemStatus.loading),
+      isEmpty,
+      reason: 'nothing is left spinning',
+    );
+    expect(state.ready, 3, reason: 'all three resolved, retry included');
+    expect(state.failed, 0);
+    expect(state.isResolving, isFalse);
+  });
+
   test('retryOne ignores an item that did not fail', () async {
     service = _FakeService({'https://a.example.com/1': 'a1'});
     final c = await container();
@@ -280,7 +347,7 @@ void main() {
     notifier.clear();
     final state = c.read(batchQueueControllerProvider);
     expect(state.total, 0);
-    expect(state.canEnqueue, isFalse);
+    expect(state.videos, isEmpty);
   });
 
   test('every URL is fetched exactly once', () async {

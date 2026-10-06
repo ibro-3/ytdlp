@@ -137,6 +137,10 @@ class _StubManager extends DownloadManager {
   @override
   bool dismiss(String id) {
     dismissed.add(id);
+    // Really removes it, so a test can reach the genuinely-empty queue the
+    // overflow menu has to cope with. The real manager does the same.
+    tasks.removeWhere((t) => t.id == id);
+    notifyListeners();
     return true;
   }
 
@@ -309,15 +313,29 @@ void main() {
     expect(manager.canceled, isEmpty, reason: 'backing out cancels nothing');
   });
 
-  testWidgets('clear finished is offered only when something is finished', (
+  testWidgets('the overflow menu is hidden when it would be empty', (
     tester,
   ) async {
-    // A running task alone has nothing to clear.
+    // With queued work there is something to cancel, so the menu is offered.
     manager.seed([_task('a')]);
     await pump(tester);
-    await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Clear finished'), findsNothing);
+    expect(find.byTooltip('More queue actions'), findsOneWidget);
+
+    // Once it finishes there is still something to clear, so it stays.
+    manager.setStatus('a', DownloadStatus.completed);
+    await pump(tester);
+    expect(find.byTooltip('More queue actions'), findsOneWidget);
+
+    // And once that is dismissed there is nothing to clear and nothing to
+    // cancel. The button used to stay visible and open a blank sheet.
+    manager.dismiss(manager.tasks.single.id);
+    await pump(tester);
+    expect(manager.tasks, isEmpty);
+    expect(
+      find.byTooltip('More queue actions'),
+      findsNothing,
+      reason: 'no clear, no cancel: nothing for the menu to do',
+    );
   });
 
   testWidgets('a playlist task names its playlist', (tester) async {

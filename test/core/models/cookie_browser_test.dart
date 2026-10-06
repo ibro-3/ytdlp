@@ -27,16 +27,26 @@ void main() {
   });
 
   group('checkProfileName', () {
-    test('any non-empty name is accepted', () {
+    test('an ordinary profile name is accepted', () {
       expect(checkProfileName('Default'), isNull);
       expect(checkProfileName('Profile 2'), isNull);
-      expect(checkProfileName('   '), isNull);
-      expect(checkProfileName(r'C:\Users\me\Profile 2'), isNull);
+      expect(checkProfileName('   '), isNull, reason: 'empty means the default');
       expect(checkProfileName('chrome+kwallet6'), isNull);
     });
 
-    test('the only problem is a missing folder', () {
+    test('a path is refused', () {
+      // yt-dlp reads a profile argument that starts with a path separator as an
+      // absolute path, so a hand-edited settings box could otherwise aim the
+      // cookie read at any directory on the device.
+      expect(checkProfileName('/etc'), ProfileProblem.notAProfileName);
+      expect(checkProfileName('/home/me/.config/chrome'), ProfileProblem.notAProfileName);
+      expect(checkProfileName(r'\Users\me'), ProfileProblem.notAProfileName);
+      expect(checkProfileName('  /etc  '), ProfileProblem.notAProfileName);
+    });
+
+    test('every problem has something to show the user', () {
       expect(ProfileProblem.notAProfileRoot.message, isNotNull);
+      expect(ProfileProblem.notAProfileName.message, isNotNull);
     });
   });
 
@@ -260,71 +270,74 @@ void main() {
       File('${dir.path}/cookies.sqlite').writeAsStringSync('x');
     }
 
-    test('finds a Chromium root', () {
+    test('finds a Chromium root', () async {
       // Linux keeps the store bare; Windows and macOS bury it in Network/.
       chromium('Default');
       chromiumNetwork('Profile 1');
 
-      expect(profileNamesIn(root.path), ['Default', 'Profile 1']);
+      expect(await profileNamesIn(root.path), ['Default', 'Profile 1']);
     });
 
-    test('finds a Firefox root', () {
+    test('finds a Firefox root', () async {
       firefox('4g3ab2.default-release');
 
-      expect(profileNamesIn(root.path), ['4g3ab2.default-release']);
+      expect(await profileNamesIn(root.path), ['4g3ab2.default-release']);
     });
 
-    test('lists the default profile first', () {
+    test('lists the default profile first', () async {
       chromium('Profile 2');
       chromium('Default');
 
-      expect(profileNamesIn(root.path).first, 'Default');
+      expect((await profileNamesIn(root.path)).first, 'Default');
     });
 
-    test('lists the Firefox default first too', () {
+    test('lists the Firefox default first too', () async {
       firefox('zzz.default');
       firefox('4g3a.default-release');
 
-      expect(profileNamesIn(root.path).first, '4g3a.default-release');
+      expect(
+        (await profileNamesIn(root.path)).first,
+        '4g3a.default-release',
+      );
     });
 
-    test('ignores directories with no cookie store in them', () {
+    test('ignores directories with no cookie store in them', () async {
       // A browser's profile root also holds Extensions, Local State, Crashpad
       // and more. Reporting those would make the picker unusable.
       Directory('${root.path}/Extensions/abc').createSync(recursive: true);
       Directory('${root.path}/System Profile').createSync();
       chromium('Default');
 
-      expect(profileNamesIn(root.path), ['Default']);
+      expect(await profileNamesIn(root.path), ['Default']);
     });
 
-    test('does not descend past one level', () {
+    test('does not descend past one level', () async {
       // A recursive walk would report the whole browser installation, and a
       // profile nested inside another is not something yt-dlp accepts.
       chromium('Default');
       final nested = Directory('${root.path}/Profile 9')..createSync();
       Directory('${nested.path}/Vendor/Cookies').createSync(recursive: true);
 
-      expect(profileNamesIn(root.path), ['Default']);
+      expect(await profileNamesIn(root.path), ['Default']);
     });
 
-    test('ignores hidden folders', () {
+    test('ignores hidden folders', () async {
       chromium('Default');
       Directory('${root.path}/.cache').createSync();
 
-      expect(profileNamesIn(root.path), ['Default']);
+      expect(await profileNamesIn(root.path), ['Default']);
     });
 
-    test('a missing folder is an empty list, not an error', () {
+    test('a missing folder is an empty list, not an error', () async {
       // The user can have picked a folder on removable media that is now gone.
       // Throwing here would take the settings page down with it.
-      expect(profileNamesIn('${root.path}/gone'), isEmpty);
+      expect(await profileNamesIn('${root.path}/gone'), isEmpty);
     });
 
-    test('a file rather than a folder is an empty list', () {
+    test('a file rather than a folder is an empty list', () async {
       final file = File('${root.path}/cookies.txt')
         ..writeAsStringSync('# Netscape HTTP Cookie File\n');
-      expect(profileNamesIn(file.path), isEmpty);
+      expect(await profileNamesIn(file.path), isEmpty);
     });
   });
 }

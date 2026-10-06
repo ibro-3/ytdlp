@@ -54,28 +54,10 @@ class PlaylistInfo {
 
   bool get isEmpty => entries.isEmpty;
 
-  /// Whether [entries] is known to be the whole collection, which a curated
-  /// playlist is and a channel is not.
-  bool get isComplete => !paging.hasMore;
-
   /// Sum of the entries whose duration is known. Entries without a duration
   /// (live streams, some extractors) contribute nothing, so this is a lower
   /// bound rather than an exact total.
   int get totalDuration => entries.fold(0, (sum, e) => sum + e.duration);
-
-  /// Builds a format list for a whole batch from a quality tier, mirroring the
-  /// selectors the single-video path produces in [VideoInfo].
-  ///
-  /// `tier` is a height in pixels for video (null = best available) and a
-  /// bitrate ceiling in kbps for audio.
-  List<Format> formatsFor({required FormatKind kind, int? tier}) {
-    return [
-      switch (kind) {
-        FormatKind.video => videoFormatForTier(tier, hasFfmpeg: hasFfmpeg),
-        FormatKind.audio => audioFormatForTier(tier),
-      },
-    ];
-  }
 
   /// Builds a collection from a `--flat-playlist` payload.
   ///
@@ -119,12 +101,19 @@ class PlaylistInfo {
     );
 
     return PlaylistInfo(
-      id: (j['id'] as String?) ?? '',
-      title: (j['title'] as String?) ?? 'Untitled playlist',
-      webUrl: (j['webpage_url'] ?? j['original_url'] ?? '') as String,
+      id: jsonString(j['id']) ?? '',
+      title: jsonString(j['title']) ?? 'Untitled playlist',
+      // `jsonString` rather than a cast, matching how the rest of the codebase
+      // reads this payload. A playlist payload comes from the site, so the shape
+      // of a field is not something the app controls, and `as String` on a
+      // number would throw mid-fetch.
+      webUrl:
+          jsonString(j['webpage_url']) ?? jsonString(j['original_url']) ?? '',
       kind: resolveCollectionKind(requestedUrl: requestedUrl, payload: j),
       uploader:
-          (j['uploader'] ?? j['channel'] ?? j['playlist_uploader']) as String?,
+          jsonString(j['uploader']) ??
+          jsonString(j['channel']) ??
+          jsonString(j['playlist_uploader']),
       entries: entries,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess,

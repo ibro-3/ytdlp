@@ -40,8 +40,6 @@ class DownloadOptions {
   /// working so a task restored from an older snapshot still gets its sidecar.
   final bool writeThumb;
 
-  bool get subsEnabled => embedSubs || writeSubs;
-
   /// Whether a download of this kind embeds the thumbnail as cover art.
   ///
   /// There is no toggle for this: an audio file is expected to carry cover art

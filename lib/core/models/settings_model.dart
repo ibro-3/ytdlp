@@ -41,6 +41,26 @@ class AppSettings {
   /// Audio quality tiers from [VideoInfo.audioTiers]; null = best available.
   static const List<int?> audioTierOptions = [null, 192, 128, 96];
 
+  /// Label for an audio quality tier, as shown wherever the tier is offered.
+  ///
+  /// One place for it: this used to be spelled out separately in Settings, the
+  /// playlist picker and the batch picker, and the three had already drifted
+  /// ("Best audio" vs "Best quality" for the same null tier).
+  static String audioTierLabel(int? tier) => switch (tier) {
+    null => 'Best audio',
+    192 => 'High',
+    128 => 'Medium',
+    96 => 'Low',
+    _ => '$tier kbps',
+  };
+
+  /// Label for a video quality tier. A null tier is best available.
+  ///
+  /// Paired with [audioTierLabel] so the same tier reads the same way wherever
+  /// it is offered.
+  static String videoTierLabel(int? height) =>
+      height == null ? 'Best quality' : '$height p';
+
   static const List<(String, int)> seedOptions = [
     ('Red', 0xFFD32F2F),
     ('Blue', 0xFF1565C0),

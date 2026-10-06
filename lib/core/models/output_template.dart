@@ -33,6 +33,26 @@ class OutputTemplate {
   bool get isUsable =>
       raw.contains(extField) || _hasLiteralExtension(effective);
 
+  /// Whether the template would write outside the staging directory.
+  ///
+  /// The template is handed to yt-dlp as `-o <stagingDir>/<template>`, and
+  /// yt-dlp resolves `..` in it. A template naming `../../%(title)s.%(ext)s`
+  /// therefore writes the finished file anywhere on the filesystem — and since
+  /// `_findFinalFile` only accepts paths inside staging, the app would then
+  /// report the download as failed while the file sits outside, untracked and
+  /// uncleaned-up.
+  ///
+  /// `%`-fields are not resolved here, so only literal segments can be judged.
+  /// That is the right way round: a `..` has to be typed, whereas `%(title)s`
+  /// could only become one through a video title, and video titles are run
+  /// through `sanitizeFolderName` before they reach a path.
+  bool get staysInDirectory {
+    for (final segment in effective.split(RegExp(r'[/\\]'))) {
+      if (segment == '..') return false;
+    }
+    return true;
+  }
+
   /// Whether [template] ends in something that reads as a file extension.
   ///
   /// Conservative on purpose: a dot followed by 1-4 alphanumerics at the very

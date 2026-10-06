@@ -332,7 +332,7 @@ void main() {
       final en = info.subtitleTracks.first;
       expect(en.name, 'English');
       expect(en.isAutoOnly, isFalse, reason: 'manual srt exists');
-      expect(en.hasSrt, isTrue);
+      expect(en.exts, contains('srt'));
       final es = info.subtitleTracks[1];
       expect(es.isAutoOnly, isTrue, reason: 'only automatic_captions');
       expect(es.exts, ['vtt']);
@@ -355,6 +355,39 @@ void main() {
     test('empty when the site offers no subtitles', () {
       final info = VideoInfo.fromYtdlpJson(jsonWith(), hasFfmpeg: false);
       expect(info.subtitleTracks, isEmpty);
+    });
+
+    test('a format field of an unexpected type does not throw', () {
+      // These values come from the site, so the app cannot assume their shape.
+      // `as String?` on a number throws, which would have crashed the metadata
+      // fetch rather than quietly dropping the malformed format.
+      late VideoInfo info;
+      expect(
+        () => info = VideoInfo.fromYtdlpJson({
+          'id': 'abc123',
+          'title': 'Sample video',
+          'formats': [
+            {'format_id': 137, 'ext': 'mp4', 'vcodec': 9, 'acodec': 'none'},
+            {'format_id': '140', 'ext': 4, 'vcodec': 'none', 'acodec': 'mp4a'},
+          ],
+        }, hasFfmpeg: true),
+        returnsNormally,
+      );
+      expect(info.id, 'abc123');
+    });
+
+    test('an unexpected string field type falls back to a default', () {
+      final info = VideoInfo.fromYtdlpJson({
+        'id': 'abc123',
+        'title': 42,
+        'webpage_url': ['nope'],
+        'uploader': 7,
+      }, hasFfmpeg: false);
+
+      expect(info.id, 'abc123');
+      expect(info.title, 'Untitled video');
+      expect(info.webUrl, '');
+      expect(info.author, isNull);
     });
   });
 }

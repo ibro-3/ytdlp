@@ -184,6 +184,27 @@ void main() {
       expect(p.title, 'Untitled playlist');
       expect(p.uploader, 'Fallback Channel');
     });
+
+    test('survives the collection fields being the wrong type', () {
+      // These come from the site. `as String` on a number throws, which used to
+      // crash the whole metadata fetch rather than dropping the field.
+      late PlaylistInfo p;
+      expect(
+        () => p = _parse({
+          '_type': 'playlist',
+          'id': 7,
+          'title': 42,
+          'webpage_url': ['nope'],
+          'channel': 3.5,
+          'entries': <Map<String, dynamic>>[],
+        }),
+        returnsNormally,
+      );
+      expect(p.id, '');
+      expect(p.title, 'Untitled playlist');
+      expect(p.webUrl, '');
+      expect(p.uploader, isNull);
+    });
   });
 
   group('videoFormatForTier', () {
@@ -231,32 +252,34 @@ void main() {
     });
   });
 
-  group('PlaylistInfo.formatsFor', () {
-    test('builds one format of the requested kind', () {
-      final p = _parse(_playlist([_entry('a', webpageUrl: 'https://x/a')]));
+  group('batch quality selectors', () {
+    // A flat entry carries no formats, so a batch download's quality comes from
+    // the user's saved tier rather than from the source. These pin the selector
+    // a batch actually produces, which must match what the same video would
+    // resolve to downloaded on its own.
+    test('a video tier mirrors the single-video selector', () {
       expect(
-        p.formatsFor(kind: FormatKind.video, tier: 720).single.selector,
+        videoFormatForTier(720, hasFfmpeg: true).selector,
         'bv*[height<=720]+ba/b[height<=720]/b',
       );
+    });
+
+    test('an audio tier prefers m4a under the cap', () {
       expect(
-        p.formatsFor(kind: FormatKind.audio, tier: 128).single.selector,
+        audioFormatForTier(128).selector,
         'ba[ext=m4a][abr<=128]/ba[ext=m4a]',
       );
     });
 
-    test('respects the device ffmpeg capability', () {
-      final p = PlaylistInfo.fromYtdlpJson(
-        _playlist([_entry('a', webpageUrl: 'https://x/a')]),
-        hasFfmpeg: false,
-        canPostprocess: false,
-      );
+    test('the device ffmpeg capability decides merge versus mp4-only', () {
       expect(
-        p.formatsFor(kind: FormatKind.video, tier: 720).single.selector,
+        videoFormatForTier(720, hasFfmpeg: false).selector,
         contains('[ext=mp4]'),
       );
       expect(
-        p.formatsFor(kind: FormatKind.video, tier: 720).single.selector,
+        videoFormatForTier(720, hasFfmpeg: false).selector,
         isNot(contains('bv*')),
+        reason: 'split streams cannot be merged without ffmpeg',
       );
     });
   });
@@ -339,14 +362,13 @@ void main() {
 
     test('a short slice is complete', () {
       final p = parseWith([_entry('a'), _entry('b')]);
-      expect(p.isComplete, isTrue);
       expect(p.paging.hasMore, isFalse);
     });
 
     test('a reported total is carried through', () {
       final p = parseWith([_entry('a')], playlistCount: 5000);
       expect(p.paging.totalCount, 5000);
-      expect(p.isComplete, isFalse);
+      expect(p.paging.hasMore, isTrue);
     });
 
     test('a reported total is only trusted when it is positive', () {

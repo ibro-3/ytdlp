@@ -104,6 +104,19 @@ class NotificationService {
     }
   }
 
+  /// Notification ids for the tasks this session has announced.
+  ///
+  /// A small counter rather than `taskId.hashCode`. Two distinct ids can hash to
+  /// the same 32-bit value, and then one task's completion notice overwrites the
+  /// other's — or a cancel removes the wrong notification. The counter cannot
+  /// collide within a session, and ids are not persisted, so the numbers being
+  /// reused after a restart is harmless.
+  int _nextId = 0;
+  final Map<String, int> _ids = {};
+
+  /// Stable per-session notification id for [taskId].
+  int _idFor(String taskId) => _ids.putIfAbsent(taskId, () => _nextId++);
+
   Future<void> showProgress({
     required String taskId,
     required String title,
@@ -116,7 +129,7 @@ class NotificationService {
       final pct = (progress * 100).round().clamp(0, 100);
       final sub = [?speed, if (eta != null) 'ETA $eta'].join(' · ');
       await _plugin.show(
-        id: taskId.hashCode,
+        id: _idFor(taskId),
         title: 'Downloading… $pct%',
         body: sub.isEmpty ? title : '$title\n$sub',
         notificationDetails: NotificationDetails(
@@ -156,7 +169,7 @@ class NotificationService {
     if (!_ready) return;
     try {
       await _plugin.show(
-        id: taskId.hashCode,
+        id: _idFor(taskId),
         title: success ? 'Download complete' : 'Download failed',
         body: detail == null || detail.isEmpty ? title : '$title\n$detail',
         notificationDetails: NotificationDetails(
@@ -182,7 +195,10 @@ class NotificationService {
   Future<void> cancel(String taskId) async {
     if (!_ready) return;
     try {
-      await _plugin.cancel(id: taskId.hashCode);
+      await _plugin.cancel(id: _idFor(taskId));
+      // Released, so a long session does not accumulate one entry per task ever
+      // shown. A later show for the same task simply gets a fresh id.
+      _ids.remove(taskId);
     } catch (_) {}
   }
 }

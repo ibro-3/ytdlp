@@ -164,6 +164,24 @@ void main() {
     );
   });
 
+  testWidgets('an unknown path says so in the app, not in go_router', (
+    tester,
+  ) async {
+    // Reachable in practice: an Android share intent or deep link carrying a
+    // path the app does not have. Without an errorBuilder that renders as
+    // go_router's own page, in whatever locale it happens to pick.
+    await pumpRouter(tester, initialLocation: '/nope');
+
+    expect(
+      find.text('That link does not open anywhere in this app'),
+      findsOneWidget,
+    );
+    expect(
+      find.widgetWithText(FilledButton, 'Back to Download'),
+      findsOneWidget,
+    );
+  });
+
   group('leaving the picker and coming back', () {
     // A large channel is listed a page at a time, so losing that listing on a
     // tab switch would mean re-fetching hundreds of entries to show what the

@@ -638,5 +638,39 @@ void main() {
       await hive.close();
       dir.deleteSync(recursive: true);
     });
+
+    test('one corrupt record does not take the library down', () async {
+      // `init` runs inside a provider body at startup, so an unguarded cast here
+      // meant a single bad entry in the box prevented the app from starting.
+      final dir = Directory.systemTemp.createTempSync('ytdlp-history-');
+      Hive.init(dir.path);
+      final hive = await Hive.openBox<dynamic>('corrupt-test');
+
+      await hive.put('good', {
+        'id': 'good',
+        'videoId': 'v1',
+        'title': 'Readable',
+        'thumbnail': null,
+        'filePath': '/dl/good.mp4',
+        'size': 1,
+        'createdAt': DateTime(2026).millisecondsSinceEpoch,
+        'playlistTitle': null,
+      });
+      // A value of the wrong shape entirely, which is what a hand-edited or
+      // half-migrated box looks like.
+      await hive.put('bad', 'not a record at all');
+
+      final service = HistoryService(hive);
+      service.init();
+
+      expect(
+        service.records.map((r) => r.id),
+        ['good'],
+        reason: 'the readable record still loads',
+      );
+
+      await hive.close();
+      dir.deleteSync(recursive: true);
+    });
   });
 }

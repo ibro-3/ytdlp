@@ -44,6 +44,14 @@ void main() {
       );
     });
 
+    test('unwraps angle brackets', () {
+      // A link pasted out of a chat client often arrives as <url>.
+      expect(
+        extractUrl('see <https://example.com/v>'),
+        'https://example.com/v',
+      );
+    });
+
     test('returns null when there is no link', () {
       expect(extractUrl('no link here'), isNull);
       expect(extractUrl(''), isNull);

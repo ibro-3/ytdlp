@@ -26,7 +26,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="${WORK_DIR:-/tmp/opencode/ytdl-android}"
+# Scratch directory for the cross-compile. `${TMPDIR:-/tmp}` rather than a
+# hard-coded path, so this runs the same on any machine.
+WORK="${WORK_DIR:-${TMPDIR:-/tmp}/ytdl-android}"
 OUT="$ROOT/assets/bin/android"
 VER="${FFMPEG_VERSION:-8.1.3}"
 NDK="${ANDROID_NDK:-}"

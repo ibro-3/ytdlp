@@ -47,10 +47,168 @@ class _FakeProcess implements DownloadProcess {
   @override
   Future<int> get exitCode => _killed?.future ?? _exitCode;
 
+  /// Completes the exit with [code] for a test that needs the process to finish
+  /// on demand rather than on cancel.
+  void finish(int code) {
+    if (!(_killed?.isCompleted ?? true)) _killed!.complete(code);
+  }
+
   @override
   void cancel() {
     cancelCount++;
-    if (!(_killed?.isCompleted ?? true)) _killed!.complete(1);
+    finish(1);
+  }
+}
+
+/// Every download writes the *same* output filename, so two concurrent
+/// completions collide on the final destination.
+class _SameNameEngine implements DownloadEngine {
+  int started = 0;
+
+  @override
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required DownloadOptions options,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
+    List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
+  }) async {
+    started++;
+    // The id rides in the query string, matching `_video`.
+    final name = Uri.parse(url).queryParameters['id'];
+    final file = File(p.join(outputDir, 'Title [abc123].mp4'));
+    await file.parent.create(recursive: true);
+    await file.writeAsString('video-$name');
+    return _FakeProcess(
+      lines: ['[download] Destination: ${file.path}'],
+      exitCode: Future<int>.value(0),
+    );
+  }
+}
+
+/// Emits progress lines steadily for [duration] and then finishes successfully.
+///
+/// The lines have to be *spaced out in time*, not just numerous: a burst of
+/// them all arriving in one microtask would still let a debounce timer fire
+/// afterwards, which is exactly what a real download does not do.
+class _PacedProcess implements DownloadProcess {
+  _PacedProcess(this._exit, this.period, this.lines);
+
+  final Future<int> _exit;
+  final Duration period;
+  final List<String> lines;
+
+  @override
+  Stream<String> get lines async* {
+    for (final line in lines) {
+      await Future<void>.delayed(period);
+      yield line;
+    }
+  }
+
+  @override
+  Future<int> get exitCode => _exit;
+
+  @override
+  void cancel() {}
+}
+
+class _PacedProgressEngine implements DownloadEngine {
+  final Completer<int> _exit = Completer<int>();
+  int started = 0;
+
+  /// Long enough to outlive several throttle windows.
+  Duration duration = const Duration(milliseconds: 900);
+
+  @override
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required DownloadOptions options,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
+    List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
+  }) async {
+    started++;
+    final file = File(p.join(outputDir, 'Title [abc123].mp4'));
+    await file.parent.create(recursive: true);
+    await file.writeAsString('video-bytes');
+    // 10ms apart: well inside any plausible debounce interval, so a debounce
+    // that restarts per line would be reset ~90 times over this run.
+    return _PacedProcess(_exit.future, const Duration(milliseconds: 10), [
+      '[download] Destination: ${file.path}',
+      for (var i = 0; i < duration.inMilliseconds ~/ 10; i++)
+        '[download]  50.0% of 10.00MiB at 1.00MiB/s ETA 00:05',
+    ]);
+  }
+}
+
+/// A process whose `lines` stream keeps emitting after the consumer has walked
+/// away, which is what a cancel does: the run loop breaks out of the `await for`
+/// and nothing is left listening.
+class _EndlessProcess implements DownloadProcess {
+  final Completer<int> _killed = Completer<int>();
+  int cancelCount = 0;
+
+  /// Emitted forever, so the manager's line loop only ever ends by being
+  /// abandoned — which is exactly what a cancel does.
+  static Stream<String> _endless() async* {
+    while (true) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+      yield '[download]  10.0% of 10MiB at 1.00MiB/s ETA 00:09';
+    }
+  }
+
+  @override
+  Stream<String> get lines => _endless();
+
+  @override
+  Future<int> get exitCode => _killed.future;
+
+  @override
+  void cancel() {
+    cancelCount++;
+    if (!_killed.isCompleted) _killed.complete(143);
+  }
+}
+
+/// Hands back one specific process, so a test can observe it directly.
+class _FixedProcessEngine implements DownloadEngine {
+  _FixedProcessEngine(this.process);
+
+  final DownloadProcess process;
+  int started = 0;
+
+  @override
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required DownloadOptions options,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
+    List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
+  }) async {
+    started++;
+    return process;
   }
 }
 
@@ -441,6 +599,40 @@ void main() {
       },
     );
 
+    test('a canceled download waits for its process to actually exit', () async {
+      // The regression this guards: cancellation returned from the run loop
+      // without awaiting the exit status, and the `finally` then dropped the
+      // only handle on the child. A real yt-dlp handles SIGTERM by finishing the
+      // fragment it is on, and its ffmpeg children never see the signal at all,
+      // so the process outlived the task and could keep writing into a staging
+      // directory the UI was already free to delete.
+      final process = _EndlessProcess();
+      final engine = _FixedProcessEngine(process);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      final t = m.enqueue(
+        video: _video('x'),
+        format: _video('x').videoFormats.first,
+      );
+      // Wait for the run loop to register the process, not merely to have
+      // spawned it: `cancel` only reaches the child through that registry.
+      await waitUntil(() => t.status == DownloadStatus.downloading);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      m.cancel(t.id);
+
+      // The signal reached the child exactly once.
+      await waitUntil(() => process.cancelCount == 1);
+      // And the run loop finished unwinding, having waited for that child to
+      // exit rather than dropping its handle.
+      await waitUntil(() => t.status == DownloadStatus.canceled);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(t.status, DownloadStatus.canceled);
+      expect(t.filePath, isNull);
+      expect(process.cancelCount, 1, reason: 'not signalled twice');
+    });
+
     test('exit code 0 without an output file fails the task', () async {
       final engine = _NoFileEngine();
       final m = manager(engine);
@@ -676,6 +868,93 @@ void main() {
       expect(m.reorder(b.id, 1), isTrue);
 
       expect(m.queueInStartOrder.map((t) => t.video.id), ['c', 'b']);
+    });
+
+    test('a staging path outside the staging root is never deleted', () async {
+      // `stagingPath` comes back from the queue snapshot, so it is
+      // corruption- or hand-edit-controlled. The resume path already refused a
+      // path outside the staging root; the destructive ones did not, so
+      // dismissing a card could recursively delete an arbitrary directory.
+      final outside = Directory('${tempRoot.path}/precious')
+        ..createSync(recursive: true);
+      final canary = File('${outside.path}/keep.txt')..writeAsStringSync('keep');
+      final video = _video('abc123');
+      final task = DownloadTask(
+        id: 'tampered',
+        video: video,
+        format: video.videoFormats.first,
+        createdAt: DateTime(2026),
+        stagingPath: outside.path,
+      )..status = DownloadStatus.failed;
+
+      final store = QueueStore(historyBox);
+      await store.save([task]);
+      final m = DownloadManager(
+        ytdlp: _FakeEngine(),
+        history: history,
+        downloadsDir: () async => tempRoot,
+        queueStore: store,
+      );
+      addTearDown(m.dispose);
+      await waitUntil(() => m.tasks.isNotEmpty);
+
+      expect(m.dismiss('tampered'), isTrue);
+
+      expect(
+        canary.existsSync(),
+        isTrue,
+        reason: 'a path outside .ytdlp-staging must not be deleted',
+      );
+      expect(outside.existsSync(), isTrue);
+    });
+
+    test('reorder leaves creation time alone', () async {
+      // Reordering used to re-stamp `createdAt` to epoch microseconds. That
+      // value is what reaches the library as the download's date, so a
+      // reordered-then-completed task was filed under 1970.
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      for (final id in ['a', 'b', 'c']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => engine.started == 1);
+
+      final before = {
+        for (final t in m.tasks) t.id: t.createdAt,
+      };
+      expect(m.reorder('b', 1), isTrue);
+      expect(
+        {for (final t in m.tasks) t.id: t.createdAt},
+        before,
+        reason: 'a move must not rewrite when the task was enqueued',
+      );
+    });
+
+    test('reorder does not sink the queued block below finished cards', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      // One task finishes, then two more are queued behind it.
+      m.enqueue(video: _video('done'), format: _video('done').videoFormats.first);
+      await waitUntil(() => m.completedCount == 1);
+      for (final id in ['b', 'c']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => m.queuedCount == 2);
+
+      // Re-stamping to epoch sent every waiting task below the finished one,
+      // because the list is sorted by creation time for display.
+      expect(m.reorder('c', 1), isTrue);
+      final order = m.tasks.map((t) => t.video.id).toList();
+      expect(order.last, 'c', reason: 'the moved task stays in the display list');
+      expect(
+        order.indexOf('b'),
+        lessThan(order.indexOf('c')),
+        reason: 'display order is by creation time, unaffected by the move',
+      );
     });
 
     test('reorder refuses a running or unknown task', () async {
@@ -1176,6 +1455,39 @@ void main() {
       );
     });
 
+    test('two archive-using tasks do not run at the same time', () async {
+      // yt-dlp loads the ledger when a download starts and rewrites the whole
+      // file when it finishes, so two tasks sharing one path lose whichever set
+      // of entries is written first — "skip what I already have" degraded to a
+      // race under the desktop default concurrency of two.
+      final engine = _FakeEngine(exitOnCancel: true);
+      final m = manager(engine, maxConcurrency: 2);
+      addTearDown(m.dispose);
+
+      for (final id in ['a', 'b']) {
+        m.enqueue(
+          video: _video(id),
+          format: _video(id).videoFormats.first,
+          prefs: const YtPrefs(downloadArchive: true),
+        );
+      }
+      await waitUntil(() => engine.started == 1);
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+
+      expect(
+        engine.started,
+        1,
+        reason: 'the second archive-using task waits its turn',
+      );
+
+      engine.calls.first.process.finish(0);
+      await waitUntil(() => engine.started == 2);
+      expect(
+        m.tasks.where((t) => t.status == DownloadStatus.downloading),
+        hasLength(1),
+      );
+    });
+
     test('a per-task prefs override beats the Settings default', () async {
       final engine = _RecordingArgsEngine();
       final (settingsService, box) = await settingsWith(
@@ -1486,6 +1798,54 @@ void main() {
       );
     });
 
+    test('a listener that removes a task mid-pump does not break the scheduler',
+        () async {
+      // `_pump` used to iterate the live task list lazily while calling
+      // `notifyListeners` inside that loop. A listener that removes a task — the
+      // queue UI does exactly this when a card is dismissed — mutated the list
+      // mid-iteration, raising ConcurrentModificationError out of an async
+      // callback, where it surfaces as an unhandled error.
+      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final m = manager(engine, maxConcurrency: 1);
+      addTearDown(m.dispose);
+
+      for (final id in ['a', 'b', 'c']) {
+        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
+      }
+      await waitUntil(() => engine.started == 1);
+
+      var removals = 0;
+      m.addListener(() {
+        if (removals >= 1) return;
+        final waiting = m.tasks.where((t) => t.status == DownloadStatus.queued);
+        if (waiting.isEmpty) return;
+        removals++;
+        m.dismiss(waiting.first.id);
+      });
+
+      // Enqueuing pumps again, which is where the mutation happens. Concurrency
+      // is 1 and one task is already running, so this pump starts nothing and
+      // simply has to survive the notification.
+      m.enqueue(video: _video('d'), format: _video('d').videoFormats.first);
+      await waitUntil(() => removals == 1);
+
+      // The manager is still usable and the queue is intact.
+      expect(removals, 1);
+      expect(m.tasks, isNotEmpty);
+      expect(
+        m.queuedCount,
+        greaterThanOrEqualTo(1),
+        reason: 'the other waiting tasks were not lost',
+      );
+
+      // Releasing the running slot drains the rest of the queue.
+      final running = m.tasks.firstWhere(
+        (t) => t.status == DownloadStatus.downloading,
+      );
+      m.cancel(running.id);
+      await waitUntil(() => m.queuedCount == 0);
+    });
+
     test('cancelPlaylist ignores tasks from another playlist', () async {
       final engine = _FakeEngine();
       final m = manager(engine, maxConcurrency: 1);
@@ -1647,6 +2007,33 @@ void main() {
         );
       },
     );
+
+    test('two downloads resolving to one name both survive', () async {
+      // The regression this guards: choosing a free name checked for a
+      // collision, then renamed without holding anything across the gap. Two
+      // downloads finishing together both saw the name as free, and `rename`
+      // *deletes* an existing destination — so one file was silently destroyed
+      // and both tasks reported the same path.
+      final engine = _SameNameEngine();
+      final m = manager(engine, maxConcurrency: 2);
+      addTearDown(m.dispose);
+
+      final a = m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      final b = m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      await waitUntil(
+        () => a.status == DownloadStatus.completed &&
+            b.status == DownloadStatus.completed,
+      );
+
+      expect(a.filePath, isNot(b.filePath), reason: 'distinct final paths');
+      expect(a.filePath, isNotNull);
+      expect(b.filePath, isNotNull);
+      // Both files are actually on disk with their own contents.
+      expect(File(a.filePath!).existsSync(), isTrue);
+      expect(File(b.filePath!).existsSync(), isTrue);
+      expect(File(a.filePath!).readAsStringSync(), 'video-a');
+      expect(File(b.filePath!).readAsStringSync(), 'video-b');
+    });
   });
 
   group('DownloadManager persistence', () {
@@ -1695,6 +2082,40 @@ void main() {
       },
     );
 
+    test('a snapshot written before queueSeq existed still restores in order',
+        () async {
+      // Snapshots from an older build carry no queueSeq, so `fromMap` falls back
+      // to the creation time to reconstruct the old "oldest first" order.
+      final store = QueueStore(historyBox);
+      final video = _video('abc123');
+      Map<String, dynamic> snapshotOf(String id, DateTime at) {
+        final map = DownloadTask(
+          id: id,
+          video: video,
+          format: video.videoFormats.first,
+          createdAt: at,
+        ).toMap();
+        map.remove('queueSeq');
+        return map;
+      }
+
+      await historyBox.put('queue', [
+        snapshotOf('newest', DateTime(2026, 3)),
+        snapshotOf('oldest', DateTime(2026, 1)),
+      ]);
+
+      final m = DownloadManager(
+        ytdlp: _FakeEngine(),
+        history: history,
+        downloadsDir: () async => tempRoot,
+        queueStore: store,
+      );
+      addTearDown(m.dispose);
+
+      await waitUntil(() => m.tasks.length == 2);
+      expect(m.queueInStartOrder.map((t) => t.id), ['oldest', 'newest']);
+    });
+
     test('a persisted task round-trips its fields', () async {
       final store = QueueStore(historyBox);
       final video = _video('abc123');
@@ -1732,6 +2153,7 @@ void main() {
       expect(back.error, 'boom');
       expect(back.progress, closeTo(0.42, 0.0001));
       expect(back.createdAt, task.createdAt);
+      expect(back.queueSeq, task.queueSeq);
       expect(back.options.writeSubs, isTrue);
       expect(back.options.embedThumb, isTrue);
       expect(back.options.includeAutoSubs, isTrue);
@@ -1865,11 +2287,15 @@ void main() {
       expect(back.writeThumb, isTrue);
       expect(back.subLangsTarget, 'fr,en');
 
-      expect(DownloadOptions.fromMap(null).subsEnabled, isFalse);
+      expect(DownloadOptions.fromMap(null).embedSubs, isFalse);
       expect(const DownloadOptions().subLangsTarget, 'all');
 
       const allOff = DownloadOptions();
-      expect(DownloadOptions.fromMap(allOff.toMap()).subsEnabled, isFalse);
+      expect(
+        DownloadOptions.fromMap(allOff.toMap()).embedSubs,
+        isFalse,
+        reason: 'a round-tripped task keeps its choices',
+      );
     });
 
     test('a corrupt record does not break loading', () async {
@@ -1882,6 +2308,68 @@ void main() {
       final loaded = store.load();
       expect(loaded, hasLength(1));
       expect(loaded.single.id, 'ok');
+    });
+
+    test(
+      'a snapshot is written during a download, not only after it',
+      () async {
+        // The regression this guards: persistence was debounced, and the
+        // debounce restarted on every yt-dlp output line. Progress arrives far
+        // more often than the debounce interval, so the timer never fired for
+        // the whole duration of a download — and the snapshot that exists
+        // precisely to survive the app being killed was never written at all.
+        final engine = _PacedProgressEngine();
+        final store = QueueStore(historyBox);
+        await historyBox.delete('queue');
+        final m = DownloadManager(
+          ytdlp: engine,
+          history: history,
+          downloadsDir: () async => tempRoot,
+          queueStore: store,
+        );
+        addTearDown(m.dispose);
+
+        m.enqueue(
+          video: _video('abc123'),
+          format: _video('abc123').videoFormats.first,
+        );
+        await waitUntil(() => engine.started == 1);
+        // Part way through the paced output: long past a debounce window, with
+        // progress lines still arriving and the download not yet finished.
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        final snapshot = store.load();
+        expect(
+          snapshot.map((t) => t.video.id),
+          contains('abc123'),
+          reason: 'the queue was persisted while still downloading',
+        );
+        expect(snapshot.single.status, DownloadStatus.downloading);
+      },
+    );
+
+    test('a terminal state is written straight away', () async {
+      final store = QueueStore(historyBox);
+      await historyBox.delete('queue');
+      final engine = _FakeEngine();
+      final m = DownloadManager(
+        ytdlp: engine,
+        history: history,
+        downloadsDir: () async => tempRoot,
+        queueStore: store,
+      );
+      addTearDown(m.dispose);
+
+      m.cancel(
+        m.enqueue(
+          video: _video('abc123'),
+          format: _video('abc123').videoFormats.first,
+        ).id,
+      );
+      await waitUntil(() => store.load().isNotEmpty);
+
+      final persisted = store.load().single;
+      expect(persisted.status, DownloadStatus.canceled);
     });
   });
 

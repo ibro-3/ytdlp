@@ -68,8 +68,34 @@ class DownloadManager extends ChangeNotifier {
   /// overwrite the wrong download.
   int _idCounter = 0;
 
+  /// Monotonic source of [DownloadTask.queueSeq] values.
+  ///
+  /// Never reuses a number, so two waiting tasks can never tie on sequence even
+  /// after a reorder has re-stamped part of the queue. Without that guarantee
+  /// the scheduler's sort would be free to return either of two equal-keyed
+  /// tasks in either order.
+  int _queueSeqCounter = 0;
+
+  int _nextQueueSeq() => ++_queueSeqCounter;
+
   DateTime _lastUiNotify = DateTime.fromMillisecondsSinceEpoch(0);
-  Timer? _persistDebounce;
+
+  /// Minimum gap between two automatic queue snapshots.
+  ///
+  /// Throttle rather than debounce: progress lines arrive many times a second,
+  /// so a debounce that restarted on every one of them would never fire and the
+  /// queue snapshot would be lost for the whole duration of a download — exactly
+  /// the interruption the snapshot exists to survive. This bounds the write rate
+  /// without ever postponing a write indefinitely.
+  static const Duration _persistInterval = Duration(seconds: 3);
+
+  Timer? _persistTimer;
+  DateTime? _lastPersistAt;
+
+  /// Serialises snapshot writes so two overlapping saves cannot land out of
+  /// order and leave an older queue on disk.
+  Future<void> _writeChain = Future<void>.value();
+
   bool _restoring = false;
 
   /// When set, no *new* download starts until it is cleared. A running one is
@@ -149,6 +175,9 @@ class DownloadManager extends ChangeNotifier {
   /// Throttle state for the single foreground-service notification.
   ({int pct, DateTime at})? _foregroundNotification;
 
+  /// Final paths claimed by [_moveUnique] but not yet written.
+  final Set<String> _reservedNames = {};
+
   List<DownloadTask> get tasks => List.unmodifiable(_tasks);
 
   /// Tasks that are either queued or actively downloading.
@@ -159,16 +188,16 @@ class DownloadManager extends ChangeNotifier {
   int get queuedCount =>
       _tasks.where((t) => t.status == DownloadStatus.queued).length;
 
-  /// Waiting tasks in the order the scheduler will start them: oldest first.
+  /// Waiting tasks in the order the scheduler will start them: lowest
+  /// [DownloadTask.queueSeq] first.
   ///
-  /// [tasks] is newest-first for display, so this is that order reversed among
-  /// the queued subset. Exposed so the queue UI can show "next up" truthfully
-  /// rather than re-deriving the ordering.
-  List<DownloadTask> get queueInStartOrder => _tasks
-      .where((t) => t.status == DownloadStatus.queued)
-      .toList()
-      .reversed
-      .toList();
+  /// Ordered by [DownloadTask.queueSeq] rather than by [DownloadTask.createdAt]:
+  /// reordering re-stamps the sequence number, so a user's manual ordering is
+  /// respected without rewriting a creation time that has already been handed to
+  /// the library.
+  List<DownloadTask> get queueInStartOrder =>
+      _tasks.where((t) => t.status == DownloadStatus.queued).toList()
+        ..sort((a, b) => a.queueSeq.compareTo(b.queueSeq));
 
   /// Tasks that have reached a terminal state.
   int get completedCount =>
@@ -189,8 +218,8 @@ class DownloadManager extends ChangeNotifier {
     final task = _tasks.where((t) => t.id == id).firstOrNull;
     if (task == null || task.status != DownloadStatus.queued) return false;
 
-    // The scheduler picks the oldest queued task and [tasks] is newest-first,
-    // so "earlier in the queue" is a higher index.
+    // The scheduler runs the lowest queueSeq first, so "earlier in the queue"
+    // is a lower index within [queueInStartOrder].
     final queued = queueInStartOrder;
     final index = queued.indexWhere((t) => t.id == id);
     if (index < 0) return false;
@@ -198,17 +227,14 @@ class DownloadManager extends ChangeNotifier {
     final target = (index + offset).clamp(0, queued.length - 1);
     if (target == index) return false;
 
-    // Re-stamp the queued tasks' createdAt so the scheduler's "oldest first"
-    // ordering follows the new sequence, then re-sort into display order.
-    for (var i = 0; i < queued.length; i++) {
-      queued[i].createdAt = DateTime.fromMicrosecondsSinceEpoch(i + 1);
-    }
     final moved = queued.removeAt(index);
     queued.insert(target, moved);
-    for (var i = 0; i < queued.length; i++) {
-      queued[i].createdAt = DateTime.fromMicrosecondsSinceEpoch(i + 1);
+    for (final t in queued) {
+      t.queueSeq = _nextQueueSeq();
     }
-    _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    // The display order is left alone deliberately: `_tasks` is sorted by
+    // creation time for the user, and re-sorting it here used to move the whole
+    // queued block below the finished cards.
     notifyListeners();
     return true;
   }
@@ -238,6 +264,13 @@ class DownloadManager extends ChangeNotifier {
         _tasks.add(task);
       }
       _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      // Every restored task has just been flipped to `failed`, so there is no
+      // waiting order to preserve here. What matters is that this session's
+      // counter starts above the numbers the snapshot carried, or a later
+      // enqueue could hand out a sequence that ties with a restored one.
+      for (final t in restored) {
+        if (t.queueSeq > _queueSeqCounter) _queueSeqCounter = t.queueSeq;
+      }
       await _cleanOrphanStaging(restored.map((t) => t.stagingPath).toSet());
       notifyListeners();
     } catch (_) {
@@ -264,32 +297,55 @@ class DownloadManager extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Persists the queue, debounced so progress updates don't hammer storage.
+  /// Persists the queue, throttled so progress updates don't hammer storage.
+  ///
+  /// Writes immediately when nothing has been written recently, otherwise
+  /// schedules exactly one write for when the interval elapses. A pending
+  /// timer is never pushed back, so a continuous stream of progress lines
+  /// still produces writes at a steady rate.
   void _schedulePersist() {
     if (_restoring || queueStore == null) return;
-    _persistDebounce?.cancel();
-    _persistDebounce = Timer(const Duration(milliseconds: 500), () {
+    final now = DateTime.now();
+    final last = _lastPersistAt;
+    if (last == null || now.difference(last) >= _persistInterval) {
+      _persistTimer?.cancel();
+      _persistTimer = null;
       unawaited(_persist());
-    });
-  }
-
-  Future<void> _persist() async {
-    final store = queueStore;
-    if (store == null) return;
-    try {
-      await store.save(
-        _tasks,
-        maxTasks: settings?.settings.maxQueueSize ?? QueueStore.defaultMaxTasks,
-      );
-    } catch (_) {
-      // Persistence is best-effort; a download must not fail because of it.
+      return;
     }
+    if (_persistTimer != null) return;
+    _persistTimer = Timer(_persistInterval - now.difference(last),
+        () {
+          _persistTimer = null;
+          unawaited(_persist());
+        });
   }
 
-  /// Persists right away rather than on the debounce timer, for changes that
-  /// shrink the queue and would otherwise be lost if the app died first.
+  Future<void> _persist() {
+    final store = queueStore;
+    if (store == null) return Future<void>.value();
+    _lastPersistAt = DateTime.now();
+    final maxTasks =
+        settings?.settings.maxQueueSize ?? QueueStore.defaultMaxTasks;
+    // Writes are serialised. Hive's `put` is asynchronous, and two overlapping
+    // saves of a list that is still changing can land out of order, leaving the
+    // *older* snapshot on disk — the one case where a queued download silently
+    // vanishes. The failure is absorbed on the chain itself rather than at each
+    // call site, so one rejected write cannot break every write after it.
+    return _writeChain = _writeChain
+        .then((_) => store.save(_tasks, maxTasks: maxTasks))
+        .catchError((Object _) {});
+  }
+
+  /// Persists right away rather than waiting for the throttle window, for
+  /// changes that would otherwise be lost if the app died first.
+  ///
+  /// Every state transition the user can see goes through here — enqueue,
+  /// cancel, retry, completion, removal — so the snapshot on disk always
+  /// describes a state the app has actually shown.
   Future<void> _schedulePersistNow() async {
-    _persistDebounce?.cancel();
+    _persistTimer?.cancel();
+    _persistTimer = null;
     await _persist();
   }
 
@@ -314,6 +370,7 @@ class DownloadManager extends ChangeNotifier {
       video: video,
       format: format,
       createdAt: DateTime.now(),
+      queueSeq: _nextQueueSeq(),
       options: options,
       // An empty override means "whatever Settings says when this runs", so a
       // later default change still applies to a task enqueued before it.
@@ -327,6 +384,7 @@ class DownloadManager extends ChangeNotifier {
     );
     _tasks.insert(0, task);
     notifyListeners();
+    unawaited(_schedulePersistNow());
     _pump();
     return task;
   }
@@ -407,8 +465,7 @@ class DownloadManager extends ChangeNotifier {
         )
         .toList();
     for (final task in removable) {
-      final staging = task.stagingPath;
-      if (staging != null) unawaited(_deleteRecursive(staging));
+      unawaited(_deleteTaskStaging(task));
     }
     _tasks.removeWhere((t) => removable.contains(t));
     if (removable.isNotEmpty) {
@@ -455,9 +512,13 @@ class DownloadManager extends ChangeNotifier {
     // are untouched.
     if (_paused) return;
     if (_runningCount >= _maxConcurrency) return;
-    final candidates = _tasks.reversed.where(
-      (t) => t.status == DownloadStatus.queued,
-    );
+    // Snapshotted before the loop below, not iterated lazily. `notifyListeners`
+    // runs inside that loop, and a listener that adds, removes or reorders a
+    // task — all of which the queue UI can do — would otherwise mutate the list
+    // while it is being iterated and raise ConcurrentModificationError out of an
+    // async callback, where it surfaces as an unhandled error rather than a
+    // visible failure.
+    final candidates = queueInStartOrder;
     // Metered-data guard, consulted once per pump rather than per
     // task: the setting is identical for every candidate, and the
     // probe answers from the connectivity it last saw. Consulted per
@@ -468,8 +529,15 @@ class DownloadManager extends ChangeNotifier {
       return;
     }
     for (final task in candidates) {
+      if (_disposed) return;
+      // Re-checked per task: the list is a snapshot, but a listener reacting to
+      // the notify below can cancel a task that had not started yet.
+      if (task.status != DownloadStatus.queued) continue;
       if (_runningCount >= _maxConcurrency) break;
+      // Serialised: see [_archiveBusy].
+      if (task.prefs.downloadArchive && _archiveBusy) continue;
       task.status = DownloadStatus.downloading;
+      if (task.prefs.downloadArchive) _archiveBusy = true;
       // Start the foreground service so the OS doesn't kill us. The throttle is
       // reset so the very first progress update is never swallowed by a
       // percentage recorded for a previous task.
@@ -545,24 +613,28 @@ class DownloadManager extends ChangeNotifier {
       }
       if (_isCanceled(task)) {
         dl.cancel();
+        // Reap before returning. `_processes.remove` in the `finally` drops the
+        // only handle on this child, and an unreferenced yt-dlp (or the ffmpeg
+        // it spawned) keeps writing into the staging directory that `dismiss`
+        // and `clearFinished` are free to delete underneath it.
+        await _reap(dl, id);
         return;
       }
       _processes[id] = dl;
 
+      // The last path yt-dlp reported it was writing, which may be intermediate —
+      // a DASH fragment, or the container it later merges. Preferred over
+      // scanning the directory when picking the finished file.
       String? lastDestination;
       await for (final line in dl.lines) {
         if (_isCanceled(task)) break;
         final dest = YtdlpProgressParser.parseDestination(line);
         if (dest != null) {
-          task.destinationPath = dest;
           lastDestination = dest;
-          _maybeNotifyUi();
         }
         final merged = YtdlpProgressParser.parseMergedFile(line);
         if (merged != null) {
-          task.destinationPath = merged;
           lastDestination = merged;
-          _maybeNotifyUi();
         }
         final prog = YtdlpProgressParser.parseProgress(line);
         if (prog != null) {
@@ -586,7 +658,15 @@ class DownloadManager extends ChangeNotifier {
           _maybeNotifyUi();
         }
       }
-      if (_isCanceled(task)) return;
+      if (_isCanceled(task)) {
+        _processes.remove(id);
+        // The line loop breaks as soon as the task is canceled, so the exit
+        // status is never awaited here. Reap it: the `finally` is about to drop
+        // the only handle on this child, and an unreferenced yt-dlp keeps
+        // writing into the staging directory `dismiss` may just have deleted.
+        await _reap(dl, id);
+        return;
+      }
 
       final code = await dl.exitCode;
       _processes.remove(id);
@@ -668,17 +748,15 @@ class DownloadManager extends ChangeNotifier {
           task.status == DownloadStatus.paused ||
           task.status == DownloadStatus.canceled;
       if (!keepForResume) {
-        final stagingPath = staging?.path ?? task.stagingPath;
-        if (stagingPath != null) {
+        // `staging` is the directory this run created, so it is trusted; the
+        // fallback to the snapshot's `stagingPath` is not, and goes through the
+        // containment check.
+        if (staging != null) {
+          final stagingPath = staging.path;
           await _deleteRecursive(stagingPath);
-          // Remove the now-empty staging root (best effort; a concurrent
-          // task may still be using it, in which case this is a no-op).
-          final parent = p.dirname(stagingPath);
-          if (p.basename(parent) == '.ytdlp-staging') {
-            try {
-              await Directory(parent).delete();
-            } catch (_) {}
-          }
+          await _pruneEmptyStagingRoot(stagingPath);
+        } else {
+          await _deleteTaskStaging(task);
         }
         task.stagingPath = null;
       }
@@ -686,9 +764,77 @@ class DownloadManager extends ChangeNotifier {
         unawaited(_cancelNotification(id));
       }
       _maybeNotifyUi();
+      // A task that has reached a terminal state is written straight away: the
+      // throttle window may still be open, and a completed download restored as
+      // `downloading` on the next launch would be reported as a failure.
+      if (task.status != DownloadStatus.downloading) {
+        unawaited(_schedulePersistNow());
+      }
       unawaited(_stopForegroundIfIdle());
+      // Released before pumping: the ledger is free again now that this task's
+      // yt-dlp has exited and rewritten it. Set unconditionally — a task that
+      // did not take the flag must not clear it for one that did.
+      if (task.prefs.downloadArchive) _archiveBusy = false;
       _pump();
     }
+  }
+
+  /// Waits for a canceled or paused child to actually exit, then releases it.
+  ///
+  /// [DownloadProcess.cancel] signals the process and escalates to SIGKILL if
+  /// it has not gone after a grace period, so this is a bounded wait rather than
+  /// a hang. Reaping matters because the `finally` drops the only handle on the
+  /// child: without it an unreferenced yt-dlp — or the ffmpeg it spawned, which
+  /// never receives the parent's signal — can keep writing into a staging
+  /// directory that `dismiss` and `clearFinished` are free to delete.
+  ///
+  /// Also drops [id] from [_pausing], which the paused branch of `_run` cannot
+  /// reach after a cancel: that branch sits below this early return, so a task
+  /// paused and then canceled used to stay in the set forever.
+  Future<void> _reap(DownloadProcess dl, String id) async {
+    _pausing.remove(id);
+    try {
+      await dl.exitCode.timeout(const Duration(seconds: 10));
+    } catch (_) {
+      // Already reaped, or a child that will not die. A download must never hang
+      // because a subprocess misbehaved, so the wait gives up rather than blocks
+      // the queue for good.
+    }
+    _processes.remove(id);
+  }
+
+  /// Deletes [task]'s staging directory, but only when it really is one.
+  ///
+  /// `stagingPath` is restored verbatim from the queue snapshot, so it is
+  /// corruption- or hand-edit-controlled data. [_resumeStaging] already refuses
+  /// a path outside the staging root before *reusing* it; the destructive paths
+  /// have to refuse one too. Without this check, a tampered snapshot turns
+  /// "dismiss this card" into a recursive delete of an arbitrary directory.
+  ///
+  /// A path that fails the check is dropped from the task instead, so it is not
+  /// retried on every later dismissal.
+  Future<void> _deleteTaskStaging(DownloadTask task) async {
+    final path = task.stagingPath;
+    if (path == null) return;
+    final stagingRoot = p.join(await _downloadRoot(), '.ytdlp-staging');
+    if (!p.isWithin(stagingRoot, path)) {
+      task.stagingPath = null;
+      return;
+    }
+    await _deleteRecursive(path);
+  }
+
+  /// Removes the staging root once the last task using it has gone.
+  ///
+  /// Best effort: a concurrent task may still hold a directory in there, in
+  /// which case the delete simply fails and the root stays until the next
+  /// orphan sweep.
+  Future<void> _pruneEmptyStagingRoot(String stagingPath) async {
+    final parent = p.dirname(stagingPath);
+    if (p.basename(parent) != '.ytdlp-staging') return;
+    try {
+      await Directory(parent).delete();
+    } catch (_) {}
   }
 
   /// The previous staging directory of [task] when it is still usable, so the
@@ -729,13 +875,20 @@ class DownloadManager extends ChangeNotifier {
     ).effective,
   );
 
+  /// Whether the `--download-archive` ledger is in use by a running task.
+  ///
+  /// yt-dlp reads the ledger when a download starts and rewrites the whole file
+  /// when it finishes, so two tasks sharing one path lose whichever set of
+  /// entries is written first — "skip what I already have" silently degrades to
+  /// a race under exactly the desktop default concurrency of two. Only one
+  /// archive-using task runs at a time; the rest queue normally.
+  bool _archiveBusy = false;
+
   /// Path of the `--download-archive` ledger, kept in the app support dir so it
   /// survives the download folder being moved or cleared.
   ///
-  /// The archive is what makes "skip what I already have" work across
-  /// sessions, so it needs a stable path rather than one derived from the
-  /// download root. Whether it is actually passed is decided by
-  /// [YtPrefs.downloadArchive]; this only resolves the location.
+  /// The archive is what makes "skip what I already have" work across sessions,
+  /// so it needs a stable path rather than one derived from the download root.
   Future<String?> _archivePath() async {
     try {
       final dir = await getApplicationSupportDirectory();
@@ -747,8 +900,8 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
-  /// The archive path only when this task actually wants one, so the common
-  /// case does not touch the filesystem at all.
+  /// The archive path only when this task actually wants one, so the common case
+  /// does not touch the filesystem at all.
   Future<String?> _archivePathFor(DownloadTask task) =>
       task.prefs.downloadArchive ? _archivePath() : Future.value(null);
 
@@ -922,19 +1075,55 @@ class DownloadManager extends ChangeNotifier {
 
   /// Renames a single file into [finalDirPath] with a unique name (appending
   /// " (n)" before the extension on collision, like the OS file manager).
+  ///
+  /// The chosen name is reserved before yielding, so two downloads finishing in
+  /// the same instant cannot both settle on the same free name. That matters
+  /// because `File.rename` *deletes* an existing destination: without a
+  /// reservation the loser of the race would have its freshly downloaded file
+  /// silently destroyed, and both tasks would then report the same path.
   Future<String> _moveUnique(String source, String finalDirPath) async {
     final base = p.basename(source);
     final dot = base.lastIndexOf('.');
     final stem = dot > 0 ? base.substring(0, dot) : base;
     final ext = dot > 0 ? base.substring(dot) : '';
-    var candidate = p.join(finalDirPath, base);
-    var i = 1;
-    while (await File(candidate).exists()) {
-      candidate = p.join(finalDirPath, '$stem ($i)$ext');
-      i++;
+    for (var i = 1; i <= 1000; i++) {
+      final candidate = i == 1
+          ? p.join(finalDirPath, base)
+          : p.join(finalDirPath, '$stem ($i)$ext');
+      if (_reservedNames.contains(candidate)) continue;
+      if (await File(candidate).exists()) continue;
+      // No await between the check and the reservation, so this cannot interleave
+      // with another move picking the same name.
+      _reservedNames.add(candidate);
+      try {
+        await _renameIntoPlace(source, candidate);
+        return candidate;
+      } finally {
+        // The file now exists, so the reservation has done its job and the next
+        // move will see the collision on disk.
+        _reservedNames.remove(candidate);
+      }
     }
-    await File(source).rename(candidate);
-    return candidate;
+    throw FileSystemException(
+      'Could not find a free filename for $base in $finalDirPath',
+      source,
+    );
+  }
+
+  /// Moves [source] onto [target], falling back to copy-then-delete when the two
+  /// are on different filesystems.
+  ///
+  /// `rename` fails with EXDEV across mounts, which is reachable whenever the
+  /// download root is an SD card or removable volume. Without this fallback a
+  /// fully downloaded file would be reported as "could not be moved into place"
+  /// and then deleted.
+  Future<void> _renameIntoPlace(String source, String target) async {
+    try {
+      await File(source).rename(target);
+    } on FileSystemException {
+      await File(source).copy(target);
+      await _deleteRecursive(source);
+    }
   }
 
   Future<void> _deleteRecursive(String path) async {
@@ -1095,9 +1284,12 @@ class DownloadManager extends ChangeNotifier {
       case DownloadStatus.paused:
       case DownloadStatus.downloading:
         task.status = DownloadStatus.canceled;
+        // Dropped before the signal, so the run loop's reap cannot double-signal
+        // a process it has already finished with.
         _processes[id]?.cancel();
         unawaited(_cancelNotification(id));
         notifyListeners();
+        unawaited(_schedulePersistNow());
         break;
       case DownloadStatus.completed:
       case DownloadStatus.failed:
@@ -1123,6 +1315,7 @@ class DownloadManager extends ChangeNotifier {
       case DownloadStatus.queued:
         task.status = DownloadStatus.paused;
         notifyListeners();
+        unawaited(_schedulePersistNow());
         // A slot may have just freed up for a task further back in the queue.
         _pump();
         return true;
@@ -1148,7 +1341,12 @@ class DownloadManager extends ChangeNotifier {
     final task = _tasks.where((t) => t.id == id).firstOrNull;
     if (task == null || task.status != DownloadStatus.paused) return false;
     task.status = DownloadStatus.queued;
+    // A fresh sequence puts it at the back of the queue, which is what this
+    // method promises; keeping the old one would restore its former position
+    // and could tie it with a task reordered while it was held.
+    task.queueSeq = _nextQueueSeq();
     notifyListeners();
+    unawaited(_schedulePersistNow());
     _pump();
     return true;
   }
@@ -1156,16 +1354,16 @@ class DownloadManager extends ChangeNotifier {
   /// Releases every paused task. Wired to the app's global resume, so a
   /// "Paused" chip never leaves work held when the user says go.
   int resumeAllPaused() {
-    final held = _tasks
-        .where((t) => t.status == DownloadStatus.paused)
-        .map((t) => t.id)
-        .toList();
-    for (final id in held) {
-      _tasks.where((t) => t.id == id).firstOrNull?.status =
-          DownloadStatus.queued;
+    final held = <String>[];
+    for (final task in _tasks) {
+      if (task.status != DownloadStatus.paused) continue;
+      task.queueSeq = _nextQueueSeq();
+      task.status = DownloadStatus.queued;
+      held.add(task.id);
     }
     if (held.isNotEmpty) {
       notifyListeners();
+      unawaited(_schedulePersistNow());
       _pump();
     }
     return held.length;
@@ -1203,6 +1401,7 @@ class DownloadManager extends ChangeNotifier {
       playlistTitle: task.playlistTitle,
     );
     notifyListeners();
+    unawaited(_schedulePersistNow());
     return next;
   }
 
@@ -1219,9 +1418,9 @@ class DownloadManager extends ChangeNotifier {
       return false;
     }
     _tasks.removeWhere((t) => t.id == id);
-    final staging = task.stagingPath;
-    if (staging != null) unawaited(_deleteRecursive(staging));
+    unawaited(_deleteTaskStaging(task));
     notifyListeners();
+    unawaited(_schedulePersistNow());
     return true;
   }
 
@@ -1243,9 +1442,9 @@ class DownloadManager extends ChangeNotifier {
       // Even if the record could not be removed, the file is gone.
     }
     _tasks.removeWhere((t) => t.id == task.id);
-    final staging = task.stagingPath;
-    if (staging != null) await _deleteRecursive(staging);
+    await _deleteTaskStaging(task);
     notifyListeners();
+    await _schedulePersistNow();
     return true;
   }
 
@@ -1279,7 +1478,8 @@ class DownloadManager extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _persistDebounce?.cancel();
+    _persistTimer?.cancel();
+    _persistTimer = null;
     for (final dl in _processes.values) {
       try {
         dl.cancel();
@@ -1293,6 +1493,11 @@ class DownloadManager extends ChangeNotifier {
         t.status = DownloadStatus.canceled;
       }
     }
+    // Written through even though the throttle window may still be open: the
+    // re-stamping to `canceled` above is the whole point, and dropping it would
+    // restore those tasks as `downloading` on the next launch — which then
+    // surface as failures the user never caused.
+    unawaited(_persist());
     super.dispose();
   }
 }

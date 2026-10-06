@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -83,6 +84,32 @@ class EjsInstaller {
 
   EjsInfo? _cached;
 
+  /// The tail of the install/uninstall queue, including whatever is running.
+  ///
+  /// Both swap the package directory in and out from under one shared staging
+  /// path, and neither is safe to run twice: two concurrent installs would each
+  /// delete and recreate the same staging directory mid-unpack. The UI's own
+  /// `_installing` flag only guards a double tap on one button.
+  Future<void> _queue = Future<void>.value();
+
+  /// Runs [action] once everything queued ahead of it has finished.
+  ///
+  /// Serialised here rather than only in the UI, because one control's flag is
+  /// not the same thing as mutual exclusion between callers.
+  Future<T> _serialised<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    _queue = _queue.then<void>((_) {
+      // Errors are reported to [completer], not to the queue: one failed install
+      // must not break the wait for the next.
+      unawaited(
+        action().then<void>((_) => completer.complete, onError: (Object e, StackTrace s) {
+          completer.completeError(e, s);
+        }),
+      );
+    });
+    return completer.future;
+  }
+
   /// Probes the installed runtime, caching the answer.
   ///
   /// A cached miss is not re-probed on every call: this is consulted when
@@ -139,7 +166,16 @@ class EjsInstaller {
   ///
   /// Throws [EjsInstallException] with an actionable message on any failure;
   /// the existing install is never left in a half-written state.
+  ///
+  /// [version] is accepted for the caller's convenience and for the message it
+  /// may need, but the download itself is pinned by the URL [archiveUrl]
+  /// resolves to.
   Future<EjsInfo> install({
+    required String archiveUrl,
+    required String version,
+  }) => _serialised(() => _install(archiveUrl: archiveUrl, version: version));
+
+  Future<EjsInfo> _install({
     required String archiveUrl,
     required String version,
   }) async {
@@ -189,18 +225,31 @@ class EjsInstaller {
         if (hadPrevious) await backup.rename(target);
         rethrow;
       }
-      if (hadPrevious) await _deleteDir(backup);
-
+      // The backup is kept until the install has been verified. Deleting it here
+      // meant the rollback below copied from a directory that no longer existed,
+      // so `_copyDir` threw a raw FileSystemException out of `install` and the
+      // user got neither the explanation nor their previous install back.
       final info = await status(refresh: true);
       if (!info.isUsable) {
-        // Roll back rather than leave a package the interpreter rejects.
         await _deleteDir(Directory(target));
-        if (hadPrevious) await _copyDir(backup, Directory(target));
+        if (hadPrevious) {
+          try {
+            await backup.rename(target);
+          } catch (e) {
+            throw EjsInstallException(
+              'The runtime installed but could not be loaded, so it was '
+              'removed, and the previous copy could not be restored either.\n'
+              '$e'
+              '${info.detail == null ? '' : '\n${info.detail}'}',
+            );
+          }
+        }
         throw EjsInstallException(
           'The runtime installed but could not be loaded, so it was removed.'
           '${info.detail == null ? '' : '\n${info.detail}'}',
         );
       }
+      if (hadPrevious) await _deleteDir(backup);
       return info;
     } finally {
       await _deleteDir(staging);
@@ -209,13 +258,13 @@ class EjsInstaller {
 
   /// Removes the package, for a "not working" that the user would rather opt
   /// out of than keep retrying.
-  Future<void> uninstall() async {
+  Future<void> uninstall() => _serialised(() async {
     if (kIsWeb) return;
     final runtime = await _binary.androidRuntime;
     if (runtime == null) return;
     await _deleteDir(Directory(p.join(_sitePackages(runtime), packageName)));
     _cached = null;
-  }
+  });
 
   /// The wheel/sdist for [version], from PyPI's JSON API.
   ///

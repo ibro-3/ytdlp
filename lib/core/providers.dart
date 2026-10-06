@@ -74,6 +74,25 @@ final historyServiceProvider = Provider<HistoryService>((ref) {
 
 final binaryManagerProvider = Provider<BinaryManager>((ref) => BinaryManager());
 
+/// Whether post-processing can run on this device.
+///
+/// A provider rather than a future created in a builder, because the answer is
+/// the result of spawning a process: as a `FutureBuilder` argument it was rebuilt
+/// on every keystroke anywhere in Settings, restarting the probe each time and
+/// dropping the in-flight answer back to "unavailable" — so the post-processing
+/// switches visibly flickered greyed out while the user was typing in an
+/// unrelated field. Cached, the probe runs once per app session.
+final ffprobeAvailableProvider = FutureProvider<bool>((ref) async {
+  try {
+    return await ref.watch(binaryManagerProvider).hasFfprobe();
+  } catch (_) {
+    // A probe that cannot run is indistinguishable from one that found nothing.
+    return false;
+  }
+});
+
+
+
 final ytdlpServiceProvider = Provider<YtdlpService>(
   (ref) => YtdlpService(ref.watch(binaryManagerProvider)),
 );
@@ -98,6 +117,12 @@ final settingsServiceProvider = Provider<SettingsService>((ref) {
 });
 
 /// Reactive settings state for theming and download defaults.
+///
+/// The reactive source of truth for anything that has to follow a settings
+/// change. Note that listening to [settingsServiceProvider] directly does *not*
+/// work: it always yields the same `SettingsService` instance, and Riverpod 3
+/// filters provider updates with `==`, so the listener never fires. This
+/// controller emits a fresh [AppSettings] per change, which does.
 class SettingsController extends Notifier<AppSettings> {
   @override
   AppSettings build() => ref.watch(settingsServiceProvider).settings;
@@ -109,6 +134,18 @@ class SettingsController extends Notifier<AppSettings> {
     // state after that throws, turning an ordinary save into a crash.
     if (!ref.mounted) return;
     state = next;
+  }
+
+  /// Re-reads the settings box and publishes whatever it now holds.
+  ///
+  /// Needed after a backup restore, which rewrites the stored settings behind
+  /// the service's back. Without this the app keeps the pre-restore theme and
+  /// download defaults — the UI says "Settings restored" while still showing the
+  /// old values, until it is restarted.
+  void reload() {
+    final service = ref.read(settingsServiceProvider)..init();
+    if (!ref.mounted) return;
+    state = service.settings;
   }
 }
 
@@ -136,7 +173,10 @@ final notificationServiceProvider = Provider<NotificationService>(
 );
 
 final downloadManagerProvider = Provider<DownloadManager>((ref) {
-  final settings = ref.watch(settingsServiceProvider);
+  // Read, not watched: the manager is long-lived and must survive a settings
+  // change, and watching would rebuild it and throw away the live queue. The
+  // live concurrency limit is moved by the listener below instead.
+  final settings = ref.read(settingsServiceProvider);
   // Mobile devices have less headroom, so the default is one parallel download
   // there and two on desktop. The user can override in Settings, and the limit
   // is applied live so a change does not have to rebuild this provider and
@@ -155,8 +195,13 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
   );
   // A later settings change moves the live limit rather than replacing the
   // manager, so queued work survives it.
-  ref.listen(settingsServiceProvider, (prev, next) {
-    manager.maxConcurrency = next.settings.resolveConcurrency(
+  //
+  // Watches the *controller*, not the service: the service provider always
+  // yields the same `SettingsService` instance and Riverpod filters updates
+  // with `==`, so listening to it never fired at all — a changed concurrency
+  // limit silently only took effect on the next launch.
+  ref.listen(settingsControllerProvider, (_, next) {
+    manager.maxConcurrency = next.resolveConcurrency(
       isMobile: Platform.isAndroid || Platform.isIOS,
     );
   });

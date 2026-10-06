@@ -70,7 +70,14 @@ class ShareIntentService {
     final pending = _pending;
     if (pending != null) {
       _pending = null;
-      scheduleMicrotask(() => _controller.add(pending));
+      // Deferred so the add lands after the subscriber has attached; adding
+      // synchronously here would emit before `listen` had run, and a
+      // single-subscription controller buffers it for a listener that may never
+      // arrive if this State is disposed first.
+      scheduleMicrotask(() {
+        if (_controller.isClosed) return;
+        _controller.add(pending);
+      });
     }
     return _controller.stream;
   }
@@ -118,6 +125,10 @@ class ShareIntentService {
       final url = extractUrl(item.path);
       if (url == null) continue;
       // With no listener yet, hold the URL so the first subscriber gets it.
+      // Overwriting rather than accumulating: a cold start resolves one intent,
+      // and each later share arrives as its own event, so only the most recent
+      // one is unsent by the time the UI subscribes. Anything else here would
+      // need a buffer with no defined order.
       if (_controller.hasListener) {
         _controller.add(url);
       } else {

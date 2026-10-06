@@ -101,6 +101,7 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
                       onRetry: () => ref
                           .read(batchQueueControllerProvider.notifier)
                           .retryOne(i),
+                      onRemove: () => _removeAt(state, i),
                       onOpenPlaylist: (playlist) =>
                           context.push('/download/playlist', extra: playlist),
                     ),
@@ -112,6 +113,16 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
           ? null
           : _buildBottomBar(state, selectedVideos),
     );
+  }
+
+  /// Drops one row, keeping the selection set in step.
+  ///
+  /// Without this the only way to get rid of a single bad link in a large paste
+  /// was to clear the whole list, losing every good one alongside it.
+  void _removeAt(BatchState state, int index) {
+    final url = state.items[index].url;
+    ref.read(batchQueueControllerProvider.notifier).removeAt(index);
+    setState(() => _selected.remove(url));
   }
 
   Widget _buildSelectionBar(BatchState state, List<VideoInfo> selected) {
@@ -217,9 +228,9 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
     _writeSubs = widget.settings.defaultWriteSubs;
   }
 
-  String _tierLabel(int? tier) => tier == null
-      ? 'Best'
-      : (_kind == FormatKind.audio ? '$tier kbps' : '$tier p');
+  String _tierLabel(int? tier) => _kind == FormatKind.audio
+      ? AppSettings.audioTierLabel(tier)
+      : AppSettings.videoTierLabel(tier);
 
   @override
   Widget build(BuildContext context) {
@@ -316,6 +327,7 @@ class _BatchRow extends StatelessWidget {
     required this.selected,
     required this.onToggle,
     required this.onRetry,
+    required this.onRemove,
     required this.onOpenPlaylist,
   });
 
@@ -323,6 +335,10 @@ class _BatchRow extends StatelessWidget {
   final bool selected;
   final VoidCallback onToggle;
   final VoidCallback onRetry;
+
+  /// Drops this row. Available for every state, so one bad link does not mean
+  /// clearing the whole paste.
+  final VoidCallback onRemove;
 
   /// Opens the playlist picker for a link that turned out to be a playlist.
   final ValueChanged<PlaylistInfo> onOpenPlaylist;
@@ -332,10 +348,18 @@ class _BatchRow extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return ListTile(
-      leading: Checkbox(
-        value: selected,
-        onChanged: item.video == null ? null : (_) => onToggle(),
-      ),
+      // An unresolved row is not selectable, so it says why rather than
+      // presenting a checkbox that silently does nothing. `Tooltip` wrapping the
+      // whole thing, because `Checkbox` itself has no `tooltip` parameter.
+      leading: item.video == null
+          ? Tooltip(
+              message: 'Resolve this link first',
+              child: Checkbox(value: selected, onChanged: null),
+            )
+          : Checkbox(
+              value: selected,
+              onChanged: (_) => onToggle(),
+            ),
       title: Text(
         item.video?.title ?? item.url,
         maxLines: 2,
@@ -367,10 +391,21 @@ class _BatchRow extends StatelessWidget {
         ),
       );
     }
-    final video = item.video!;
+    final video = item.video;
+    // `pending` is an unresolved URL with nothing in flight: the only way to get
+    // here is clearing a batch mid-resolve, which keeps the still-loading rows
+    // without a fetch. Forcing the null would throw on a perfectly ordinary state.
+    if (video == null) {
+      return Text(
+        'Not resolved yet',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      );
+    }
     return Text(
       [
-        if (video.author != null) video.author!,
+        if (video.author != null) video.author,
         if (video.duration > 0) formatDuration(video.duration),
         '${video.videoFormats.length} video / ${video.audioFormats.length} audio',
       ].join(' · '),
@@ -380,24 +415,44 @@ class _BatchRow extends StatelessWidget {
     );
   }
 
-  Widget? _buildTrailing(ColorScheme scheme) {
-    if (item.error != null) {
-      return IconButton(
-        onPressed: onRetry,
-        icon: const Icon(Icons.refresh),
-        tooltip: 'Try again',
-      );
-    }
-    final playlist = item.playlist;
-    if (playlist != null) {
-      return IconButton(
-        onPressed: () => onOpenPlaylist(playlist),
-        icon: const Icon(Icons.playlist_play),
-        tooltip: 'Choose videos from this playlist',
-      );
-    }
+  Widget _buildTrailing(ColorScheme scheme) {
+    // Remove is offered first and unconditionally, so a bad link can be dropped
+    // whatever its state. Everything after it is a second action, which is why
+    // this is a row of buttons rather than a single trailing slot.
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          onPressed: onRemove,
+          icon: const Icon(Icons.close),
+          tooltip: 'Remove this link',
+        ),
+        if (item.error != null)
+          IconButton(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Try again',
+          )
+        else if (item.playlist case final playlist?)
+          IconButton(
+            onPressed: () => onOpenPlaylist(playlist),
+            icon: const Icon(Icons.playlist_play),
+            tooltip: 'Choose videos from this playlist',
+          )
+        else if (item.status != BatchItemStatus.loading)
+          _buildThumbnail(scheme),
+      ],
+    );
+  }
+
+  /// Non-null so it can sit in a `Row`'s children directly.
+  ///
+  /// A null return would need a spread or a filter in the caller, and the
+  /// `if/else if` chain in [_buildTrailing] has to produce one element per
+  /// branch — an `if` element without an `else` would silently drop it.
+  Widget _buildThumbnail(ColorScheme scheme) {
     final video = item.video;
-    if (video == null) return null;
+    if (video == null) return const SizedBox.shrink();
     final thumb = video.thumbnail;
     if (thumb == null) {
       return Icon(

@@ -45,6 +45,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   @override
+  @override
   void dispose() {
     _shareSub?.cancel();
     _urlController.dispose();
@@ -54,6 +55,11 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// Fills the URL field from a share intent and fetches it right away.
   ///
   /// A share carrying several links goes to the batch queue, same as a paste.
+  ///
+  /// In practice a share event delivers one URL: the intent carries a single
+  /// shared string, and each is delivered as its own event. The multi-link branch
+  /// is therefore reachable from the clipboard rather than from the share sheet,
+  /// but is kept because the two paths feed the same text here.
   void _onSharedUrl(String text) {
     if (!mounted) return;
     final urls = extractUrls(text);
@@ -142,12 +148,10 @@ class _HomePageState extends ConsumerState<HomePage> {
   /// Opens the format picker, then enqueues whatever the user chose.
   Future<void> _download(VideoInfo video) async {
     final settings = ref.read(settingsControllerProvider);
-    final templates = ref.read(templateStoreProvider).templates;
     final result = await showFormatPickerSheet(
       context,
       video: video,
       settings: settings,
-      templates: templates,
     );
     if (result != null && mounted) {
       _enqueue(video, result.format, result.options);
@@ -508,9 +512,13 @@ class _ErrorCard extends StatelessWidget {
             if (isMissingBinary) ...[
               const SizedBox(height: 12),
               Text(
-                'Quick fix: run the app on desktop (flutter run -d linux, uses '
-                'the system yt-dlp) or bundle a binary — see tool/fetch_binaries.sh '
-                'and the README.',
+                // In the user's terms, not the maintainer's. Naming a Flutter
+                // command and a repo script here told an end user nothing they
+                // could act on; Settings → Update yt-dlp is the thing that
+                // actually fetches one.
+                'Quick fix: Settings → Update yt-dlp downloads the official '
+                'build for you. On desktop, installing yt-dlp system-wide '
+                'works too.',
                 style: Theme.of(context).textTheme.bodySmall
                     ?.copyWith(color: scheme.onErrorContainer),
               ),

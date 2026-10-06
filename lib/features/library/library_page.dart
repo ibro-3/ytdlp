@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
@@ -37,6 +38,9 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   List<DiscoveredFile>? _discovered;
   bool _scanning = false;
 
+  /// Why the last scan failed, if it did. Null after a successful one.
+  String? _scanError;
+
   @override
   void dispose() {
     _search.dispose();
@@ -46,16 +50,22 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   void _checkExists(String path) {
     if (_pending.contains(path)) return;
     _pending.add(path);
-    File(path)
-        .exists()
-        .then((ok) {
-          if (!mounted) return;
-          setState(() => _exists[path] = ok);
-        })
-        .catchError((_) {
-          if (!mounted) return;
-          setState(() => _exists[path] = false);
-        });
+    // `catchError` on a `Future<bool>` must yield a bool. Returning nothing
+    // after dispose — the case the guard exists for — would throw a `TypeError`
+    // asynchronously, after dispose, turning a harmless teardown into an
+    // unhandled error. So the flag is computed either way and only applied
+    // while mounted.
+    unawaited(
+      File(path).exists().then(
+        (ok) => _recordExists(path, ok),
+        onError: (Object _) => _recordExists(path, false),
+      ),
+    );
+  }
+
+  void _recordExists(String path, bool value) {
+    if (!mounted) return;
+    setState(() => _exists[path] = value);
   }
 
   void _patch(void Function() fn) => setState(fn);
@@ -129,7 +139,12 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           return Column(
             children: [
               _buildSearchBar(view),
-              if (_discovered != null && _discovered!.isNotEmpty)
+              if (_scanError != null)
+                _ScanErrorBanner(
+                  message: _scanError!,
+                  onRetry: _scanning ? null : _scanFolder,
+                )
+              else if (_discovered != null && _discovered!.isNotEmpty)
                 _DiscoveredBanner(files: _discovered!, onAdopt: _adopt),
               Expanded(
                 child: Center(
@@ -176,7 +191,10 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   /// Read-only: a discovered file is offered, never added to history
   /// automatically, so "Clear history" stays a real reset.
   Future<void> _scanFolder() async {
-    setState(() => _scanning = true);
+    setState(() {
+      _scanning = true;
+      _scanError = null;
+    });
     try {
       final root = await ref.read(downloadsDirProvider)();
       final known = {
@@ -191,10 +209,14 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
         _discovered = found;
         _scanning = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() {
+        // Reported rather than silently shown as "nothing found": an unreadable
+        // folder and an empty one look identical otherwise, and the user has no
+        // reason to go looking for the difference.
         _discovered = const [];
+        _scanError = 'Could not scan the download folder: $e';
         _scanning = false;
       });
     }
@@ -255,15 +277,27 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     final parts = value.split(':');
     if (parts.length != 2) return;
     setState(() {
+      // Each lookup falls back to the current value. The names come from the
+      // enums themselves so they cannot normally disagree, but `byName` throws
+      // outright on an unknown name, and a persisted view option written by a
+      // different build is exactly the case that would then crash the tab.
       switch (parts[0]) {
         case 'sort':
-          _sort = LibrarySort.values.byName(parts[1]);
+          _sort = _byName(LibrarySort.values, parts[1], _sort);
         case 'filter':
-          _filter = LibraryFilter.values.byName(parts[1]);
+          _filter = _byName(LibraryFilter.values, parts[1], _filter);
         case 'group':
-          _grouping = LibraryGrouping.values.byName(parts[1]);
+          _grouping = _byName(LibraryGrouping.values, parts[1], _grouping);
       }
     });
+  }
+
+  /// [names] entry matching [name], or [fallback] when there is none.
+  static T _byName<T extends Enum>(List<T> names, String name, T fallback) {
+    for (final candidate in names) {
+      if (candidate.name == name) return candidate;
+    }
+    return fallback;
   }
 
   Widget _buildSearchBar(LibraryView view) {
@@ -484,7 +518,10 @@ class _RecordMenu extends ConsumerWidget {
     }
   }
 
-  static void _notify(ScaffoldMessengerState messenger, String message) {
+  /// Same as [_showSnack] but for a caller holding a `BuildContext` rather than
+/// this State — a row's own menu. Two identical helpers in one file is exactly
+/// the drift this is replacing.
+static void _notify(ScaffoldMessengerState messenger, String message) {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -650,6 +687,46 @@ class _NoMatches extends StatelessWidget {
 ///
 /// Adopting is explicit so clearing history stays a real reset: nothing joins
 /// the library without the user saying so.
+/// Shown when a folder scan failed, instead of an empty "nothing found".
+class _ScanErrorBanner extends StatelessWidget {
+  const _ScanErrorBanner({required this.message, required this.onRetry});
+
+  final String message;
+
+  /// Null while a retry is already running.
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      child: Card(
+        color: scheme.errorContainer,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  message,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onErrorContainer,
+                  ),
+                ),
+              ),
+              TextButton(onPressed: onRetry, child: const Text('Try again')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _DiscoveredBanner extends StatelessWidget {
   const _DiscoveredBanner({required this.files, required this.onAdopt});
 

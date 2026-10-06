@@ -77,11 +77,14 @@ class AndroidRuntimeHandle {
 /// 3. Downloaded from GitHub releases into the app support dir
 ///
 /// Android:
-/// 1. Legacy single-file asset — `assets/bin/android/<abi>/yt-dlp`
-///    (custom bionic builds take precedence when present)
-/// 2. Bundled CPython + yt-dlp runtime —
+/// 1. Bundled CPython + yt-dlp runtime —
 ///    `assets/bin/android/<abi>/python.tar.gz`
 ///    (built by `tool/fetch_android_runtime.sh` from Termux packages)
+///
+/// There is deliberately no single-file fallback asset. An earlier revision
+/// documented `assets/bin/android/yt-dlp` here, but no such file has ever been
+/// committed, so the documented fallback could not resolve and the app only ever
+/// produced the "not found" error.
 class BinaryManager {
   String? _ytdlpPath;
   String? _ffmpegPath;
@@ -270,6 +273,15 @@ class BinaryManager {
     if (!Platform.isAndroid) {
       final downloaded = await _downloadFromGithub();
       if (downloaded != null) return _ytdlpPath = downloaded;
+      // The auto-download was attempted and failed. Reporting why beats the
+      // generic "not found" hint, which sends the user to install a system
+      // package when the actual problem was a 503 or a captive portal.
+      final why = takeDownloadError();
+      if (why != null) {
+        throw YtdlpException(
+          '${_missingHint()}\n\nDownloading yt-dlp did not work: $why',
+        );
+      }
     }
     throw YtdlpException(_missingHint());
   }
@@ -445,9 +457,10 @@ class BinaryManager {
   /// Best-effort re-chmod on reuse (e.g. after backup restore); never throws.
   Future<void> _ensureExecutable(String path) async {
     try {
-      // ignore: avoid_slow_async_io
-      final mode = FileStat.statSync(path).mode;
-      if ((mode & 0x40) != 0) return;
+      // Awaited rather than `statSync`: this runs on the UI isolate, and a
+      // stat there blocks a frame. `avoid_slow_async_io` wants exactly this.
+      final stat = await FileStat.stat(path);
+      if ((stat.mode & 0x40) != 0) return;
     } catch (_) {
       return;
     }
@@ -528,7 +541,12 @@ class BinaryManager {
         'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
     final replaced = await _downloadFromUrl(url, force: true);
     if (replaced == null) {
-      throw YtdlpException('Download failed — check the connection.');
+      // The reason the download actually failed, not a generic one: it was
+      // either an HTTP status or a body too small to be a build.
+      final why = takeDownloadError();
+      throw YtdlpException(
+        why == null ? 'Download failed — check the connection.' : why,
+      );
     }
     _ytdlpPath = replaced;
     _isSystem = false;
@@ -552,7 +570,10 @@ class BinaryManager {
     }
     final tmp = File('${runtime.script}.new');
     if (!await _downloadToFile(_ytDlpScriptUrl, tmp)) {
-      throw YtdlpException('Download failed — check the connection.');
+      final why = takeDownloadError();
+      throw YtdlpException(
+        why == null ? 'Download failed — check the connection.' : why,
+      );
     }
     try {
       await _chmodX(tmp.path);
@@ -637,8 +658,8 @@ class BinaryManager {
     }
     if (done) {
       try {
-        final mode = FileStat.statSync(path).mode;
-        if ((mode & 0x40) != 0) return;
+        final stat = await FileStat.stat(path);
+        if ((stat.mode & 0x40) != 0) return;
       } catch (_) {}
     }
     throw YtdlpException(
@@ -776,8 +797,19 @@ class BinaryManager {
       final sink = tmp.openWrite();
       await res.pipe(sink);
       await sink.close();
-      if (tmp.lengthSync() == 0) {
+      final size = await tmp.length();
+      if (size == 0) {
         throw const YtdlpException('Downloaded file is empty.');
+      }
+      // A real yt-dlp build is megabytes. A few bytes means an error page, a
+      // captive portal, or a truncated transfer that reported success — and the
+      // next step is to chmod it and execute it.
+      if (_ytdlpName == 'yt-dlp' || _ytdlpName == 'yt-dlp.exe') {
+        if (size < _minPlausibleBinaryBytes) {
+          throw YtdlpException(
+            'Downloaded yt-dlp is only $size bytes, which cannot be a build.',
+          );
+        }
       }
       if (!Platform.isWindows) {
         try {
@@ -786,15 +818,36 @@ class BinaryManager {
       }
       await _replaceWith(tmp, target);
       return true;
-    } catch (_) {
+    } catch (e) {
       try {
         await tmp.delete();
       } catch (_) {}
+      // Surfaced rather than swallowed. Every caller turns a `false` here into
+      // "yt-dlp was not found", so a 503 or an empty body was reported to the
+      // user as a missing install — pointing them at a system package that was
+      // never the problem.
+      _lastDownloadError = e is YtdlpException ? e.message : e.toString();
       return false;
     } finally {
       client?.close(force: true);
     }
   }
+
+  /// Why the last download attempt failed, or null if it has not failed.
+  String? _lastDownloadError;
+
+  /// Message from the most recent failed download, cleared by a success.
+  String? takeDownloadError() {
+    final message = _lastDownloadError;
+    _lastDownloadError = null;
+    return message;
+  }
+
+  /// Floor for a plausible yt-dlp build, used only to catch an error page.
+  ///
+  /// Not an integrity check — see [takeDownloadError] and the module note about
+  /// verification — just a sanity bound so a 2-byte "200 OK" is not executed.
+  static const int _minPlausibleBinaryBytes = 64 * 1024;
 
   /// Renames [src] over [dst]. On failure the previous file (if any) is
   /// preserved via a backup rename.

@@ -221,14 +221,23 @@ class VideoInfo {
     return tracks.take(subtitleTrackLimit).toList();
   }
 
-  static bool _isCombined(Map<String, dynamic> f) {
-    final v = f['vcodec'] as String?;
-    final a = f['acodec'] as String?;
+  /// The codec string for [field], or null when absent.
+///
+/// `jsonString` rather than a cast. These payloads come from the site, so a
+/// field the app does not control may hold anything; `as String?` on a number
+/// throws, and the failure would be a crashed metadata fetch rather than a
+/// format quietly missing.
+static String? _codec(Map<String, dynamic> f, String field) =>
+    jsonString(f[field]);
+
+static bool _isCombined(Map<String, dynamic> f) {
+    final v = _codec(f, 'vcodec');
+    final a = _codec(f, 'acodec');
     return v != null && v != 'none' && a != null && a != 'none';
   }
 
-  static bool _hasVideo(Map<String, dynamic> f) {
-    final v = f['vcodec'] as String?;
+static bool _hasVideo(Map<String, dynamic> f) {
+    final v = _codec(f, 'vcodec');
     return v != null && v != 'none';
   }
 
@@ -247,7 +256,7 @@ class VideoInfo {
 
     final heights =
         pool
-            .map((f) => (f['height'] as num?)?.toInt() ?? 0)
+            .map((f) => jsonNum(f['height'])?.toInt() ?? 0)
             .where((h) => h > 0)
             .toSet()
             .toList()
@@ -292,13 +301,13 @@ class VideoInfo {
     var pool = candidates;
     if (maxHeight != null) {
       pool = pool
-          .where((f) => ((f['height'] as num?)?.toInt() ?? 0) <= maxHeight)
+          .where((f) => (jsonNum(f['height'])?.toInt() ?? 0) <= maxHeight)
           .toList();
     }
     pool = List.of(pool)
       ..sort((a, b) {
-        final c = ((b['height'] as num?)?.toInt() ?? 0).compareTo(
-          (a['height'] as num?)?.toInt() ?? 0,
+        final c = (jsonNum(b['height'])?.toInt() ?? 0).compareTo(
+          jsonNum(a['height'])?.toInt() ?? 0,
         );
         if (c != 0) return c;
         final aIsMp4 = (a['ext'] == 'mp4') ? 0 : 1;
@@ -307,7 +316,7 @@ class VideoInfo {
       });
 
     final best = pool.isEmpty ? null : pool.first;
-    final h = (best?['height'] as num?)?.toInt();
+    final h = jsonNum(best?['height'])?.toInt();
     final filesize = best?['filesize'] ?? best?['filesize_approx'];
 
     final selector = hasFfmpeg
@@ -351,8 +360,8 @@ class VideoInfo {
       return 'MKV';
     }
     for (final f in allFormats) {
-      final v = f['vcodec'] as String?;
-      final a = f['acodec'] as String?;
+      final v = _codec(f, 'vcodec');
+      final a = _codec(f, 'acodec');
       final isAudio = (v == null || v == 'none') && a != null && a != 'none';
       if (isAudio) {
         final e = f['ext'];
@@ -389,7 +398,7 @@ class VideoInfo {
     final seenIds = <String>{};
     for (final (name, target) in audioTiers) {
       final picked = _resolveAudioTier(sorted, best, target);
-      final id = picked['format_id'] as String?;
+      final id = jsonString(picked['format_id']);
       // A tier is only interesting when it delivers a stream we have not
       // already offered — sites with two distinct bitrates (YouTube) would
       // otherwise show four rows for the same two files, and a tier whose
@@ -438,17 +447,17 @@ class VideoInfo {
   /// A stream's audio bitrate in kbps (`abr`), falling back to the total
   /// bitrate for audio-only streams that report only `tbr`.
   static double _audioBitrate(Map<String, dynamic> f) =>
-      (f['abr'] as num?)?.toDouble() ?? (f['tbr'] as num?)?.toDouble() ?? 0;
+      jsonNum(f['abr'])?.toDouble() ?? jsonNum(f['tbr'])?.toDouble() ?? 0;
 
   static bool _isAudioOnly(Map<String, dynamic> f) {
-    final v = f['vcodec'] as String?;
-    final a = f['acodec'] as String?;
+    final v = _codec(f, 'vcodec');
+    final a = _codec(f, 'acodec');
     return (v == null || v == 'none') && a != null && a != 'none';
   }
 
   static String _audioRowLabel(String tierName, Map<String, dynamic> picked) {
     final abr = _audioBitrate(picked).round();
-    final ext = picked['ext'] as String? ?? 'audio';
+    final ext = jsonString(picked['ext']) ?? 'audio';
     final extLabel = switch (ext) {
       'm4a' => 'M4A',
       'webm' => 'WebM',

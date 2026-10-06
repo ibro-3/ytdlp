@@ -57,3 +57,23 @@ updates:
       - ci
     commit-message:
       prefix: "build(ci)"
+
+  # Gradle / AGP. `android/app/build.gradle.kts` is hand-maintained and carries
+  # two things a bump can invalidate: `targetSdk = 28` with its lint suppression
+  # (needed so the bundled runtime can execute on Android 14+), and
+  # `android.builtInKotlin = true`, which requires AGP 9+. Neither is exercised
+  # by `flutter analyze`, so without this an AGP bump arrives untracked and only
+  # fails in the Android build.
+  - package-ecosystem: gradle
+    directory: /android
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - android
+    commit-message:
+      prefix: "build(gradle)"

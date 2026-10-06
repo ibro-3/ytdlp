@@ -11,12 +11,21 @@ class HistoryService extends ChangeNotifier {
   List<DownloadRecord> get records => List.unmodifiable(_records);
 
   void init() {
+    // Every other reader in the codebase type-checks before casting: this runs
+    // inside a provider body at startup, so one corrupt or hand-edited entry
+    // throwing here would take the whole app down instead of just one record.
     _records =
         _box.values
-            .map(
-              (e) =>
-                  DownloadRecord.fromMap(Map<String, dynamic>.from(e as Map)),
-            )
+            .whereType<Map>()
+            .map((e) {
+              try {
+                return DownloadRecord.fromMap(Map<String, dynamic>.from(e));
+              } catch (_) {
+                // One unreadable record must not hide the rest of the library.
+                return null;
+              }
+            })
+            .whereType<DownloadRecord>()
             .toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }

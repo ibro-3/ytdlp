@@ -98,6 +98,19 @@ void main() {
       },
     );
 
+    test('concurrent starts issue only one start contract', () async {
+      // `DownloadManager` calls this per task without awaiting, so with a
+      // concurrency above one two callers both saw "not running" and both
+      // issued a start — the redundant contract the plugin rejects.
+      await Future.wait([
+        service.startService(title: 'A', progress: 0.1),
+        service.startService(title: 'B', progress: 0.2),
+        service.startService(title: 'C', progress: 0.3),
+      ]);
+
+      expect(driver.startCalls, 1, reason: 'one start, the rest refresh');
+    });
+
     test('stop is a no-op when the service never started', () async {
       await service.stopService();
 

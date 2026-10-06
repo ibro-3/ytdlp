@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -120,18 +121,48 @@ class ForegroundService {
   /// refreshes the notification rather than re-issuing a start contract, which
   /// the plugin treats as redundant and answers with
   /// `ForegroundServiceDidNotStartInTime`.
+  ///
+  /// The check and the start are serialised through [_starting]. `DownloadManager`
+  /// starts one per task without awaiting, so with a concurrency above one two
+  /// callers both observe "not running" and both issue a start — which is exactly
+  /// the failure this method exists to avoid.
   Future<void> startService({
     required String title,
     required double progress,
-  }) async {
-    if (!_driver.isSupportedHost) return;
+  }) {
+    if (!_driver.isSupportedHost) return Future<void>.value();
+    final pending = _starting;
+    if (pending != null) {
+      // A start is already in flight; let it finish, then only refresh. The
+      // refresh happens either way — a failed start does not make the
+      // notification any less stale.
+      return pending.then((_) {
+        _starting = null;
+        return updateService(title: title, progress: progress);
+      });
+    }
 
+    // Held so the next caller can tell a start is in progress. Cleared by the
+    // caller above and, for the last caller, in the `whenComplete` below.
+    final guard = Completer<void>();
+    _starting = guard.future;
+    return _start(title: title, progress: progress).whenComplete(() {
+      if (identical(_starting, guard.future)) _starting = null;
+      if (!guard.isCompleted) guard.complete();
+    });
+  }
+
+  Future<void>? _starting;
+
+  Future<void> _start({
+    required String title,
+    required double progress,
+  }) async {
     final isRunning = await _driver.isRunning();
     if (isRunning) {
       await updateService(title: title, progress: progress);
       return;
     }
-
     await _driver.start(title: title, headline: _headline(progress));
   }
 

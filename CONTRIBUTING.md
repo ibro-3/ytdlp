@@ -47,11 +47,16 @@ right, say why in the code.
 
 ## Tests
 
-- **Unit and widget tests** (`test/`) — must run fast and need no device. If you
-  touch a service, add or update its test. Services that talk to a platform
-  plugin are written with an injectable seam (see `ProcessRunner` in
-  `binary_manager.dart` and `EjsInstaller`) so they can be faked — follow that
-  pattern rather than reaching for a global.
+- **Unit and widget tests** (`test/`) — must run fast and need no device **and no
+  network**. If you touch a service, add or update its test. Services that talk
+  to a platform plugin are written with an injectable seam (see `ProcessRunner`
+  in `binary_manager.dart` and `EjsInstaller`) so they can be faked — follow
+  that pattern rather than reaching for a global.
+
+  A test that genuinely needs the internet must carry `tags: ['network']`, which
+  is what keeps CI's `flutter test --exclude-tags network` hermetic. Run those
+  deliberately with `flutter test --tags network`; a flake there is a bug in the
+  test, not an excuse to un-tag it.
 - **Integration test** (`integration_test/`) — boots the real app and needs a
   device or emulator plus network. It is deliberately *not* on every CI push
   because an emulator run costs about ten minutes; run it locally with

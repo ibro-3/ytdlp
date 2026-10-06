@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ytdlp/core/models/command_template.dart';
 import 'package:ytdlp/core/models/settings_model.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/features/home/widgets/format_picker_sheet.dart';
@@ -74,7 +73,6 @@ Future<_Result> _openSheet(
   WidgetTester tester, {
   required VideoInfo video,
   AppSettings settings = const AppSettings(),
-  List<CommandTemplate> templates = const [],
 }) async {
   final result = _Result();
   await tester.pumpWidget(
@@ -88,7 +86,6 @@ Future<_Result> _openSheet(
                   context,
                   video: video,
                   settings: settings,
-                  templates: templates,
                 );
               },
               child: const Text('open'),
@@ -476,16 +473,14 @@ void main() {
       expect(button.onPressed, isNotNull);
     });
 
-    testWidgets('a saved template does not appear as a chip', (tester) async {
-      await _openSheet(
-        tester,
-        video: _video(),
-        templates: const [
-          CommandTemplate(name: 'Sponsorblock', args: '--sponsorblock-remove'),
-        ],
-      );
+    testWidgets('the sheet offers no argument override at all', (tester) async {
+      // The saved-template plumbing used to be threaded in from three call sites
+      // and then never rendered, so the sheet carried a `templates` argument
+      // that did nothing. Both are gone; this pins that no chips appear.
+      await _openSheet(tester, video: _video());
 
       expect(find.widgetWithText(ChoiceChip, 'Sponsorblock'), findsNothing);
+      expect(find.text('Advanced flags'), findsNothing);
     });
   });
 }

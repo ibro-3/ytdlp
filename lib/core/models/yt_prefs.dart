@@ -93,6 +93,12 @@ class YtPrefs {
   static const int minRetries = 0;
   static const int maxRetries = 20;
 
+  /// Bounds for `--sleep-requests`. A minute is already far past anything
+  /// useful for rate limiting; past it a typo would stall every download for
+  /// hours rather than being quietly corrected.
+  static const int minSleepRequests = 0;
+  static const int maxSleepRequests = 60;
+
   /// Containers yt-dlp can extract audio into without extra encoders.
   static const List<String> audioFormats = [
     'm4a', // stream copy of AAC, the safe default
@@ -178,7 +184,10 @@ class YtPrefs {
       liveFromStart: m['liveFromStart'] as bool? ?? false,
       downloadArchive: m['downloadArchive'] as bool? ?? false,
       noPart: m['noPart'] as bool? ?? false,
-      sleepRequests: ((m['sleepRequests'] as num?)?.toInt() ?? 0).clamp(0, 60),
+      sleepRequests: ((m['sleepRequests'] as num?)?.toInt() ?? 0).clamp(
+        minSleepRequests,
+        maxSleepRequests,
+      ),
       retries: ((m['retries'] as num?)?.toInt() ?? 10).clamp(
         minRetries,
         maxRetries,
@@ -242,7 +251,13 @@ class YtPrefs {
       liveFromStart: liveFromStart ?? this.liveFromStart,
       downloadArchive: downloadArchive ?? this.downloadArchive,
       noPart: noPart ?? this.noPart,
-      sleepRequests: sleepRequests ?? this.sleepRequests,
+      // Clamped like the retry counts below. It was copied through unclamped, so
+      // typing a large number into the Settings field put `--sleep-requests 999`
+      // on the command line until the app restarted and `fromMap` clamped it.
+      sleepRequests: (sleepRequests ?? this.sleepRequests).clamp(
+        minSleepRequests,
+        maxSleepRequests,
+      ),
       retries: (retries ?? this.retries).clamp(minRetries, maxRetries),
       fragmentRetries: (fragmentRetries ?? this.fragmentRetries).clamp(
         minRetries,

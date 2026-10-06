@@ -10,7 +10,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-WORK="${WORK_DIR:-/tmp/opencode/ytdl-android}"
+# Scratch directory for the dependency closure. `${TMPDIR:-/tmp}` rather than a
+# hard-coded path, so this runs the same on any machine.
+WORK="${WORK_DIR:-${TMPDIR:-/tmp}/ytdl-android}"
 OUT="$ROOT/assets/bin/android"
 BASE_URL="https://packages.termux.dev/apt/termux-main"
 

@@ -214,4 +214,27 @@ void main() {
   test('removing cookies that were never imported does not throw', () async {
     await expectLater(service.remove(), completes);
   });
+
+  test(
+    'both files are written owner-only',
+    () async {
+      // These are session credentials. `writeAsString` defaults to 0644, so on a
+      // desktop install any other process able to read the support directory
+      // could read the login.
+      await service.importSource(_twoSites);
+
+      for (final path in [service.sourcePath, service.generatedPath]) {
+        final mode = File(path).statSync().mode & 0x1FF;
+        expect(
+          mode,
+          0x180, // 0600: rw-------
+          reason: '$path holds session cookies and must not be group or world '
+              'readable',
+        );
+      }
+    },
+    // No POSIX mode bits on Windows, and `chmod` is not present. The Android
+    // sandbox is what protects these there.
+    skip: Platform.isWindows,
+  );
 }

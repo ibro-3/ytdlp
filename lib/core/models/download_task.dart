@@ -14,6 +14,7 @@ class DownloadTask {
     required this.video,
     required this.format,
     required this.createdAt,
+    this.queueSeq = 0,
     this.options = const DownloadOptions(),
     this.extraArgs = const [],
     this.outputTemplate = '',
@@ -28,12 +29,21 @@ class DownloadTask {
   final VideoInfo video;
   final Format format;
 
-  /// When the task was enqueued, which is also its queue ordering: the
-  /// scheduler starts the oldest waiting task first.
+  /// When the task was enqueued.
   ///
-  /// Mutable only so `DownloadManager.reorder` can re-stamp a waiting task to
-  /// move it in the queue. Nothing else changes it.
-  DateTime createdAt;
+  /// Never mutated: this value is what ends up in the library as the download's
+  /// date, so it must survive reordering untouched. Queue position lives in
+  /// [queueSeq] instead — re-stamping this field to reorder a task used to
+  /// rewrite it to 1970 and date the finished download accordingly.
+  final DateTime createdAt;
+
+  /// Position in the waiting queue; lower runs first.
+  ///
+  /// Assigned from a monotonic counter at enqueue time and re-stamped by
+  /// `DownloadManager.reorder` so the scheduler's "oldest first" order follows
+  /// the user's manual ordering. Restored from the queue snapshot, falling back
+  /// to [createdAt] for a snapshot written before this field existed.
+  int queueSeq;
 
   /// Subtitle/thumbnail extras chosen when this download was enqueued.
   final DownloadOptions options;
@@ -75,9 +85,6 @@ class DownloadTask {
   /// Path of the final file after a successful download.
   String? filePath;
 
-  /// yt-dlp's most recent reported destination (may be intermediate).
-  String? destinationPath;
-
   /// Staging directory used while this task was running. Kept (not cleared)
   /// after a failure so a retry can continue the partial download.
   String? stagingPath;
@@ -88,6 +95,7 @@ class DownloadTask {
   Map<String, dynamic> toMap() => {
     'id': id,
     'createdAt': createdAt.toIso8601String(),
+    'queueSeq': queueSeq,
     'status': status.name,
     'progress': progress,
     'speed': speed,
@@ -132,11 +140,17 @@ class DownloadTask {
     final kind = f['kind'] == FormatKind.audio.name
         ? FormatKind.audio
         : FormatKind.video;
+    final createdAt =
+        DateTime.tryParse((m['createdAt'] as String?) ?? '') ??
+        DateTime.now();
     return DownloadTask(
         id: (m['id'] as String?) ?? '',
-        createdAt:
-            DateTime.tryParse((m['createdAt'] as String?) ?? '') ??
-            DateTime.now(),
+        createdAt: createdAt,
+        // A snapshot written before queue position was tracked separately has no
+        // value here, so the old ordering — oldest first — is reconstructed from
+        // the creation time rather than collapsing every task to 0.
+        queueSeq: (m['queueSeq'] as num?)?.toInt() ??
+            createdAt.microsecondsSinceEpoch,
         stagingPath: m['stagingPath'] as String?,
         playlistId: m['playlistId'] as String?,
         playlistTitle: m['playlistTitle'] as String?,

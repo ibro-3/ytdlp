@@ -144,9 +144,28 @@ class CookieJarService {
     }
   }
 
-  Future<void> _write(String path, String contents) async {
+  /// Writes a jar with owner-only permissions.
+///
+/// Both files here are session credentials. `writeAsString` defaults to 0644, so
+/// on a desktop install any other process able to read the support directory
+/// could read the login. On Android the app sandbox already prevents that, and
+/// `chmod` there can fail outright — hence the best-effort guard rather than
+/// letting it take the write down.
+///
+/// `flush: true` because yt-dlp is handed this path moments later and writes
+/// cookies back to it; a buffered jar that is not on disk yet is a jar yt-dlp
+/// will overwrite.
+Future<void> _write(String path, String contents) async {
     final file = File(path);
     await file.parent.create(recursive: true);
     await file.writeAsString(contents, flush: true);
+    try {
+      // `Process.run` rather than dart:io, which has no chmod.
+      await Process.run('chmod', ['600', path]);
+    } catch (_) {
+      // No chmod on this platform (Windows), or not permitted. The sandbox on
+      // Android already keeps the file private; on desktop the failure is worth
+      // surviving rather than losing the cookies over.
+    }
   }
 }

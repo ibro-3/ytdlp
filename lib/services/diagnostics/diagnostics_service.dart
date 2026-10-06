@@ -191,11 +191,19 @@ typedef DiagnosticsListener = void Function(
   Object? error,
 );
 
+/// Drives [DiagnosticsService.build] as an observable state machine.
+///
+/// Held for a caller that wants to show progress and the last result — nothing
+/// in the app does yet, because the diagnostics screen builds the report on
+/// demand. Kept because it is the correct shape for that screen, and because the
+/// two things it gets right are easy to get wrong by hand: the in-flight guard,
+/// and notifying only while still mounted.
 class DiagnosticsNotifier extends ChangeNotifier {
   DiagnosticsNotifier(this._service);
 
   final DiagnosticsService _service;
   bool _busy = false;
+  bool _disposed = false;
   DiagnosticsReport? _last;
   Object? _error;
 
@@ -203,20 +211,35 @@ class DiagnosticsNotifier extends ChangeNotifier {
   DiagnosticsReport? get lastReport => _last;
   Object? get error => _error;
 
+  /// Builds the report, or returns the last one if a build is already running.
+  ///
+  /// The guard matters because building probes the environment — several
+  /// subprocesses — so a second tap would double the work and interleave two
+  /// results.
   Future<DiagnosticsReport?> generate() async {
     if (_busy) return _last;
     _busy = true;
     _error = null;
     notifyListeners();
     try {
-      _last = await _service.build();
-      return _last;
+      final report = await _service.build();
+      _last = report;
+      return report;
     } catch (e) {
       _error = e;
       return null;
     } finally {
       _busy = false;
-      notifyListeners();
+      // The build awaits, so the notifier can be disposed underneath it — the
+      // caller closing a sheet is enough. Notifying then throws from a disposed
+      // ChangeNotifier.
+      if (!_disposed) notifyListeners();
     }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 }

@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../../core/models/command_template.dart';
 import '../../../core/models/download_options.dart';
 import '../../../core/models/settings_model.dart';
 import '../../../core/models/video_info.dart';
@@ -30,7 +29,6 @@ Future<FormatPickerResult?> showFormatPickerSheet(
   BuildContext context, {
   required VideoInfo video,
   required AppSettings settings,
-  List<CommandTemplate> templates = const [],
 }) {
   return showModalBottomSheet<FormatPickerResult>(
     context: context,
@@ -40,31 +38,21 @@ Future<FormatPickerResult?> showFormatPickerSheet(
     builder: (context) => _FormatPickerSheet(
       video: video,
       settings: settings,
-      templates: templates,
     ),
   );
 }
 
 class _FormatPickerSheet extends StatefulWidget {
-  const _FormatPickerSheet({
-    required this.video,
-    required this.settings,
-    this.templates = const [],
-  });
+  const _FormatPickerSheet({required this.video, required this.settings});
 
   final VideoInfo video;
   final AppSettings settings;
-
-  /// Saved argument templates offered as chips. Empty is fine — the field is
-  /// still freely editable.
-  final List<CommandTemplate> templates;
 
   @override
   State<_FormatPickerSheet> createState() => _FormatPickerSheetState();
 }
 
-class _FormatPickerSheetState extends State<_FormatPickerSheet>
-    with SingleTickerProviderStateMixin {
+class _FormatPickerSheetState extends State<_FormatPickerSheet> {
   late FormatKind _mode;
   Format? _videoSel;
   Format? _audioSel;
