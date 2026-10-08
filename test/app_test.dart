@@ -19,9 +19,7 @@ Future<void> pumpApp(
     ProviderScope(
       overrides: [
         settingsBoxProvider.overrideWithValue(settingsBox),
-        ytdlpServiceProvider.overrideWithValue(
-          YtdlpService(BinaryManager()),
-        ),
+        ytdlpServiceProvider.overrideWithValue(YtdlpService(BinaryManager())),
       ],
       child: App(startupProblems: problems),
     ),
@@ -59,9 +57,11 @@ void main() {
       // Everything before `runApp` used to throw, which ended the process with a
       // blank screen — an optional subsystem failing to initialise meant no app
       // at all, and nothing to report about why.
-      await pumpApp(tester, settingsBox: settingsBox, problems: [
-        'Notifications could not be set up.',
-      ]);
+      await pumpApp(
+        tester,
+        settingsBox: settingsBox,
+        problems: ['Notifications could not be set up.'],
+      );
 
       expect(find.text('Part of the app did not start'), findsOneWidget);
       expect(find.text('Notifications could not be set up.'), findsOneWidget);
@@ -70,16 +70,27 @@ void main() {
     });
 
     testWidgets('can be dismissed and stay dismissed', (tester) async {
-      await pumpApp(tester, settingsBox: settingsBox, problems: [
-        'The "queue" store could not be opened.',
-      ]);
+      await pumpApp(
+        tester,
+        settingsBox: settingsBox,
+        problems: ['The "queue" store could not be opened.'],
+      );
 
-      await tester.tap(find.byTooltip('Dismiss'));
+      // The button cannot carry a `Tooltip` because this banner is built above
+      // the `Navigator` and so has no `Overlay` to hang one on; see the note in
+      // `_StartupBanner`. Tapping the icon is the stable way in to find it.
+      await tester.tap(find.byIcon(Icons.close));
       await tester.pumpAndSettle();
 
       expect(find.text('Part of the app did not start'), findsNothing);
       // A settings change rebuilds MaterialApp, which must not bring it back.
-      await settingsBox.put('app_settings', {'themeSeed': 3});
+      //
+      // Inside `runAsync` because `put` is real IO: `testWidgets` runs in a
+      // fake-async zone that never lets the write's future complete, so awaiting
+      // it directly hangs the test until the harness times out.
+      await tester.runAsync(
+        () => settingsBox.put('app_settings', {'themeSeed': 3}),
+      );
       await tester.pumpAndSettle();
       expect(find.textContaining('did not start'), findsNothing);
     });
@@ -87,13 +98,20 @@ void main() {
     testWidgets('several failures are counted, not listed as one', (
       tester,
     ) async {
-      await pumpApp(tester, settingsBox: settingsBox, problems: [
-        'The "history" store could not be opened.',
-        'Notifications could not be set up.',
-      ]);
+      await pumpApp(
+        tester,
+        settingsBox: settingsBox,
+        problems: [
+          'The "history" store could not be opened.',
+          'Notifications could not be set up.',
+        ],
+      );
 
       expect(find.text('2 parts of the app did not start'), findsOneWidget);
-      expect(find.text('The "history" store could not be opened.'), findsOneWidget);
+      expect(
+        find.text('The "history" store could not be opened.'),
+        findsOneWidget,
+      );
       expect(find.text('Notifications could not be set up.'), findsOneWidget);
     });
   });

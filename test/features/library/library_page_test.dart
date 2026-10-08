@@ -117,7 +117,14 @@ void main() {
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [historyServiceProvider.overrideWithValue(history)],
+        overrides: [
+          historyServiceProvider.overrideWithValue(history),
+          // Without this the folder-scan action resolves the real download
+          // directory through `path_provider`, which has no platform
+          // implementation under `flutter test` and throws — surfacing as a
+          // spurious "could not scan" banner.
+          downloadsDirProvider.overrideWithValue(() async => root),
+        ],
         child: const MaterialApp(home: LibraryPage()),
       ),
     );
@@ -663,11 +670,9 @@ void main() {
       final service = HistoryService(hive);
       service.init();
 
-      expect(
-        service.records.map((r) => r.id),
-        ['good'],
-        reason: 'the readable record still loads',
-      );
+      expect(service.records.map((r) => r.id), [
+        'good',
+      ], reason: 'the readable record still loads');
 
       await hive.close();
       dir.deleteSync(recursive: true);

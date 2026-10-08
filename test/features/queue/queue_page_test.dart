@@ -138,10 +138,20 @@ class _StubManager extends DownloadManager {
   bool dismiss(String id) {
     dismissed.add(id);
     // Really removes it, so a test can reach the genuinely-empty queue the
-    // overflow menu has to cope with. The real manager does the same.
-    tasks.removeWhere((t) => t.id == id);
-    notifyListeners();
-    return true;
+    // overflow menu has to cope with.
+    //
+    // The real manager refuses to dismiss a task that is still `queued` or
+    // `downloading`, and every task seeded here is `queued`. So the stub reaches
+    // the genuinely-empty state by cancelling first — the same sequence the UI
+    // performs — and then dismissing, which is now allowed and really removes
+    // the task from the inherited list.
+    final t = tasks.where((x) => x.id == id).firstOrNull;
+    if (t == null) return false;
+    if (t.status == DownloadStatus.queued ||
+        t.status == DownloadStatus.downloading) {
+      cancel(id);
+    }
+    return super.dismiss(id);
   }
 
   @override

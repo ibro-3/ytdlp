@@ -544,9 +544,7 @@ class BinaryManager {
       // The reason the download actually failed, not a generic one: it was
       // either an HTTP status or a body too small to be a build.
       final why = takeDownloadError();
-      throw YtdlpException(
-        why == null ? 'Download failed — check the connection.' : why,
-      );
+      throw YtdlpException(why ?? 'Download failed — check the connection.');
     }
     _ytdlpPath = replaced;
     _isSystem = false;
@@ -571,9 +569,7 @@ class BinaryManager {
     final tmp = File('${runtime.script}.new');
     if (!await _downloadToFile(_ytDlpScriptUrl, tmp)) {
       final why = takeDownloadError();
-      throw YtdlpException(
-        why == null ? 'Download failed — check the connection.' : why,
-      );
+      throw YtdlpException(why ?? 'Download failed — check the connection.');
     }
     try {
       await _chmodX(tmp.path);

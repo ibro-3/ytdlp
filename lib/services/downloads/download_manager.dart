@@ -45,8 +45,25 @@ class DownloadManager extends ChangeNotifier {
     int maxConcurrency = 1,
   }) : _maxConcurrency = maxConcurrency.clamp(1, 8),
        _networkProbe = networkProbe ?? PluginNetworkProbe() {
-    if (queueStore != null) unawaited(_restore());
+    // Started eagerly so a persisted queue is back before the first frame, but
+    // the future is kept: anything that needs to observe the restored list —
+    // a test, or a caller writing to storage — has to be able to wait for it
+    // rather than guess with a timeout.
+    _restored = _restore();
+    unawaited(_restored);
   }
+
+  /// Completes when the persisted queue has been loaded (or immediately, when
+  /// there was no store to read from).
+  late final Future<void> _restored;
+
+  /// Waits for the persisted queue to be in place.
+  ///
+  /// Restore is started in the constructor so the UI never flashes an empty
+  /// queue, which leaves no natural moment to await it. Everything downstream of
+  /// "the snapshot is loaded" — tests especially — needs this rather than
+  /// sleeping and hoping.
+  Future<void> get restored => _restored;
 
   final DownloadEngine ytdlp;
   final HistoryService history;
@@ -314,11 +331,10 @@ class DownloadManager extends ChangeNotifier {
       return;
     }
     if (_persistTimer != null) return;
-    _persistTimer = Timer(_persistInterval - now.difference(last),
-        () {
-          _persistTimer = null;
-          unawaited(_persist());
-        });
+    _persistTimer = Timer(_persistInterval - now.difference(last), () {
+      _persistTimer = null;
+      unawaited(_persist());
+    });
   }
 
   Future<void> _persist() {
@@ -1091,16 +1107,20 @@ class DownloadManager extends ChangeNotifier {
           ? p.join(finalDirPath, base)
           : p.join(finalDirPath, '$stem ($i)$ext');
       if (_reservedNames.contains(candidate)) continue;
-      if (await File(candidate).exists()) continue;
-      // No await between the check and the reservation, so this cannot interleave
-      // with another move picking the same name.
+      // Reserved *before* the existence check, not after. The check is an
+      // `await`, so reserving afterwards left a window: two movers could both
+      // see the name as free, and since the first releases its reservation as
+      // soon as its rename lands, the second would reserve it too and rename on
+      // top of the first file — which `rename` deletes. Holding the name across
+      // the check closes that window; the reservation is only released once this
+      // mover is done with the candidate either way.
       _reservedNames.add(candidate);
       try {
+        if (await File(candidate).exists()) continue;
         await _renameIntoPlace(source, candidate);
         return candidate;
       } finally {
-        // The file now exists, so the reservation has done its job and the next
-        // move will see the collision on disk.
+        // The file exists on disk now, so a later move sees the collision there.
         _reservedNames.remove(candidate);
       }
     }

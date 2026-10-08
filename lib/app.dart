@@ -31,7 +31,7 @@ class App extends ConsumerWidget {
         // the only thing broken, so the rest stays usable.
         return Stack(
           children: [
-            if (child != null) child,
+            ?child,
             Positioned(
               left: 0,
               right: 0,
@@ -82,10 +82,7 @@ class _StartupBannerState extends State<_StartupBanner> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                Icons.warning_amber_rounded,
-                color: scheme.onErrorContainer,
-              ),
+              Icon(Icons.warning_amber_rounded, color: scheme.onErrorContainer),
               const SizedBox(width: 8),
               Expanded(
                 child: Column(
@@ -112,22 +109,31 @@ class _StartupBannerState extends State<_StartupBanner> {
                   ],
                 ),
               ),
-              IconButton(
-                onPressed: () {
-                  setState(() => _dismissed = true);
-                  messenger
-                    ..hideCurrentSnackBar()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'These will be retried the next time the app starts.',
+              Semantics(
+                button: true,
+                label: 'Dismiss',
+                child: IconButton(
+                  onPressed: () {
+                    setState(() => _dismissed = true);
+                    messenger
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'These will be retried the next time the app starts.',
+                          ),
                         ),
-                      ),
-                    );
-                },
-                icon: const Icon(Icons.close),
-                tooltip: 'Dismiss',
-                color: scheme.onErrorContainer,
+                      );
+                  },
+                  icon: const Icon(Icons.close),
+                  // A `Tooltip` needs an `Overlay` ancestor, and this banner is
+                  // built in `MaterialApp.builder` — above the `Navigator`, so
+                  // there is none. Using one threw every time the banner
+                  // appeared, which is to say exactly when it was needed. The
+                  // `Semantics` wrapper above gives assistive tech the same
+                  // label without needing the overlay.
+                  color: scheme.onErrorContainer,
+                ),
               ),
             ],
           ),

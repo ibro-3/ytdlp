@@ -24,7 +24,6 @@ import '../../services/cookies/cookie_jar.dart';
 import '../../services/settings/backup_service.dart';
 import '../../services/settings/template_store.dart';
 import '../../services/updates/app_update_service.dart';
-import 'cookie_domains_page.dart';
 import '../../services/ytdlp/arg_tokenizer.dart';
 import '../../services/ytdlp/binary_manager.dart';
 import '../../services/ytdlp/ejs_installer.dart';
@@ -75,8 +74,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Future<void> _patch(AppSettings next) =>
       ref.read(settingsControllerProvider.notifier).patch(next);
-
-  
 
   Future<void> _loadVersion() async {
     setState(() {
@@ -679,9 +676,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         subtitle: const Text('Machine captions, marked "auto"'),
                         value: settings.defaultIncludeAutoSubs,
                         onChanged: (v) => unawaited(
-                          _patch(
-                            settings.copyWith(defaultIncludeAutoSubs: v),
-                          ),
+                          _patch(settings.copyWith(defaultIncludeAutoSubs: v)),
                         ),
                       ),
                     ],
@@ -731,7 +726,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                     ? 'Choose which sites are sent — not '
                                           'available for a browser'
                                     : 'Choose which sites are sent',
-                                onPressed: () => context.push('/settings/cookies'),
+                                onPressed: () =>
+                                    context.push('/settings/cookies'),
                               ),
                               IconButton(
                                 icon: const Icon(Icons.close),
@@ -1550,26 +1546,28 @@ class _PostProcessingSection extends ConsumerWidget {
     // `pending` is deliberately distinct from "no ffprobe": showing the
     // "ffmpeg not found" warning before the probe has answered would flash an
     // error at a device that is perfectly fine.
-    return ref.watch(ffprobeAvailableProvider).when(
-      loading: () => _PostProcessingBody(
-        settings: settings,
-        prefs: prefs,
-        patch: patch,
-        canPost: null,
-      ),
-      error: (_, _) => _PostProcessingBody(
-        settings: settings,
-        prefs: prefs,
-        patch: patch,
-        canPost: false,
-      ),
-      data: (canPost) => _PostProcessingBody(
-        settings: settings,
-        prefs: prefs,
-        patch: patch,
-        canPost: canPost,
-      ),
-    );
+    return ref
+        .watch(ffprobeAvailableProvider)
+        .when(
+          loading: () => _PostProcessingBody(
+            settings: settings,
+            prefs: prefs,
+            patch: patch,
+            canPost: null,
+          ),
+          error: (_, _) => _PostProcessingBody(
+            settings: settings,
+            prefs: prefs,
+            patch: patch,
+            canPost: false,
+          ),
+          data: (canPost) => _PostProcessingBody(
+            settings: settings,
+            prefs: prefs,
+            patch: patch,
+            canPost: canPost,
+          ),
+        );
   }
 }
 
@@ -1629,9 +1627,7 @@ class _PostProcessingBody extends StatelessWidget {
                     ? 'Looking for ffmpeg and ffprobe…'
                     : 'ffprobe is not available here, so these are disabled.',
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: probePending
-                      ? scheme.onSurfaceVariant
-                      : scheme.error,
+                  color: probePending ? scheme.onSurfaceVariant : scheme.error,
                 ),
               ),
             ),
@@ -1641,9 +1637,7 @@ class _PostProcessingBody extends StatelessWidget {
               child: Text(
                 'Post-processing is switched on but ffprobe is not '
                 'available, so these flags are left off the command line.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.error,
-                ),
+                style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
               ),
             ),
           SwitchListTile(
@@ -1721,9 +1715,7 @@ class _PostProcessingBody extends StatelessWidget {
             dense: true,
             title: const Text('Remove sponsor segments'),
             subtitle: Text(
-              available
-                  ? 'Cuts out SponsorBlock segments'
-                  : unavailableReason,
+              available ? 'Cuts out SponsorBlock segments' : unavailableReason,
             ),
             value: prefs.sponsorblockRemove,
             onChanged: available
@@ -1744,11 +1736,7 @@ class _PostProcessingBody extends StatelessWidget {
 /// `final`, not `const`: a collection-`for` over a local `var` loop counter is
 /// not a constant expression, and the list only has to be built once per app.
 final List<int> _queueSizeOptions = [
-  for (
-    var n = AppSettings.queueSizeMin;
-    n <= AppSettings.queueSizeMax;
-    n += 10
-  )
+  for (var n = AppSettings.queueSizeMin; n <= AppSettings.queueSizeMax; n += 10)
     n,
 ];
 
@@ -1823,9 +1811,7 @@ class _QueueSection extends ConsumerWidget {
             ],
             onChanged: (v) => unawaited(
               onPatch(
-                settings.copyWith(
-                  maxQueueSize: v ?? _defaultQueueSizeOption,
-                ),
+                settings.copyWith(maxQueueSize: v ?? _defaultQueueSizeOption),
               ),
             ),
           ),

@@ -53,7 +53,18 @@ void main() {
   });
 
   tearDown(() async {
-    await settingsBox.close();
+    // A save kicked off by `onPatch` is `unawaited`, so one can still be in
+    // flight when the test ends. `close()` waits for it, and inside
+    // `testWidgets` — which runs in a fake-async zone — that wait never
+    // completes, so teardown hangs until the harness gives up.
+    //
+    // Bounded rather than awaited outright: the box is a per-test temp file
+    // that the `deleteSync` below removes either way, so a write that never
+    // settles must not be able to hang the suite.
+    await settingsBox.close().timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {},
+    );
     try {
       tempRoot.deleteSync(recursive: true);
     } catch (_) {}
@@ -95,6 +106,14 @@ void main() {
       // the section restarted the probe and dropped the answer back to
       // "unavailable" — the switches visibly flickered greyed out on every
       // keystroke in the Proxy field above them.
+      //
+      // The tall viewport matches the suite's shared `pump`: at the default
+      // 600px the post-processing section is below the fold, so a `ListView`
+      // never builds it and the enabled-toggle counts describe only whatever
+      // happened to be on screen.
+      tester.view.physicalSize = const Size(500, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -106,6 +125,14 @@ void main() {
       );
       await settle(tester);
 
+      // Type into the Proxy field, which rebuilds this section on every change.
+      // Located by hint rather than by `find.byType(TextField).first`, so the
+      // lookup does not depend on how much of the page is built.
+      final proxy = find.widgetWithText(
+        TextField,
+        'socks5://host:port — empty for none',
+      );
+
       final enabledBefore = tester
           .widgetList<SwitchListTile>(find.byType(SwitchListTile))
           .where((t) => t.onChanged != null)
@@ -116,21 +143,23 @@ void main() {
         reason: 'the toggles settled as enabled once the probe answered',
       );
 
-      // Type into the Proxy field, which rebuilds this section on every change.
-      await tester.enterText(find.byType(TextField).first, 'socks5://1.2.3.4');
+      await tester.enterText(proxy, 'socks5://1.2.3.4');
       await tester.pump();
       await tester.pump();
 
+      await settle(tester);
+
+      final enabledAfter = tester
+          .widgetList<SwitchListTile>(find.byType(SwitchListTile))
+          .where((t) => t.onChanged != null)
+          .length;
       expect(
         find.textContaining('not available'),
         findsNothing,
         reason: 'the capability is not lost mid-edit',
       );
       expect(
-        tester
-            .widgetList<SwitchListTile>(find.byType(SwitchListTile))
-            .where((t) => t.onChanged != null)
-            .length,
+        enabledAfter,
         enabledBefore,
         reason: 'the toggles did not lose their capability mid-edit',
       );
@@ -139,6 +168,11 @@ void main() {
     testWidgets('a device without ffprobe reports it instead of blinking', (
       tester,
     ) async {
+      // Tall viewport, as above: the section is below the fold of the default
+      // one, so nothing would be built to find.
+      tester.view.physicalSize = const Size(500, 2400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [

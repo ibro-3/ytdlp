@@ -82,9 +82,17 @@ void main() {
   });
 
   tearDown(() async {
-    await settingsBox.close();
-    await historyBox.close();
-    await queueBox.close();
+    // Bounded closes: `DownloadManager.dispose` fires an `unawaited` write to
+    // the queue box, and inside `testWidgets` — which runs in a fake-async zone
+    // — `close()` waits on that write forever. The boxes are per-test temp
+    // files that `deleteSync` removes either way, so a write that never settles
+    // must not be able to hang the suite.
+    Future<void> closeBox(Box<dynamic> b) =>
+        b.close().timeout(const Duration(seconds: 5), onTimeout: () {});
+
+    await closeBox(settingsBox);
+    await closeBox(historyBox);
+    await closeBox(queueBox);
     try {
       tempRoot.deleteSync(recursive: true);
     } catch (_) {}

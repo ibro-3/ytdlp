@@ -56,7 +56,10 @@ void main() {
         'webpage_url': 'https://example.com/watch?v=v1',
         'duration': 10,
         'formats': [
-          for (var i = 0; i < 6000; i++)
+          // Enough entries that the encoded payload clears 1 MB. 6000 was shy
+          // of it (~827 KB), which left the assertion below failing on its own
+          // fixture — the truncation it guards was never actually exercised.
+          for (var i = 0; i < 9000; i++)
             {
               'format_id': 'f$i',
               'ext': 'mp4',
@@ -69,7 +72,8 @@ void main() {
       expect(
         payload.length,
         greaterThan(1024 * 1024),
-        reason: 'the fixture must exceed a pipe buffer for this to mean anything',
+        reason:
+            'the fixture must exceed a pipe buffer for this to mean anything',
       );
 
       final service = _serviceThatEchoes(tempRoot, payload, exitCode: 0);
@@ -165,10 +169,8 @@ YtdlpService _serviceThatEchoes(
   String stderr = '',
   int exitCode = 0,
 }) {
-  final outFile = File('${root.path}/stdout.txt')
-    ..writeAsStringSync(stdout);
-  final errFile = File('${root.path}/stderr.txt')
-    ..writeAsStringSync(stderr);
+  final outFile = File('${root.path}/stdout.txt')..writeAsStringSync(stdout);
+  final errFile = File('${root.path}/stderr.txt')..writeAsStringSync(stderr);
   final script = File('${root.path}/emit.sh')
     ..writeAsStringSync('''
 cat '${outFile.path}'

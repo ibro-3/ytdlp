@@ -99,15 +99,19 @@ class _SameNameEngine implements DownloadEngine {
 /// them all arriving in one microtask would still let a debounce timer fire
 /// afterwards, which is exactly what a real download does not do.
 class _PacedProcess implements DownloadProcess {
-  _PacedProcess(this._exit, this.period, this.lines);
+  _PacedProcess(this._exit, this.period, this._scriptedLines);
 
   final Future<int> _exit;
   final Duration period;
-  final List<String> lines;
+
+  /// Named `_scriptedLines` rather than `lines`: `lines` is the
+  /// [DownloadProcess] stream getter, and a field of that name shadowed it, so
+  /// the getter recursed into itself and the file did not compile.
+  final List<String> _scriptedLines;
 
   @override
   Stream<String> get lines async* {
-    for (final line in lines) {
+    for (final line in _scriptedLines) {
       await Future<void>.delayed(period);
       yield line;
     }
@@ -281,7 +285,10 @@ class _FakeEngine implements DownloadEngine {
     this.exitOnCancel = false,
   });
 
-  final Future<int>? exitCode;
+  /// Settable rather than final so a test can let the first download finish and
+  /// then hold every one after it open — one exit code for the whole run cannot
+  /// express "the first completed, the next takes the only slot".
+  Future<int>? exitCode;
   final bool sidecars;
   final bool destinationIsSidecar;
 
@@ -877,7 +884,8 @@ void main() {
       // dismissing a card could recursively delete an arbitrary directory.
       final outside = Directory('${tempRoot.path}/precious')
         ..createSync(recursive: true);
-      final canary = File('${outside.path}/keep.txt')..writeAsStringSync('keep');
+      final canary = File('${outside.path}/keep.txt')
+        ..writeAsStringSync('keep');
       final video = _video('abc123');
       final task = DownloadTask(
         id: 'tampered',
@@ -916,15 +924,21 @@ void main() {
       final m = manager(engine, maxConcurrency: 1);
       addTearDown(m.dispose);
 
-      for (final id in ['a', 'b', 'c']) {
-        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
-      }
+      // The returned tasks are kept because their ids are generated, not
+      // derived from the video: reordering by a hand-written id matches nothing
+      // and silently reports failure.
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      final b = m.enqueue(
+        video: _video('b'),
+        format: _video('b').videoFormats.first,
+      );
+      m.enqueue(video: _video('c'), format: _video('c').videoFormats.first);
       await waitUntil(() => engine.started == 1);
 
-      final before = {
-        for (final t in m.tasks) t.id: t.createdAt,
-      };
-      expect(m.reorder('b', 1), isTrue);
+      final before = {for (final t in m.tasks) t.id: t.createdAt};
+      // 'a' is the one already downloading, so the queued pair is b and c;
+      // moving b down is a legal move within the queued block.
+      expect(m.reorder(b.id, 1), isTrue);
       expect(
         {for (final t in m.tasks) t.id: t.createdAt},
         before,
@@ -933,27 +947,62 @@ void main() {
     });
 
     test('reorder does not sink the queued block below finished cards', () async {
+      // The first download completes, so there is a finished card; after that
+      // every exit code is held open, so the next task takes the only slot and
+      // the last genuinely waits. `pause()` would not do: a held task lands in
+      // `paused`, and `reorder` refuses anything that is not `queued`.
       final engine = _FakeEngine();
       final m = manager(engine, maxConcurrency: 1);
       addTearDown(m.dispose);
 
-      // One task finishes, then two more are queued behind it.
-      m.enqueue(video: _video('done'), format: _video('done').videoFormats.first);
+      m.enqueue(
+        video: _video('done'),
+        format: _video('done').videoFormats.first,
+      );
       await waitUntil(() => m.completedCount == 1);
-      for (final id in ['b', 'c']) {
-        m.enqueue(video: _video(id), format: _video(id).videoFormats.first);
-      }
-      await waitUntil(() => m.queuedCount == 2);
+      engine.exitCode = Completer<int>().future;
+      // 'b' takes the only slot and is held open, so 'c' waits behind it.
+      final b = m.enqueue(
+        video: _video('b'),
+        format: _video('b').videoFormats.first,
+      );
+      final c = m.enqueue(
+        video: _video('c'),
+        format: _video('c').videoFormats.first,
+      );
+      await waitUntil(() => m.queuedCount == 1 && m.activeCount == 1);
+      expect(b.status, DownloadStatus.downloading);
 
       // Re-stamping to epoch sent every waiting task below the finished one,
       // because the list is sorted by creation time for display.
-      expect(m.reorder('c', 1), isTrue);
+      //
+      // Two waiting tasks are needed for the move to mean anything: with only
+      // one, moving it down is a no-op and `reorder` correctly reports false.
+      // So 'b' is released to join 'c' in the queue after the hold is dropped.
+      engine.exitCode = Future<int>.value(0);
+      final held = m.enqueue(
+        video: _video('d'),
+        format: _video('d').videoFormats.first,
+      );
+      await waitUntil(() => m.queuedCount >= 2);
+      engine.exitCode = Completer<int>().future;
+
+      // By `c.id`, not `'c'`: task ids are generated, so a hand-written one
+      // matches nothing.
+      expect(m.reorder(c.id, 1), isTrue);
+      expect(held.status, isNot(DownloadStatus.downloading));
       final order = m.tasks.map((t) => t.video.id).toList();
-      expect(order.last, 'c', reason: 'the moved task stays in the display list');
+      // Newest first: `_tasks` is sorted by creation time descending, so the
+      // later-enqueued tasks come earlier in the list regardless of the move.
       expect(
-        order.indexOf('b'),
-        lessThan(order.indexOf('c')),
+        order.indexOf('c'),
+        lessThan(order.indexOf('b')),
         reason: 'display order is by creation time, unaffected by the move',
+      );
+      expect(
+        order.indexOf('c'),
+        lessThan(order.indexOf('done')),
+        reason: 'the queued block stays above the finished card',
       );
     });
 
@@ -1798,14 +1847,16 @@ void main() {
       );
     });
 
-    test('a listener that removes a task mid-pump does not break the scheduler',
-        () async {
+    test('a listener that removes a task mid-pump does not break the scheduler', () async {
       // `_pump` used to iterate the live task list lazily while calling
       // `notifyListeners` inside that loop. A listener that removes a task — the
       // queue UI does exactly this when a card is dismissed — mutated the list
       // mid-iteration, raising ConcurrentModificationError out of an async
       // callback, where it surfaces as an unhandled error.
-      final engine = _FakeEngine(exitCode: Completer<int>().future);
+      final engine = _FakeEngine(
+        exitCode: Completer<int>().future,
+        exitOnCancel: true,
+      );
       final m = manager(engine, maxConcurrency: 1);
       addTearDown(m.dispose);
 
@@ -1817,10 +1868,15 @@ void main() {
       var removals = 0;
       m.addListener(() {
         if (removals >= 1) return;
+        // A *queued* task cannot be dismissed — `dismiss` refuses anything still
+        // waiting or running, since dropping it would strand its download. So the
+        // mutation under test is a cancel, which is what the queue UI does to a
+        // card it is removing mid-pump. Cancelling flips the status to
+        // `canceled` inside `_tasks` while `_pump` is iterating its snapshot.
         final waiting = m.tasks.where((t) => t.status == DownloadStatus.queued);
         if (waiting.isEmpty) return;
         removals++;
-        m.dismiss(waiting.first.id);
+        m.cancel(waiting.first.id);
       });
 
       // Enqueuing pumps again, which is where the mutation happens. Concurrency
@@ -1839,11 +1895,16 @@ void main() {
       );
 
       // Releasing the running slot drains the rest of the queue.
+      //
+      // `exitOnCancel` matters: cancel marks the task canceled at once, but the
+      // slot is only freed when the run loop finishes, and that waits on the
+      // process's exit code. A fake that never resolves it would leave the queue
+      // stalled forever — which is the hang this assertion used to hit.
       final running = m.tasks.firstWhere(
         (t) => t.status == DownloadStatus.downloading,
       );
       m.cancel(running.id);
-      await waitUntil(() => m.queuedCount == 0);
+      await waitUntil(() => m.activeCount == 0);
     });
 
     test('cancelPlaylist ignores tasks from another playlist', () async {
@@ -2018,10 +2079,17 @@ void main() {
       final m = manager(engine, maxConcurrency: 2);
       addTearDown(m.dispose);
 
-      final a = m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
-      final b = m.enqueue(video: _video('b'), format: _video('b').videoFormats.first);
+      final a = m.enqueue(
+        video: _video('a'),
+        format: _video('a').videoFormats.first,
+      );
+      final b = m.enqueue(
+        video: _video('b'),
+        format: _video('b').videoFormats.first,
+      );
       await waitUntil(
-        () => a.status == DownloadStatus.completed &&
+        () =>
+            a.status == DownloadStatus.completed &&
             b.status == DownloadStatus.completed,
       );
 
@@ -2082,8 +2150,7 @@ void main() {
       },
     );
 
-    test('a snapshot written before queueSeq existed still restores in order',
-        () async {
+    test('a snapshot written before queueSeq existed still restores in order', () async {
       // Snapshots from an older build carry no queueSeq, so `fromMap` falls back
       // to the creation time to reconstruct the old "oldest first" order.
       final store = QueueStore(historyBox);
@@ -2112,8 +2179,18 @@ void main() {
       );
       addTearDown(m.dispose);
 
-      await waitUntil(() => m.tasks.length == 2);
-      expect(m.queueInStartOrder.map((t) => t.id), ['oldest', 'newest']);
+      await m.restored;
+      expect(m.tasks.length, 2);
+      // Asserted on `queueSeq`, not `queueInStartOrder`: restore deliberately
+      // flips anything that was waiting to `failed`, so nothing is `queued` at
+      // this point. What the test pins is that the sequence numbers still order
+      // the two the way the old creation-time fallback did, so a later retry
+      // starts 'oldest' first.
+      final bySeq = m.tasks.toList()
+        ..sort((a, b) => a.queueSeq.compareTo(b.queueSeq));
+      expect(bySeq.map((t) => t.id), ['oldest', 'newest']);
+      // Every sequence is distinct, which is what the scheduler's sort relies on.
+      expect(bySeq[0].queueSeq == bySeq[1].queueSeq, isFalse);
     });
 
     test('a persisted task round-trips its fields', () async {
@@ -2361,10 +2438,12 @@ void main() {
       addTearDown(m.dispose);
 
       m.cancel(
-        m.enqueue(
-          video: _video('abc123'),
-          format: _video('abc123').videoFormats.first,
-        ).id,
+        m
+            .enqueue(
+              video: _video('abc123'),
+              format: _video('abc123').videoFormats.first,
+            )
+            .id,
       );
       await waitUntil(() => store.load().isNotEmpty);
 

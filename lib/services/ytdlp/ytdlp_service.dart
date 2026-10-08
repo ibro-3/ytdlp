@@ -247,9 +247,9 @@ class YtdlpProcess implements DownloadProcess {
   /// also carries whatever a downloaded page or a misbehaving extractor made it
   /// print, and a single malformed byte would otherwise fail the whole download
   /// with a raw FormatException instead of a useful error.
-  Stream<String> _lines(Stream<List<int>> pipe) =>
-      pipe.transform(const Utf8Decoder(allowMalformed: true))
-          .transform(const LineSplitter());
+  Stream<String> _lines(Stream<List<int>> pipe) => pipe
+      .transform(const Utf8Decoder(allowMalformed: true))
+      .transform(const LineSplitter());
 
   @override
   Stream<String> get lines {
@@ -356,8 +356,7 @@ class PlaylistResult extends FetchResult {
 }
 
 class YtdlpService implements DownloadEngine {
-  YtdlpService(this._binary, {Duration metadataTimeout = _defaultMetadataTimeout})
-    : _metadataTimeout = metadataTimeout;
+  YtdlpService(this._binary, {this._metadataTimeout = _defaultMetadataTimeout});
 
   final BinaryManager _binary;
 
@@ -685,16 +684,38 @@ class YtdlpService implements DownloadEngine {
 
     // A payload that blows the budget is never useful to us — stop reading and
     // stop the process rather than letting it write into the void.
+    //
+    // Each pipe tracks its own completion. It has to be recorded at subscribe
+    // time: by the time the exit status comes back the stream is usually already
+    // done, and asking an already-finished subscription for anything afterwards
+    // would never return. See [_drain].
     var killedForFlood = false;
-    final outSub = process.stdout.transform(lenientDecoder).listen((chunk) {
-      if (!out.add(chunk) && !killedForFlood) {
-        killedForFlood = true;
-        kill();
-      }
-    });
-    final errSub = process.stderr.transform(lenientDecoder).listen((chunk) {
-      err.add(chunk);
-    });
+    final outDone = Completer<void>();
+    final errDone = Completer<void>();
+    final outSub = process.stdout
+        .transform(lenientDecoder)
+        .listen(
+          (chunk) {
+            if (!out.add(chunk) && !killedForFlood) {
+              killedForFlood = true;
+              kill();
+            }
+          },
+          // An error ends this pipe as surely as a close does, so it completes the
+          // same future rather than leaving `_drain` waiting on a stream that is
+          // never going to deliver another event.
+          onError: (Object _, StackTrace _) => outDone.complete(),
+          onDone: outDone.complete,
+          cancelOnError: false,
+        );
+    final errSub = process.stderr
+        .transform(lenientDecoder)
+        .listen(
+          (chunk) => err.add(chunk),
+          onError: (Object _, StackTrace _) => errDone.complete(),
+          onDone: errDone.complete,
+          cancelOnError: false,
+        );
 
     var timedOut = false;
     final timer = Timer(timeout, () {
@@ -703,13 +724,13 @@ class YtdlpService implements DownloadEngine {
     });
 
     // Both pipes are drained exactly once whether or not the exit status
-    // arrives: `asFuture` must not be called twice on one subscription.
+    // arrives: the completion futures must not be awaited twice.
     var drained = false;
     Future<void> drain() async {
       if (drained) return;
       drained = true;
-      await _drain(outSub);
-      await _drain(errSub);
+      await _drain(outSub, outDone.future);
+      await _drain(errSub, errDone.future);
     }
 
     late final int code;
@@ -740,17 +761,23 @@ class YtdlpService implements DownloadEngine {
     );
   }
 
-  /// Waits for [sub]'s stream to finish, cancelling it afterwards.
+  /// Waits for the pipe to finish, then cancels it.
+  ///
+  /// Awaits [done] — the future completed when the pipe closed — rather than
+  /// calling `asFuture` on [sub] after the fact. `asFuture` completes on the
+  /// stream's *next* event, and by the time this runs the stream is almost
+  /// always already done, so that future would never complete and the whole
+  /// fetch would hang with no error.
   ///
   /// Swallows errors deliberately: a decode failure on the last few bytes must
   /// not discard the payload that *was* read, and the caller has already
   /// recorded the real failure (non-zero exit, timeout, or flood kill).
-  static Future<void> _drain(StreamSubscription<String> sub) async {
+  static Future<void> _drain(
+    StreamSubscription<String> sub,
+    Future<void> done,
+  ) async {
     try {
-      // `Object?` with an explicit null rather than `void`: `asFuture` rejects a
-      // null default for a non-nullable type argument, and spelling it out is
-      // cheaper than reasoning about whether `void` counts.
-      await sub.asFuture<Object?>(null);
+      await done;
     } catch (_) {
       // Intentionally ignored; see above.
     }
