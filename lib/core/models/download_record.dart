@@ -37,29 +37,29 @@ class DownloadRecord {
   };
 
   /// Reads a stored record.
-///
-/// Every field goes through a type check rather than a cast. `as String?` throws
-/// on a non-String — it does not coerce — so a single record written by a
-/// different build, or edited by hand, would throw inside the history service
-/// and take the library down with it. `createdAt` also falls back to "now"
-/// rather than the epoch, because a record dated 1970 sorts to the bottom of
-/// "newest first" and renders as a plausible-looking wrong date.
-factory DownloadRecord.fromMap(Map<String, dynamic> m) => DownloadRecord(
-  id: _str(m['id']) ?? '',
-  videoId: _str(m['videoId']) ?? '',
-  title: _str(m['title']) ?? 'Unknown',
-  author: _str(m['author']),
-  thumbnail: _str(m['thumbnail']),
-  filePath: _str(m['filePath']) ?? '',
-  size: _num(m['size'])?.toInt() ?? 0,
-  // A missing date is "now", not the epoch: a record dated 1970 sorts to the
-  // bottom of "newest first" and renders as a plausible-looking wrong date
-  // rather than an obviously broken one.
-  createdAt: _num(m['createdAt']) == null
-      ? DateTime.now()
-      : DateTime.fromMillisecondsSinceEpoch(_num(m['createdAt'])!.toInt()),
-  playlistTitle: _str(m['playlistTitle']),
-);
+  ///
+  /// Every field goes through a type check rather than a cast. `as String?` throws
+  /// on a non-String — it does not coerce — so a single record written by a
+  /// different build, or edited by hand, would throw inside the history service
+  /// and take the library down with it. `createdAt` also falls back to "now"
+  /// rather than the epoch, because a record dated 1970 sorts to the bottom of
+  /// "newest first" and renders as a plausible-looking wrong date.
+  factory DownloadRecord.fromMap(Map<String, dynamic> m) => DownloadRecord(
+    id: _str(m['id']) ?? '',
+    videoId: _str(m['videoId']) ?? '',
+    title: _str(m['title']) ?? 'Unknown',
+    author: _str(m['author']),
+    thumbnail: _str(m['thumbnail']),
+    filePath: _str(m['filePath']) ?? '',
+    size: _num(m['size'])?.toInt() ?? 0,
+    // A missing date is "now", not the epoch: a record dated 1970 sorts to the
+    // bottom of "newest first" and renders as a plausible-looking wrong date
+    // rather than an obviously broken one.
+    createdAt: _num(m['createdAt']) == null
+        ? DateTime.now()
+        : DateTime.fromMillisecondsSinceEpoch(_num(m['createdAt'])!.toInt()),
+    playlistTitle: _str(m['playlistTitle']),
+  );
 }
 
 /// A stored string field, or null when it holds anything else.

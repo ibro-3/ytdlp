@@ -356,10 +356,7 @@ class _BatchRow extends StatelessWidget {
               message: 'Resolve this link first',
               child: Checkbox(value: selected, onChanged: null),
             )
-          : Checkbox(
-              value: selected,
-              onChanged: (_) => onToggle(),
-            ),
+          : Checkbox(value: selected, onChanged: (_) => onToggle()),
       title: Text(
         item.video?.title ?? item.url,
         maxLines: 2,

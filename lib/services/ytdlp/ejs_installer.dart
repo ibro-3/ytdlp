@@ -102,9 +102,12 @@ class EjsInstaller {
       // Errors are reported to [completer], not to the queue: one failed install
       // must not break the wait for the next.
       unawaited(
-        action().then<void>((_) => completer.complete, onError: (Object e, StackTrace s) {
-          completer.completeError(e, s);
-        }),
+        action().then<void>(
+          (_) => completer.complete,
+          onError: (Object e, StackTrace s) {
+            completer.completeError(e, s);
+          },
+        ),
       );
     });
     return completer.future;

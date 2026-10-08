@@ -188,7 +188,9 @@ void main() {
       expect(find.textContaining('Fetching details'), findsOneWidget);
     });
 
-    testWidgets('an unresolved row renders instead of throwing', (tester) async {
+    testWidgets('an unresolved row renders instead of throwing', (
+      tester,
+    ) async {
       // `clearFinished` keeps the rows a run in progress had not reached yet, so
       // a video-less, error-less, non-playlist item is reachable. It used to be
       // forced non-null, which threw on a perfectly ordinary state.

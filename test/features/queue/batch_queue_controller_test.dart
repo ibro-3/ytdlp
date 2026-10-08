@@ -263,7 +263,9 @@ void main() {
       'https://b.example.com/2',
       'https://c.example.com/3',
     ]);
-    await Future<void>.delayed(perUrl + perUrl + const Duration(milliseconds: 10));
+    await Future<void>.delayed(
+      perUrl + perUrl + const Duration(milliseconds: 10),
+    );
     expect(
       c.read(batchQueueControllerProvider).items[1].status,
       BatchItemStatus.failed,

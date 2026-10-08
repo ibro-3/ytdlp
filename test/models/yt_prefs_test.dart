@@ -100,8 +100,14 @@ void main() {
       expect(p.copyWith(fragmentRetries: -1).fragmentRetries, 0);
       // sleepRequests was copied through unclamped, so typing a large number in
       // Settings put `--sleep-requests 999` on the command line until restart.
-      expect(p.copyWith(sleepRequests: 999).sleepRequests, YtPrefs.maxSleepRequests);
-      expect(p.copyWith(sleepRequests: -5).sleepRequests, YtPrefs.minSleepRequests);
+      expect(
+        p.copyWith(sleepRequests: 999).sleepRequests,
+        YtPrefs.maxSleepRequests,
+      );
+      expect(
+        p.copyWith(sleepRequests: -5).sleepRequests,
+        YtPrefs.minSleepRequests,
+      );
       expect(p.copyWith(sleepRequests: 3).sleepRequests, 3);
     });
   });

@@ -91,8 +91,6 @@ final ffprobeAvailableProvider = FutureProvider<bool>((ref) async {
   }
 });
 
-
-
 final ytdlpServiceProvider = Provider<YtdlpService>(
   (ref) => YtdlpService(ref.watch(binaryManagerProvider)),
 );

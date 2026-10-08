@@ -222,21 +222,21 @@ class VideoInfo {
   }
 
   /// The codec string for [field], or null when absent.
-///
-/// `jsonString` rather than a cast. These payloads come from the site, so a
-/// field the app does not control may hold anything; `as String?` on a number
-/// throws, and the failure would be a crashed metadata fetch rather than a
-/// format quietly missing.
-static String? _codec(Map<String, dynamic> f, String field) =>
-    jsonString(f[field]);
+  ///
+  /// `jsonString` rather than a cast. These payloads come from the site, so a
+  /// field the app does not control may hold anything; `as String?` on a number
+  /// throws, and the failure would be a crashed metadata fetch rather than a
+  /// format quietly missing.
+  static String? _codec(Map<String, dynamic> f, String field) =>
+      jsonString(f[field]);
 
-static bool _isCombined(Map<String, dynamic> f) {
+  static bool _isCombined(Map<String, dynamic> f) {
     final v = _codec(f, 'vcodec');
     final a = _codec(f, 'acodec');
     return v != null && v != 'none' && a != null && a != 'none';
   }
 
-static bool _hasVideo(Map<String, dynamic> f) {
+  static bool _hasVideo(Map<String, dynamic> f) {
     final v = _codec(f, 'vcodec');
     return v != null && v != 'none';
   }

@@ -47,7 +47,10 @@ void main() {
 
   group('staysInDirectory', () {
     test('an ordinary template is fine', () {
-      expect(OutputTemplate('%(title)s [%(id)s].%(ext)s').staysInDirectory, isTrue);
+      expect(
+        OutputTemplate('%(title)s [%(id)s].%(ext)s').staysInDirectory,
+        isTrue,
+      );
       // The documented way to group by playlist, which the app strips back off
       // for staging and applies itself on the way out.
       expect(
@@ -62,7 +65,10 @@ void main() {
       // yt-dlp resolves `..` against the staging directory, so this would write
       // the finished file anywhere on the filesystem — where the app neither
       // finds it as the result nor cleans it up.
-      expect(OutputTemplate('../../%(title)s.%(ext)s').staysInDirectory, isFalse);
+      expect(
+        OutputTemplate('../../%(title)s.%(ext)s').staysInDirectory,
+        isFalse,
+      );
       expect(
         OutputTemplate('%(playlist_title)s/../../%(title)s.%(ext)s')
             .staysInDirectory,

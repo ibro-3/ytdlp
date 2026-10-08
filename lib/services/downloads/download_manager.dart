@@ -1495,6 +1495,18 @@ class DownloadManager extends ChangeNotifier {
     }
   }
 
+  /// Completes when every queued snapshot write has landed.
+  ///
+  /// [dispose] cannot await — `ChangeNotifier.dispose` is `void` — yet it writes
+  /// through on the way out, so that write is otherwise untrackable: a caller
+  /// that is about to close the Hive box has no way to know whether the final
+  /// snapshot made it, and closing early drops it.
+  ///
+  /// Await this *before* disposing when the store's lifetime ends with the
+  /// caller. Writes that start after this is awaited are not covered, which is
+  /// why the final one in [dispose] is deliberately the last thing it does.
+  Future<void> get flushed => _writeChain;
+
   @override
   void dispose() {
     _disposed = true;
@@ -1517,6 +1529,9 @@ class DownloadManager extends ChangeNotifier {
     // re-stamping to `canceled` above is the whole point, and dropping it would
     // restore those tasks as `downloading` on the next launch — which then
     // surface as failures the user never caused.
+    //
+    // Fire-and-forget, because `dispose` cannot await — [flushed] exists so a
+    // caller closing the store can wait for it first.
     unawaited(_persist());
     super.dispose();
   }

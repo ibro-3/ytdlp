@@ -118,17 +118,12 @@ void main() {
   // Run it with:
   //   flutter test test/services/app_update_service_test.dart --tags network
   group('a real check', () {
-    test(
-      'the live endpoint answers honestly',
-      () async {
-        // Whatever it finds — available, current, unreachable — it must land on
-        // an honest state and never throw.
-        final result = await AppUpdater(
-          currentVersion: () async => '1.0.0',
-        ).check();
-        expect(result.status, isIn(AppUpdateStatus.values));
-      },
-      tags: const ['network'],
-    );
+    test('the live endpoint answers honestly', () async {
+      // Whatever it finds — available, current, unreachable — it must land on
+      // an honest state and never throw.
+      final result = await AppUpdater(currentVersion: () async => '1.0.0')
+          .check();
+      expect(result.status, isIn(AppUpdateStatus.values));
+    }, tags: const ['network']);
   });
 }

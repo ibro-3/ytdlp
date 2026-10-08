@@ -141,15 +141,15 @@ class DownloadTask {
         ? FormatKind.audio
         : FormatKind.video;
     final createdAt =
-        DateTime.tryParse((m['createdAt'] as String?) ?? '') ??
-        DateTime.now();
+        DateTime.tryParse((m['createdAt'] as String?) ?? '') ?? DateTime.now();
     return DownloadTask(
         id: (m['id'] as String?) ?? '',
         createdAt: createdAt,
         // A snapshot written before queue position was tracked separately has no
         // value here, so the old ordering — oldest first — is reconstructed from
         // the creation time rather than collapsing every task to 0.
-        queueSeq: (m['queueSeq'] as num?)?.toInt() ??
+        queueSeq:
+            (m['queueSeq'] as num?)?.toInt() ??
             createdAt.microsecondsSinceEpoch,
         stagingPath: m['stagingPath'] as String?,
         playlistId: m['playlistId'] as String?,

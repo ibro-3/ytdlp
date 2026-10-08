@@ -11,6 +11,7 @@ import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/core/providers.dart';
 import 'package:ytdlp/core/router/app_router.dart';
 import 'package:ytdlp/features/playlist/playlist_page.dart';
+import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/ytdlp/binary_manager.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
@@ -72,6 +73,11 @@ void main() {
   late Box<dynamic> queueBox;
   late _SlicedService service;
 
+  /// Owned by the test rather than created by a `ProviderScope`, so the test can
+  /// dispose it deterministically and flush the manager's final write before the
+  /// Hive boxes close.
+  late ProviderContainer container;
+
   setUp(() async {
     tempRoot = Directory.systemTemp.createTempSync('ytdlp-router-');
     Hive.init(tempRoot.path);
@@ -79,20 +85,29 @@ void main() {
     historyBox = await Hive.openBox<dynamic>('router-history');
     queueBox = await Hive.openBox<dynamic>('router-queue');
     service = _SlicedService();
+    container = ProviderContainer(
+      overrides: [
+        settingsBoxProvider.overrideWithValue(settingsBox),
+        historyBoxProvider.overrideWithValue(historyBox),
+        queueBoxProvider.overrideWithValue(queueBox),
+        ytdlpServiceProvider.overrideWithValue(service),
+        // No `queueStore`: this test is about which pages the shell keeps alive,
+        // not about persistence, and a store would leave `dispose` holding a
+        // write that cannot be awaited inside `testWidgets`. See the teardown.
+        downloadManagerProvider.overrideWith(
+          (ref) => DownloadManager(
+            ytdlp: service,
+            history: ref.watch(historyServiceProvider),
+            downloadsDir: () async => tempRoot,
+          ),
+        ),
+      ],
+    );
   });
 
   tearDown(() async {
-    // Bounded closes: `DownloadManager.dispose` fires an `unawaited` write to
-    // the queue box, and inside `testWidgets` — which runs in a fake-async zone
-    // — `close()` waits on that write forever. The boxes are per-test temp
-    // files that `deleteSync` removes either way, so a write that never settles
-    // must not be able to hang the suite.
-    Future<void> closeBox(Box<dynamic> b) =>
-        b.close().timeout(const Duration(seconds: 5), onTimeout: () {});
-
-    await closeBox(settingsBox);
-    await closeBox(historyBox);
-    await closeBox(queueBox);
+    // Boxes are closed by the `addTearDown` in `pumpRouter`, which unmounts the
+    // tree first so the manager's final write is flushed while they are open.
     try {
       tempRoot.deleteSync(recursive: true);
     } catch (_) {}
@@ -111,16 +126,29 @@ void main() {
     // so it is deliberately not disposed here; each test just navigates it.
     final router = appRouter;
     await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          settingsBoxProvider.overrideWithValue(settingsBox),
-          historyBoxProvider.overrideWithValue(historyBox),
-          queueBoxProvider.overrideWithValue(queueBox),
-          ytdlpServiceProvider.overrideWithValue(service),
-        ],
+      UncontrolledProviderScope(
+        container: container,
         child: MaterialApp.router(routerConfig: router),
       ),
     );
+    // Unmount, then dispose the container, before the boxes close.
+    //
+    // `dispose` issues a final queue-snapshot write that it cannot await, and
+    // `close()` waits on writes still in flight — which inside `testWidgets`'s
+    // fake-async zone is forever. Neither the queue nor its persistence is what
+    // this routing test is about, so the manager is overridden with one that has
+    // no store: there is no write to wait for and the teardown is simply
+    // "unmount, dispose, close".
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      container.dispose();
+      await tester.runAsync(() async {
+        await settingsBox.close();
+        await historyBox.close();
+        await queueBox.close();
+      });
+    });
     if (extra != null) {
       router.go(initialLocation, extra: extra);
     } else {

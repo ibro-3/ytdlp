@@ -35,10 +35,7 @@ Future<FormatPickerResult?> showFormatPickerSheet(
     showDragHandle: true,
     isScrollControlled: true,
     constraints: const BoxConstraints(maxWidth: 640),
-    builder: (context) => _FormatPickerSheet(
-      video: video,
-      settings: settings,
-    ),
+    builder: (context) => _FormatPickerSheet(video: video, settings: settings),
   );
 }
 

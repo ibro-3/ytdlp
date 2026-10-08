@@ -53,22 +53,39 @@ void main() {
   });
 
   tearDown(() async {
-    // A save kicked off by `onPatch` is `unawaited`, so one can still be in
-    // flight when the test ends. `close()` waits for it, and inside
-    // `testWidgets` — which runs in a fake-async zone — that wait never
-    // completes, so teardown hangs until the harness gives up.
-    //
-    // Bounded rather than awaited outright: the box is a per-test temp file
-    // that the `deleteSync` below removes either way, so a write that never
-    // settles must not be able to hang the suite.
-    await settingsBox.close().timeout(
-      const Duration(seconds: 5),
-      onTimeout: () {},
-    );
     try {
       tempRoot.deleteSync(recursive: true);
     } catch (_) {}
   });
+
+  /// Flushes any in-flight save, then closes the box.
+  ///
+  /// Registered per test rather than in `tearDown` because it needs the tester:
+  /// both the Hive `put` and the `close` are real IO, and inside `testWidgets`
+  /// — which runs in a fake-async zone — neither would ever complete. Without
+  /// this, closing a box with a save still pending waits forever.
+  void closeBoxWhenSettled(WidgetTester tester) {
+    addTearDown(() async {
+      // Unmount first: the page holds a `SettingsService` on the still-mounted
+      // tree, and closing the box out from under it leaves a listener that can
+      // issue another write. An unmounted tree is quiet, so the close below
+      // cannot be followed by another save.
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+      await tester.runAsync(() async {
+        await service.pendingWrite;
+        // Bounded: with the tree gone and the last write awaited, nothing should
+        // still be in flight — but `close()` waiting on Hive's internal write
+        // queue does not always settle here, and a hang would take the whole
+        // suite down with it. The box is a per-test temp file that `tearDown`
+        // deletes regardless, so giving up on the close costs nothing.
+        await settingsBox.close().timeout(
+          const Duration(seconds: 5),
+          onTimeout: () {},
+        );
+      });
+    });
+  }
 
   Future<void> pump(
     WidgetTester tester, {
@@ -77,6 +94,7 @@ void main() {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
+    closeBoxWhenSettled(tester);
     await tester.pumpWidget(
       ProviderScope(
         overrides: [settingsBoxProvider.overrideWithValue(settingsBox)],
@@ -114,6 +132,7 @@ void main() {
       tester.view.physicalSize = const Size(500, 2400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
+      closeBoxWhenSettled(tester);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
@@ -173,6 +192,7 @@ void main() {
       tester.view.physicalSize = const Size(500, 2400);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
+      closeBoxWhenSettled(tester);
       await tester.pumpWidget(
         ProviderScope(
           overrides: [

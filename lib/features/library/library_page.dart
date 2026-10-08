@@ -519,9 +519,9 @@ class _RecordMenu extends ConsumerWidget {
   }
 
   /// Same as [_showSnack] but for a caller holding a `BuildContext` rather than
-/// this State — a row's own menu. Two identical helpers in one file is exactly
-/// the drift this is replacing.
-static void _notify(ScaffoldMessengerState messenger, String message) {
+  /// this State — a row's own menu. Two identical helpers in one file is exactly
+  /// the drift this is replacing.
+  static void _notify(ScaffoldMessengerState messenger, String message) {
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -708,7 +708,11 @@ class _ScanErrorBanner extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
+              Icon(
+                Icons.error_outline,
+                size: 18,
+                color: scheme.onErrorContainer,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

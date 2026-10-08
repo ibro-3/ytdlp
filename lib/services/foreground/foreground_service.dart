@@ -126,10 +126,7 @@ class ForegroundService {
   /// starts one per task without awaiting, so with a concurrency above one two
   /// callers both observe "not running" and both issue a start — which is exactly
   /// the failure this method exists to avoid.
-  Future<void> startService({
-    required String title,
-    required double progress,
-  }) {
+  Future<void> startService({required String title, required double progress}) {
     if (!_driver.isSupportedHost) return Future<void>.value();
     final pending = _starting;
     if (pending != null) {
@@ -154,10 +151,7 @@ class ForegroundService {
 
   Future<void>? _starting;
 
-  Future<void> _start({
-    required String title,
-    required double progress,
-  }) async {
+  Future<void> _start({required String title, required double progress}) async {
     final isRunning = await _driver.isRunning();
     if (isRunning) {
       await updateService(title: title, progress: progress);

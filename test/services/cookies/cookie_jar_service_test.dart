@@ -228,7 +228,8 @@ void main() {
         expect(
           mode,
           0x180, // 0600: rw-------
-          reason: '$path holds session cookies and must not be group or world '
+          reason:
+              '$path holds session cookies and must not be group or world '
               'readable',
         );
       }

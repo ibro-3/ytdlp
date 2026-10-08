@@ -200,10 +200,12 @@ class BatchQueueController extends Notifier<BatchState> {
     // that nothing will ever resolve.
     _batchRun++;
     _itemEpoch++;
-    _write(items: [
-      for (final i in state.items)
-        if (i.status == BatchItemStatus.loading) BatchItem(url: i.url),
-    ]);
+    _write(
+      items: [
+        for (final i in state.items)
+          if (i.status == BatchItemStatus.loading) BatchItem(url: i.url),
+      ],
+    );
   }
 
   void clear() {

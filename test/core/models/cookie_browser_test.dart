@@ -30,7 +30,11 @@ void main() {
     test('an ordinary profile name is accepted', () {
       expect(checkProfileName('Default'), isNull);
       expect(checkProfileName('Profile 2'), isNull);
-      expect(checkProfileName('   '), isNull, reason: 'empty means the default');
+      expect(
+        checkProfileName('   '),
+        isNull,
+        reason: 'empty means the default',
+      );
       expect(checkProfileName('chrome+kwallet6'), isNull);
     });
 
@@ -39,7 +43,10 @@ void main() {
       // absolute path, so a hand-edited settings box could otherwise aim the
       // cookie read at any directory on the device.
       expect(checkProfileName('/etc'), ProfileProblem.notAProfileName);
-      expect(checkProfileName('/home/me/.config/chrome'), ProfileProblem.notAProfileName);
+      expect(
+        checkProfileName('/home/me/.config/chrome'),
+        ProfileProblem.notAProfileName,
+      );
       expect(checkProfileName(r'\Users\me'), ProfileProblem.notAProfileName);
       expect(checkProfileName('  /etc  '), ProfileProblem.notAProfileName);
     });
@@ -295,10 +302,7 @@ void main() {
       firefox('zzz.default');
       firefox('4g3a.default-release');
 
-      expect(
-        (await profileNamesIn(root.path)).first,
-        '4g3a.default-release',
-      );
+      expect((await profileNamesIn(root.path)).first, '4g3a.default-release');
     });
 
     test('ignores directories with no cookie store in them', () async {
