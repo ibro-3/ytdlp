@@ -40,7 +40,7 @@ dependencies:
   cached_network_image: ^4.0.0
   open_filex: ^4.7.0
   share_plus: ^13.3.0
-  flutter_local_notifications: ^22.3.1
+  flutter_local_notifications: ^23.0.0-dev.3
   # Reads the app's own version (from pubspec) at runtime, so the update check
   # and the diagnostics report report the real version rather than a constant.
   package_info_plus: ^10.2.2
@@ -55,7 +55,7 @@ dependencies:
   archive: ^4.3.0
   file_picker: ^13.1.0
   path: ^1.9.1
-  connectivity_plus: ^7.3.1
+  connectivity_plus: ^7.3.2
   # SHA-256 for the JavaScript-runtime wheel, which is verified against the
   # digest PyPI publishes before anything is unpacked into the engine. Already
   # in the dependency graph transitively, so this promotes it rather than
