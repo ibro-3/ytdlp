@@ -2412,9 +2412,11 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
       final version = BinaryManager.ytEjsVersion;
       final installer = ref.read(ejsInstallerProvider);
       // Resolved from PyPI rather than hard-coded, so a stale pin cannot
-      // become a permanently broken install.
-      final url = await installer.resolveLatestWheel(version);
-      final info = await installer.install(archiveUrl: url, version: version);
+      // become a permanently broken install — but it carries the digest PyPI
+      // published for that wheel, which is what the install is verified
+      // against before anything is unpacked.
+      final wheel = await installer.resolveLatestWheel(version);
+      final info = await installer.install(wheel: wheel, version: version);
       if (!mounted) return;
       setState(() {
         _ejs = info;

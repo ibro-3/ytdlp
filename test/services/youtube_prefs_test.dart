@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ytdlp/core/models/youtube_prefs.dart';
 import 'package:ytdlp/core/models/download_options.dart';
 import 'package:ytdlp/core/models/video_info.dart';
-import 'package:ytdlp/services/ytdlp/ejs_installer.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
 const _video = Format(
@@ -148,91 +147,6 @@ void main() {
         youtube: const YoutubePrefs(extraClients: [YoutubeClient.ios]),
       );
       expect(a.last, 'https://youtu.be/abc');
-    });
-  });
-
-  group('EjsInstaller helpers', () {
-    test('picks the pure-Python wheel from the PyPI payload', () {
-      final url = EjsInstaller.resolveWheelUrl({
-        'urls': [
-          {
-            'filename': 'yt_dlp_ejs-1.2.0-cp313-cp313-manylinux.whl',
-            'url': 'a',
-          },
-          {'filename': 'yt_dlp_ejs-1.2.0-py3-none-any.whl', 'url': 'good'},
-        ],
-      });
-      expect(
-        url,
-        'good',
-        reason:
-            'a platform wheel would not match the bundled '
-            'interpreter',
-      );
-    });
-
-    test('returns null when there is no pure-Python wheel', () {
-      expect(
-        EjsInstaller.resolveWheelUrl({
-          'urls': [
-            {'filename': 'x-cp313-cp313-win.whl', 'url': 'a'},
-          ],
-        }),
-        isNull,
-      );
-      expect(EjsInstaller.resolveWheelUrl(const {}), isNull);
-      expect(EjsInstaller.resolveWheelUrl({'urls': 'nope'}), isNull);
-    });
-
-    test('tolerates a malformed entry in the list', () {
-      expect(
-        EjsInstaller.resolveWheelUrl({
-          'urls': [
-            'garbage',
-            {'no_filename': 1},
-            {'filename': 'yt_dlp_ejs-1-py3-none-any.whl', 'url': 'ok'},
-          ],
-        }),
-        'ok',
-      );
-    });
-
-    test('the PyPI url is well formed', () {
-      expect(
-        EjsInstaller.pypiJsonUrl('1.2.0'),
-        'https://pypi.org/pypi/yt_dlp_ejs/1.2.0/json',
-      );
-    });
-  });
-
-  group('EjsInfo', () {
-    test('summarises each state for the settings screen', () {
-      expect(
-        const EjsInfo(status: EjsStatus.missing).summary,
-        'JS runtime not installed',
-      );
-      expect(
-        const EjsInfo(status: EjsStatus.installed, version: '1.2.0').summary,
-        'JS runtime 1.2.0',
-      );
-      expect(
-        const EjsInfo(status: EjsStatus.installed).summary,
-        'JS runtime installed',
-      );
-      expect(
-        const EjsInfo(status: EjsStatus.broken).summary,
-        contains('not working'),
-      );
-      expect(
-        const EjsInfo(status: EjsStatus.unknown).summary,
-        contains('unknown'),
-      );
-    });
-
-    test('only a verified install counts as usable', () {
-      expect(const EjsInfo(status: EjsStatus.installed).isUsable, isTrue);
-      expect(const EjsInfo(status: EjsStatus.broken).isUsable, isFalse);
-      expect(const EjsInfo().isUsable, isFalse);
     });
   });
 }

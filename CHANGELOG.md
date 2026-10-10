@@ -99,6 +99,38 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ### Security
 
+- **The JavaScript-runtime wheel is checked against PyPI's checksum before it
+  is unpacked.** The wheel is executed as Python inside the engine the app
+  ships, and until now nothing vouched for it: the install trusted whatever
+  the download returned, and verified only that the package *imported* — a
+  check that a well-built wheel of any provenance passes. The bytes are now
+  compared against the SHA-256 PyPI published for that wheel, and the
+  comparison runs before unpacking, so a partial or substituted file never
+  reaches `site-packages`. A payload that carries no digest is refused rather
+  than installed unverified: an undescribed file is the situation the check
+  exists to prevent, and a silent fallback to the old behaviour would make
+  the toggle a lie. Note this detects a file that differs from what PyPI
+  published — a truncated transfer, a substituted mirror, a tampered CDN
+  response — and does **not** detect a compromised PyPI account publishing a
+  new wheel under the same version.
+- **The runtime download can no longer be redirected off PyPI.** `HttpClient`
+  follows redirects on its own, which meant a redirect of the *manifest*
+  request handed whoever controlled the redirect both the download URL and
+  the expected checksum together — and verifying a hash an attacker chose is
+  not verification. Both requests now opt out of automatic redirects and are
+  followed by hand only to `pypi.org` and `files.pythonhosted.org`, over
+  HTTPS only. The scheme is pinned as well as the host: `http://pypi.org/…`
+  names an allowed host while dropping to cleartext, where a digest check
+  would still happily pass because it guards the file, not the request that
+  fetched it.
+- **An install no longer leaves the engine without its JavaScript runtime.**
+  The previous copy was renamed aside *before* the new one was verified, so
+  the package was absent from `site-packages` for the length of a process
+  spawn, an import and a file copy — and any download starting inside that
+  window failed with an ImportError. The staged copy is now imported from its
+  staging path with `PYTHONPATH`, so the installed one keeps working until
+  the moment the new one is moved into place, and the move is a `rename`
+  rather than a copy.
 - **Cookie jars are written owner-only.** Both files are session credentials
   and were created world-readable on desktop.
 - **An output template can no longer climb out of the download folder.** `..`
