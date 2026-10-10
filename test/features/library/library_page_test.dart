@@ -215,12 +215,104 @@ void main() {
       expect(find.textContaining('file missing'), findsNothing);
     });
 
-    testWidgets('each row offers its actions behind a menu', (tester) async {
-      history.seed(_rec(id: 'a', dir: root));
+    testWidgets('a file deleted while the page is open stops being present', (
+      tester,
+    ) async {
+      // The regression this guards: the probe's "already checked" set was only
+      // ever added to, so the first answer stood for the life of the process. A
+      // row kept saying its file was there long after it had gone, and tapping
+      // Open then failed.
+      final record = _rec(id: 'vanish', dir: root);
+      history.seed(record);
       await pump(tester);
+      expect(find.textContaining('file missing'), findsNothing);
 
-      // One per row, plus the app bar's sort/group menu.
-      expect(find.byType(PopupMenuButton<String>), findsNWidgets(2));
+      // Deleted outside the app, exactly as a file manager would do it.
+      File(record.filePath).deleteSync();
+
+      // Coming back to the foreground is the moment a whole batch of external
+      // deletions has plausibly happened, so that is what triggers the re-probe.
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await settleIo(tester);
+
+      expect(find.textContaining('file missing'), findsOneWidget);
+    });
+
+    testWidgets('a restored file comes back without a restart', (tester) async {
+      // The other half: the re-probe is not a one-way latch either.
+      history.seed(_rec(id: 'back', dir: root, create: false));
+      await pump(tester);
+      expect(find.textContaining('file missing'), findsOneWidget);
+
+      File('${root.path}/back.mp4').writeAsStringSync('data');
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await settleIo(tester);
+
+      expect(find.textContaining('file missing'), findsNothing);
+    });
+
+    testWidgets('probes once per view, not once per rebuild', (tester) async {
+      // The batching half of the fix. The old code fired one `File.exists` and
+      // one `setState` per row from inside `build`, so the first frame of a
+      // large library caused that many full list rebuilds. Counting the calls
+      // through the injected probe is what makes that observable rather than
+      // something inferred from the screen.
+      var calls = 0;
+      Future<bool> probe(String path) async {
+        calls++;
+        return File(path).existsSync();
+      }
+
+      for (var i = 0; i < 8; i++) {
+        history.seed(_rec(id: 'r$i', dir: root));
+      }
+      // The same surface `pump()` installs: a builder only materialises the
+      // rows that fit, so without it "is r0 on screen" is not a meaningful
+      // check. All eight fit here.
+      tester.view.physicalSize = const Size(900, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            historyServiceProvider.overrideWithValue(history),
+            downloadsDirProvider.overrideWithValue(() async => root),
+          ],
+          child: MaterialApp(home: LibraryPage(probeExists: probe)),
+        ),
+      );
+      await settleIo(tester);
+
+      // Exactly one probe per record — no more, no less.
+      expect(calls, 8);
+      for (var i = 0; i < 8; i++) {
+        expect(find.text('Title r$i'), findsOneWidget);
+      }
+
+      // A rebuild that changes nothing about the paths must not re-probe: a
+      // search keystroke, a history notification and a tab revisit all re-enter
+      // `build` with the same set.
+      await tester.enterText(find.byType(TextField), 'r');
+      await settleIo(tester);
+      expect(calls, 8, reason: 'an unchanged path set was re-probed');
+
+      // Narrowing the view changes the set but costs nothing: every row it keeps
+      // was already probed, and a cached answer is reused rather than re-stat'd.
+      await tester.enterText(find.byType(TextField), 'r5');
+      await settleIo(tester);
+      expect(calls, 8, reason: 'an already-probed path was re-stat\'d');
+      expect(find.text('Title r5'), findsOneWidget);
+      expect(find.text('Title r0'), findsNothing);
+
+      await tester.enterText(find.byType(TextField), '');
+      await settleIo(tester);
+
+      // A genuinely new row is the one thing worth a new probe, and it costs
+      // exactly one — for the row that appeared, not for the whole library.
+      history.seed(_rec(id: 'fresh', dir: root));
+      await settleIo(tester);
+      expect(calls, 9);
+      expect(find.text('Title fresh'), findsOneWidget);
     });
   });
 

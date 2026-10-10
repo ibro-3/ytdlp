@@ -85,7 +85,7 @@ class DiagnosticsService {
 
     buffer
       ..writeln('## Paths')
-      ..writeln('downloadRoot: ${_redact(settings.downloadRoot)}')
+      ..writeln('downloadRoot: ${_redactPath(settings.downloadRoot)}')
       ..writeln('cookies configured: ${settings.cookiesPath.isNotEmpty}')
       // The path itself can contain a username, so only whether one is set.
       ..writeln();
@@ -173,14 +173,104 @@ class DiagnosticsService {
     );
   }
 
-  /// Trims a free-text setting so a report cannot leak a token pasted into the
-  /// argument or template field.
+  /// Masks credentials in a free-text setting before it goes in a report.
+  ///
+  /// `extraArgs` and `outputTemplate` are raw user text and legitimately carry
+  /// `--password`, `--username` or an `--add-header 'Authorization: …'`. A token
+  /// in one of those is exactly what the report must not carry: the report is
+  /// copied to the clipboard and written to the system temp directory, and from
+  /// there into a public bug tracker.
+  ///
+  /// Truncation alone does not do this — the overwhelming majority of passwords
+  /// and bearer tokens are well under any length worth capping at — so the
+  /// value is *replaced*, not shortened. The flag name is kept, so a report
+  /// still says that a password was configured, which is the part that matters
+  /// for diagnosing a login failure.
   static String _redact(String value) {
-    if (value.trim().isEmpty) return '(not set)';
-    final firstLine = value.trim().split('\n').first;
-    return firstLine.length > 120
-        ? '${firstLine.substring(0, 120)}… (truncated)'
-        : firstLine;
+    final line = value.trim().split('\n').first.trim();
+    if (line.isEmpty) return '(not set)';
+    var text = line;
+    // Ordered so a credential flag is masked before the bare-token pattern can
+    // see its key, and a header's value is masked inside its quoting.
+    text = text.replaceAllMapped(_credentialHeader, (m) {
+      // The header name is kept so the report still says which header was set;
+      // a `Referer` is worth reporting and an `Authorization` is not.
+      final body = m[2] ?? m[3] ?? m[4] ?? '';
+      final colon = body.indexOf(':');
+      if (colon <= 0) return m[0]!;
+      final name = body.substring(0, colon);
+      return _isCredentialHeaderName(name) ? '${m[1]}$name: <redacted>' : m[0]!;
+    });
+    text = text.replaceAllMapped(
+      _credentialFlag,
+      (m) => '${m[1]}${m[2]} <redacted>',
+    );
+    text = text.replaceAllMapped(_bareToken, (m) => '${m[1]}<redacted>');
+    return text.length > _maxRedactedChars
+        ? '${text.substring(0, _maxRedactedChars)}… (truncated)'
+        : text;
+  }
+
+  /// Longest field the report carries before it is cut. Only bounds the report
+  /// itself; it is not a security measure, which [_redact]'s masking is.
+  static const _maxRedactedChars = 120;
+
+  /// Headers whose value is a credential and must not survive into a report.
+  static const _credentialHeaderNames = {
+    'authorization',
+    'cookie',
+    'set-cookie',
+  };
+
+  static bool _isCredentialHeaderName(String name) {
+    final lower = name.trim().toLowerCase();
+    return _credentialHeaderNames.contains(lower) ||
+        lower.endsWith('-token') ||
+        lower.startsWith('x-api-key') ||
+        lower.startsWith('x-auth');
+  }
+
+  /// A flag whose argument is itself a secret.
+  ///
+  /// The short forms `-u` and `-p` are matched only at a token boundary so a
+  /// `-p` inside a path is not mistaken for a password.
+  static final _credentialFlag = RegExp(
+    r'''(^|\s)(--(?:ap-)?(?:username|password|video-password|netrc-location)|-[up]\b)(?:[=\s]+)(?:"[^"]*"|'[^']*'|\S+)''',
+    caseSensitive: false,
+  );
+
+  /// `--add-header 'Authorization: Bearer …'` and friends.
+  ///
+  /// The three quotings yt-dlp accepts, plus a bare unquoted token. The header
+  /// name is kept so the report still says which header was set; only the value
+  /// goes, and only for a header that actually carries a credential.
+  static final _credentialHeader = RegExp(
+    r'''(--add-header\s+)(?:"([^"]*)"|'([^']*)'|(\S+))''',
+    caseSensitive: false,
+  );
+
+  /// A bearer token or `key=value` secret pasted on its own, outside any flag.
+  static final _bareToken = RegExp(
+    r'''\b((?:bearer|token|api[_-]?key|secret|password|passwd|pwd)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)''',
+    caseSensitive: false,
+  );
+
+  /// Collapses a path to its last two components.
+  ///
+  /// A download folder can contain a username, and the report is meant to leave
+  /// the device. Truncation was not enough: `/home/ibro/Projects/Videos` is
+  /// short enough to survive any length cap intact, so the leading components
+  /// are dropped rather than the tail.
+  static String _redactPath(String value) {
+    final path = value.trim();
+    if (path.isEmpty) return '(not set)';
+    final parts = path
+        .split(RegExp(r'[/\\]'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    return parts.length <= 2
+        ? parts.join('/')
+        : '…/${parts.sublist(parts.length - 2).join('/')}';
   }
 }
 

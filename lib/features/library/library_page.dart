@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show setEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:open_filex/open_filex.dart';
@@ -15,16 +16,37 @@ import '../../services/downloads/folder_scanner.dart';
 import '../../services/downloads/history_service.dart';
 
 class LibraryPage extends ConsumerStatefulWidget {
-  const LibraryPage({super.key});
+  const LibraryPage({super.key, this.probeExists});
+
+  /// The existence probe, injectable so the batching can be asserted.
+  ///
+  /// Follows the seam pattern the rest of the app uses (`downloadsDirProvider`,
+  /// `cookieSupportDirProvider`, `ForegroundService.forTesting`): the thing that
+  /// talks to the platform is a parameter, so a test can count the calls rather
+  /// than infer them from the screen. Production leaves this null and gets the
+  /// real filesystem.
+  final Future<bool> Function(String path)? probeExists;
 
   @override
   ConsumerState<LibraryPage> createState() => _LibraryPageState();
 }
 
-class _LibraryPageState extends ConsumerState<LibraryPage> {
+class _LibraryPageState extends ConsumerState<LibraryPage>
+    with WidgetsBindingObserver {
   /// Async existence cache so rows don't stat the filesystem in `build`.
   final Map<String, bool> _exists = {};
-  final Set<String> _pending = {};
+
+  /// The set of paths the current page has already probed.
+  ///
+  /// This is what makes the check re-runnable rather than once-per-process:
+  /// [_scheduleExistenceCheck] compares the paths the view now shows against it
+  /// and re-probes when they differ. A set that was only ever added to — as this
+  /// was — meant a file deleted while the page sat open kept showing as present
+  /// for the rest of the session, and tapping Open on it failed.
+  Set<String> _probed = {};
+
+  /// Guards against scheduling a probe pass more than once per frame.
+  bool _probeScheduled = false;
 
   final TextEditingController _search = TextEditingController();
   String _query = '';
@@ -42,30 +64,99 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
   String? _scanError;
 
   @override
+  void initState() {
+    super.initState();
+    // Files leave the library from outside the app — a file manager, another
+    // app, a computer over MTP — and the tab stays alive inside the shell's
+    // indexed stack, so nothing else would ever notice.
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
     super.dispose();
   }
 
-  void _checkExists(String path) {
-    if (_pending.contains(path)) return;
-    _pending.add(path);
-    // `catchError` on a `Future<bool>` must yield a bool. Returning nothing
-    // after dispose — the case the guard exists for — would throw a `TypeError`
-    // asynchronously, after dispose, turning a harmless teardown into an
-    // unhandled error. So the flag is computed either way and only applied
-    // while mounted.
-    unawaited(
-      File(path).exists().then(
-        (ok) => _recordExists(path, ok),
-        onError: (Object _) => _recordExists(path, false),
-      ),
-    );
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Coming back to the foreground is the one moment a whole batch of deletions
+    // has plausibly happened, so the whole cache is worth throwing away then —
+    // and only then, since re-probing on every rebuild would undo the batching.
+    if (state == AppLifecycleState.resumed) _refreshExistence();
   }
 
-  void _recordExists(String path, bool value) {
+  /// Reads the cached answer, defaulting to "present".
+  ///
+  /// A pure read: the probing is scheduled from [_scheduleExistenceCheck]
+  /// after the frame, never spawned here. Spawning it from `build` fired one
+  /// `File.exists` and one `setState` per row, so the first frame of a large
+  /// library caused that many full list rebuilds.
+  bool _existsFor(String path) => _exists[path] ?? true;
+
+  /// Probes every path in [paths], in one pass, once the frame is done.
+  ///
+  /// Deduplicated and batched: the results land in a single `setState`, so a
+  /// library of N rows costs one rebuild rather than N. A path whose answer is
+  /// already cached is skipped, which keeps the repeated calls from `build`
+  /// (a filter change, a search keystroke, a history notification) cheap.
+  ///
+  /// Returns early when the set is unchanged, which is what lets this be called
+  /// unconditionally from `build` instead of from an effect that would have to
+  /// mirror every way the view can change.
+  void _scheduleExistenceCheck(List<String> paths) {
+    final wanted = paths.where((p) => p.isNotEmpty).toSet();
+    if (setEquals(wanted, _probed)) return;
+    _probed = wanted;
+    if (_probeScheduled) return;
+    _probeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _probeScheduled = false;
+      if (!mounted) return;
+      unawaited(_probeExistence(wanted));
+    });
+  }
+
+  Future<void> _probeExistence(Set<String> wanted) async {
+    final probe = widget.probeExists ?? (path) => File(path).exists();
+    final results = <String, bool>{};
+    // Sequential rather than parallel on purpose: an unbounded fan-out of
+    // hundreds of `stat` syscalls at once is what makes a large library stall,
+    // and these are microseconds each.
+    for (final path in wanted) {
+      if (_exists.containsKey(path)) {
+        results[path] = _exists[path]!;
+        continue;
+      }
+      try {
+        results[path] = await probe(path);
+      } catch (_) {
+        results[path] = false;
+      }
+    }
     if (!mounted) return;
-    setState(() => _exists[path] = value);
+    setState(() => _exists.addAll(results));
+  }
+
+  /// Re-runs the existence check, discarding what was cached.
+  ///
+  /// Called when something outside the app may have changed the files: adopting
+  /// a scanned file, and coming back to the foreground. Without this the first
+  /// answer would stand for the life of the process.
+  ///
+  /// Both maps have to go, not just the "already probed" set: the probe pass
+  /// reuses whatever answer [_exists] still holds, so clearing one and not the
+  /// other would leave the stale value exactly where it was.
+  ///
+  /// Rebuilds too, because clearing the set changes nothing on screen until
+  /// [build] runs again — and `build` is what schedules the probe.
+  void _refreshExistence() {
+    if (!mounted) return;
+    setState(() {
+      _probed = {};
+      _exists.clear();
+    });
   }
 
   void _patch(void Function() fn) => setState(fn);
@@ -136,6 +227,13 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
           if (view.isEmpty) {
             return _NoMatches(query: _query, onClear: _clearFilters);
           }
+          final rows = _rowsFor(view);
+          // Scheduled rather than fired from the builder: the paths are now
+          // collected and probed in one pass after the frame.
+          _scheduleExistenceCheck([
+            for (final row in rows)
+              if (row is _RecordRow) row.record.filePath,
+          ]);
           return Column(
             children: [
               _buildSearchBar(view),
@@ -150,24 +248,19 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 760),
-                    child: ListView(
+                    child: ListView.builder(
                       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      children: [
-                        for (final group in view.groups) ...[
-                          _PlaylistHeader(group: group),
-                          for (final r in group.records)
-                            _RecordCard(
-                              record: r,
-                              exists: _existsFor(r.filePath),
-                            ),
-                          const SizedBox(height: 8),
-                        ],
-                        for (final r in view.loose)
-                          _RecordCard(
-                            record: r,
-                            exists: _existsFor(r.filePath),
-                          ),
-                      ],
+                      itemCount: rows.length,
+                      itemBuilder: (context, i) => switch (rows[i]) {
+                        _HeaderRow(:final group) => _PlaylistHeader(
+                          group: group,
+                        ),
+                        _RecordRow(:final record) => _RecordCard(
+                          record: record,
+                          exists: _existsFor(record.filePath),
+                        ),
+                        _SpacerRow() => const SizedBox(height: 8),
+                      },
                     ),
                   ),
                 ),
@@ -179,12 +272,20 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
     );
   }
 
-  /// Starts an existence check for [path] and returns the cached answer,
-  /// assuming present until proven otherwise so a row never flashes "missing".
-  bool _existsFor(String path) {
-    _checkExists(path);
-    return _exists[path] ?? true;
-  }
+  /// Flattens [view] into the rows the list renders.
+  ///
+  /// Data rather than widgets so the list can be lazy: a builder that only
+  /// materialises the rows on screen. The previous shape built every row
+  /// eagerly — and with each one a `cached_network_image` and its own existence
+  /// probe — which is what made a large library slow to open.
+  static List<_Row> _rowsFor(LibraryView view) => [
+    for (final group in view.groups) ...[
+      _HeaderRow(group),
+      for (final r in group.records) _RecordRow(r),
+      const _SpacerRow(),
+    ],
+    for (final r in view.loose) _RecordRow(r),
+  ];
 
   /// Scans the download folder for media the library does not know about.
   ///
@@ -249,6 +350,11 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
             if (f.path != file.path) f,
         ];
       });
+      // The new row is already known to exist — it was just adopted — but the
+      // scanner may have found several, and a previously missing file that has
+      // since been restored by something outside the app is worth catching here
+      // too. Throwing the cache away re-probes the whole view in one pass.
+      _refreshExistence();
       _showSnack('Added to the library');
     } catch (_) {
       _showSnack('Could not add that file to the library');
@@ -385,6 +491,29 @@ class _LibraryPageState extends ConsumerState<LibraryPage> {
 }
 
 /// One download in the library, with its actions behind a popup menu.
+/// One row of the library list: a section header, a download, or the gap
+/// after a section.
+///
+/// Sealed so the builder's pattern match is exhaustive and adding a row kind
+/// is a compile error rather than a silently unstyled one.
+sealed class _Row {
+  const _Row();
+}
+
+class _HeaderRow extends _Row {
+  const _HeaderRow(this.group);
+  final PlaylistGroup group;
+}
+
+class _RecordRow extends _Row {
+  const _RecordRow(this.record);
+  final DownloadRecord record;
+}
+
+class _SpacerRow extends _Row {
+  const _SpacerRow();
+}
+
 class _RecordCard extends StatelessWidget {
   const _RecordCard({required this.record, required this.exists});
 

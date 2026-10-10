@@ -9,17 +9,23 @@
 ///
 /// ## Why a profile *name* rather than a path
 ///
-/// Both work. yt-dlp splits `BROWSER[+KEYRING][:PROFILE][::CONTAINER]` on the
-/// first `:` of each field, resolves a profile name against the browser root it
-/// computes itself, and treats a profile starting with `/` as an absolute path.
-/// It also accepts `:` and `+` inside a profile name without complaint, so this
-/// module deliberately refuses nothing — a restriction that prevented nothing
-/// would be worse than no restriction.
+/// yt-dlp splits `BROWSER[+KEYRING][:PROFILE][::CONTAINER]` on the first `:` of
+/// each field, resolves a profile name against the browser root it computes
+/// itself, and treats a profile starting with a path separator as an *absolute
+/// path*. It also accepts `:` and `+` inside a profile name without complaint.
 ///
 /// The app passes a name because yt-dlp recomputes the browser root on every
 /// run, and a root stored in a settings box goes stale the moment the browser
 /// is reinstalled, moved to a new machine or relocated. A name is resolved
 /// fresh each time, so it keeps working where a remembered path would not.
+///
+/// That name is validated by [checkProfileName] at the point the argument is
+/// built ([cookieBrowserSpec]), not only in the picker UI: the value reaches
+/// yt-dlp by more routes than the picker — a restored backup writes it straight
+/// into the settings box, and `AppSettings.fromMap` reads it back as a bare
+/// string. A check the picker performs on its own therefore guards nothing, and
+/// the picker's own message ("yt-dlp was not pointed at it") would be a lie.
+/// Only path syntax is refused, and only because a path is read as one.
 ///
 /// The picker exists to answer "which profile?" with a list of names that
 /// exist rather than a guess: a wrong name is a hard error at download time,
@@ -116,6 +122,14 @@ ProfileProblem? checkProfileName(String profile) {
 /// Null rather than the bare browser name for an unusable profile, so the caller
 /// has to make a decision about a configuration it does not understand instead
 /// of silently asking for a different one.
+///
+/// The profile is validated by [checkProfileName] *here*, at the one place that
+/// builds the argument, rather than only in the picker UI. The value can arrive
+/// without ever passing through that UI — a restored backup writes it straight
+/// into the settings box, and `AppSettings.fromMap` reads it as a bare string —
+/// so a check the UI performs on its own guards nothing. An invalid profile
+/// falls back to the browser's own default, which is what an empty name means
+/// anyway.
 String? cookieBrowserSpec({
   required CookieBrowser? browser,
   String profile = '',
@@ -123,6 +137,9 @@ String? cookieBrowserSpec({
   if (browser == null) return null;
   final name = profile.trim();
   if (name.isEmpty) return browser.argument;
+  // A path is a path: yt-dlp would read it as one, so the profile is dropped
+  // rather than the user's browser root abandoned. See [checkProfileName].
+  if (checkProfileName(name) != null) return null;
   return '${browser.argument}:$name';
 }
 

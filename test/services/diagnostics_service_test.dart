@@ -222,6 +222,130 @@ void main() {
     });
   });
 
+  group('credential masking', () {
+    /// [text] must not appear verbatim once the report is built.
+    Future<void> expectMasked(String extraArgs, String secret) async {
+      await settings.update(AppSettings(extraArgs: extraArgs));
+      final report = await build();
+      expect(
+        report.text,
+        isNot(contains(secret)),
+        reason:
+            'the report went to the clipboard and the temp dir, and from '
+            'there into a public tracker — $secret must not survive it',
+      );
+    }
+
+    test('masks a long-form password', () async {
+      await expectMasked('--password hunter2', 'hunter2');
+    });
+
+    test('masks a password given with an equals sign', () async {
+      await expectMasked('--password=hunter2', 'hunter2');
+    });
+
+    test('masks a quoted password', () async {
+      await expectMasked("--password 'correct horse'", 'correct horse');
+    });
+
+    test('masks the short forms', () async {
+      await expectMasked('-u me@example.com -p hunter2', 'hunter2');
+      await expectMasked('-u me@example.com -p hunter2', 'me@example.com');
+    });
+
+    test('masks a username too', () async {
+      await expectMasked('--username me@example.com', 'me@example.com');
+    });
+
+    test('masks ap-credentials and a netrc location', () async {
+      // A single character would appear in the flag name itself, so these use
+      // values shaped like the real thing.
+      await expectMasked(
+        '--ap-username someone --ap-password topsecret123',
+        'topsecret123',
+      );
+      await expectMasked(
+        '--ap-username someone --ap-password topsecret123',
+        'someone',
+      );
+      await expectMasked('--netrc-location /home/me/.netrc', '/home/me/.netrc');
+    });
+
+    test(
+      'keeps the flag name so a login problem is still diagnosable',
+      () async {
+        await settings.update(AppSettings(extraArgs: '--password hunter2'));
+        final report = await build();
+        // The fact that a password was configured is the part that matters for
+        // debugging a 403; the value is not.
+        expect(report.text, contains('--password <redacted>'));
+      },
+    );
+
+    test('masks an Authorization header', () async {
+      await expectMasked(
+        "--add-header 'Authorization: Bearer eyJhbGciOi.eyJzdWIiOiIx'",
+        'eyJhbGciOi.eyJzdWIiOiIx',
+      );
+    });
+
+    test('masks a Cookie header', () async {
+      await expectMasked("--add-header 'Cookie: session=abc123'", 'abc123');
+    });
+
+    test('keeps a header that is not a credential', () async {
+      // A Referer is worth reporting: it is a common cause of a 403.
+      await settings.update(
+        AppSettings(extraArgs: "--add-header 'Referer: https://example.com'"),
+      );
+      final report = await build();
+      expect(report.text, contains('Referer: https://example.com'));
+    });
+
+    test('masks a bearer token pasted on its own', () async {
+      await expectMasked(
+        '--whatever bearer: eyJ0eXAiOiJKV1QifQ',
+        'eyJ0eXAiOiJKV1QifQ',
+      );
+    });
+
+    test('does not mistake a path for a password', () async {
+      // `-p` inside a word is part of a path, not the short form of
+      // `--password`. Over-masking here would misreport a working setup.
+      await settings.update(
+        AppSettings(extraArgs: '--paths /home/me/downloads'),
+      );
+      final report = await build();
+      expect(report.text, contains('/home/me/downloads'));
+    });
+
+    test('collapses the download root rather than truncating it', () async {
+      // A short path survives any length cap, so the leading components are
+      // dropped instead of the tail.
+      await settings.update(
+        AppSettings(downloadRoot: '/home/ibro/Random/Videos'),
+      );
+      final report = await build();
+      expect(report.text, contains('…/Random/Videos'));
+      expect(report.text, isNot(contains('/home/ibro')));
+    });
+
+    test('keeps a root short enough not to be a path', () async {
+      await settings.update(AppSettings(downloadRoot: 'Videos'));
+      final report = await build();
+      expect(report.text, contains('downloadRoot: Videos'));
+    });
+
+    test('leaves a plain command line untouched', () async {
+      // The masker must not corrupt the flags a report exists to show.
+      await settings.update(
+        AppSettings(extraArgs: '--embed-thumbnail --convert-subs srt'),
+      );
+      final report = await build();
+      expect(report.text, contains('--embed-thumbnail --convert-subs srt'));
+    });
+  });
+
   group('writing', () {
     test('writes the report to the given directory', () async {
       final dir = Directory.systemTemp.createTempSync('ytdlp-diag-out-');

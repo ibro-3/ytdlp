@@ -109,6 +109,26 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   hand-edited settings box could aim the cookie read anywhere. The check that
   was meant to catch this always returned "fine", leaving the explanatory UI
   unreachable.
+- **That check now runs where the argument is built, not where it is typed.**
+  The profile reaches yt-dlp by routes the picker never sees — a restored
+  backup writes it straight into the settings box, and it is read back as a
+  bare string — so validating it in the UI guarded nothing. The settings screen
+  had been telling users "yt-dlp was not pointed at it" while the app pointed
+  yt-dlp at it anyway, which is worse than saying nothing. `cookieBrowserSpec`
+  now drops a path-shaped profile and falls back to the browser's own default
+  profile, and the module's claim that it "deliberately refuses nothing" is
+  gone from the docs with it.
+- **Credentials are masked in the diagnostics report, not merely truncated.**
+  `--password`, `--username` and `--add-header 'Authorization: …'` hold a
+  credential, and a truncation cap does nothing about one — almost every
+  password and bearer token is shorter than any cap worth having. The helper's
+  own comment promised masking and performed only shortening, so those values
+  went verbatim into a report that is copied to the clipboard and written to
+  the system temp directory on its way to a public tracker. The flag name is
+  kept, because "a password is configured" is exactly what a failing login
+  needs a report to say. The download folder is collapsed to its last two
+  components rather than truncated, for the same reason: `/home/ich/Videos` is
+  short enough to survive any length cap and still names the account.
 - **Dismissing a task no longer deletes an arbitrary directory.** The staging
   path comes back from the queue snapshot; the resume path already refused one
   outside the staging root but the destructive paths did not.
@@ -119,6 +139,19 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ### Fixed
 
+- **Library rows kept claiming a deleted file was present.** The existence
+  probe recorded every path it had ever checked and never cleared the set, so
+  the first answer stood for the life of the process. A file removed from
+  outside the app — a file manager, another app, a computer over MTP — kept
+  showing as there, and tapping Open on it then failed. The answer is now
+  re-taken when the app returns to the foreground and when a scanned file is
+  adopted, and the probe runs in one pass for the whole view.
+- **Opening the library rebuilt the whole list once per row.** The probe
+  spawned a `File.exists` and a `setState` for every row from inside `build`,
+  so the first frame of a large library caused that many full list rebuilds.
+  Answers are now collected and applied in a single `setState`, and the list is
+  a `ListView.builder`, so only the rows on screen are built — with their
+  thumbnails, which the previous shape fetched for every row at once.
 - **Queue state was not persisted while a download ran** — the snapshot write
   was debounced, and the debounce restarted on every yt-dlp output line.
   Progress arrives many times a second, so the timer never fired for the whole

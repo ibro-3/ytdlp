@@ -96,6 +96,31 @@ void main() {
     test('is null with no browser', () {
       expect(cookieBrowserSpec(browser: null), isNull);
     });
+
+    test('is null for a profile that is a path', () {
+      // The argument is built here, so this is where the check has to live — a
+      // restored backup writes a path-shaped profile straight into the settings
+      // box and the picker never sees it. yt-dlp would read it as an absolute
+      // path and aim the cookie read outside the browser's own root.
+      expect(
+        cookieBrowserSpec(browser: CookieBrowser.chrome, profile: '/etc'),
+        isNull,
+      );
+      expect(
+        cookieBrowserSpec(
+          browser: CookieBrowser.chrome,
+          profile: r'\Users\me\Profile 2',
+        ),
+        isNull,
+      );
+      expect(
+        cookieBrowserSpec(
+          browser: CookieBrowser.chrome,
+          profile: '  /home/me/.config/chrome  ',
+        ),
+        isNull,
+      );
+    });
   });
 
   group('resolveCookieSource', () {
@@ -237,6 +262,35 @@ void main() {
         cookieBrowserProfile: r'C:\Users\me\Profile 2',
       );
       expect(a, ['--cookies-from-browser', r'chrome:C:\Users\me\Profile 2']);
+    });
+
+    test('a path-shaped profile falls back to the default profile', () {
+      // `C:\...` does not start with a path separator, so it is a genuine profile
+      // spelling and passes through; `/etc` does not, so yt-dlp would read it as
+      // an absolute path. The profile is dropped rather than the browser itself
+      // abandoned, which is what an empty profile name means anyway.
+      expect(
+        cookieArgs(cookieBrowser: 'chrome', cookieBrowserProfile: '/etc'),
+        ['--cookies-from-browser', 'chrome'],
+      );
+    });
+
+    test('never emits an absolute path after the browser name', () {
+      // The end-to-end guarantee: whatever reaches the argument list can only
+      // name a profile inside the browser root yt-dlp computes for itself.
+      for (final profile in [
+        '/etc',
+        '/home/me/.config/chrome',
+        r'\Users\me\Profile 2',
+        '  /var/lib  ',
+      ]) {
+        final args = cookieArgs(
+          cookieBrowser: 'chrome',
+          cookieBrowserProfile: profile,
+        );
+        expect(args, hasLength(2));
+        expect(args[1], 'chrome');
+      }
     });
 
     test('trims a jar path rather than passing whitespace', () {
