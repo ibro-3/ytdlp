@@ -11,9 +11,11 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/models/download_record.dart';
 import '../../core/models/library_filter.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
 import '../../services/downloads/folder_scanner.dart';
 import '../../services/downloads/history_service.dart';
+import '../../widgets/platform/platform.dart';
 
 class LibraryPage extends ConsumerStatefulWidget {
   const LibraryPage({super.key, this.probeExists});
@@ -164,52 +166,48 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   @override
   Widget build(BuildContext context) {
     final history = ref.watch(historyServiceProvider);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Library'),
-        actions: [
-          if (history.records.isNotEmpty)
-            IconButton(
-              onPressed: _scanning ? null : _scanFolder,
-              icon: const Icon(Icons.drive_folder_upload_outlined),
-              tooltip: 'Find files in the download folder',
-            ),
-          if (history.records.isNotEmpty)
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.sort),
-              tooltip: 'Sort and group',
-              onSelected: _applyViewOption,
-              itemBuilder: (context) => [
-                for (final s in LibrarySort.values)
-                  CheckedPopupMenuItem(
-                    value: 'sort:${s.name}',
-                    checked: _sort == s,
-                    child: Text(s.label),
-                  ),
-                const PopupMenuDivider(),
-                for (final f in LibraryFilter.values)
-                  CheckedPopupMenuItem(
-                    value: 'filter:${f.name}',
-                    checked: _filter == f,
-                    child: Text(f.label),
-                  ),
-                const PopupMenuDivider(),
-                for (final g in LibraryGrouping.values)
-                  CheckedPopupMenuItem(
-                    value: 'group:${g.name}',
-                    checked: _grouping == g,
-                    child: Text(g.label),
-                  ),
-              ],
-            ),
-          if (history.records.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_outlined),
-              tooltip: 'Clear history',
-              onPressed: () => _confirmClearHistory(history),
-            ),
-        ],
-      ),
+    return AppScaffold(
+      title: 'Library',
+      actions: [
+        if (history.records.isNotEmpty)
+          AppIconButton(
+            onPressed: _scanning ? null : _scanFolder,
+            icon: Icons.drive_folder_upload_outlined,
+            tooltip: 'Find files in the download folder',
+          ),
+        if (history.records.isNotEmpty)
+          AppMenuButton<String>(
+            icon: Icons.sort,
+            tooltip: 'Sort and group',
+            onSelected: _applyViewOption,
+            items: [
+              for (final s in LibrarySort.values)
+                AppMenuItem(
+                  value: 'sort:${s.name}',
+                  label: s.label,
+                  checked: _sort == s,
+                ),
+              for (final f in LibraryFilter.values)
+                AppMenuItem(
+                  value: 'filter:${f.name}',
+                  label: f.label,
+                  checked: _filter == f,
+                ),
+              for (final g in LibraryGrouping.values)
+                AppMenuItem(
+                  value: 'group:${g.name}',
+                  label: g.label,
+                  checked: _grouping == g,
+                ),
+            ],
+          ),
+        if (history.records.isNotEmpty)
+          AppIconButton(
+            icon: Icons.delete_sweep_outlined,
+            tooltip: 'Clear history',
+            onPressed: () => _confirmClearHistory(history),
+          ),
+      ],
       body: AnimatedBuilder(
         animation: history,
         builder: (context, _) {
@@ -363,9 +361,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    context.showToast(message);
   }
 
   void _clearFilters() {
@@ -407,32 +403,27 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   }
 
   Widget _buildSearchBar(LibraryView view) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final theme = context.textStyles;
+    final scheme = context.colors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Column(
         children: [
-          TextField(
+          AppTextField(
             controller: _search,
+            placeholder: 'Search downloads',
             onChanged: (v) => _patch(() => _query = v),
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: 'Search downloads',
-              border: const OutlineInputBorder(),
-              prefixIcon: const Icon(Icons.search, size: 20),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      tooltip: 'Clear search',
-                      onPressed: () => _patch(() {
-                        _search.clear();
-                        _query = '';
-                      }),
-                    ),
-            ),
+            prefix: const Icon(Icons.search, size: 20),
+            suffix: _query.isEmpty
+                ? null
+                : AppIconButton(
+                    icon: Icons.close,
+                    tooltip: 'Clear search',
+                    onPressed: () => _patch(() {
+                      _search.clear();
+                      _query = '';
+                    }),
+                  ),
           ),
           const SizedBox(height: 8),
           // A running total, so a filter that hides most of the library is
@@ -444,7 +435,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
                   view.total == 1
                       ? '1 download'
                       : '${view.total} downloads · ${formatBytes(view.totalSize)}',
-                  style: theme.textTheme.bodySmall?.copyWith(
+                  style: theme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
                 ),
@@ -452,8 +443,8 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
               for (final f in LibraryFilter.values)
                 Padding(
                   padding: const EdgeInsets.only(left: 6),
-                  child: ChoiceChip(
-                    label: Text(f.label),
+                  child: AppChoiceChip(
+                    label: f.label,
                     selected: _filter == f,
                     onSelected: (_) => _patch(() => _filter = f),
                   ),
@@ -466,25 +457,13 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   }
 
   Future<void> _confirmClearHistory(HistoryService history) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear history?'),
-        content: const Text(
+    final ok = await showAppConfirm(
+      context,
+      title: 'Clear history?',
+      message:
           'This removes all entries from the library list. Files on disk are '
           'not deleted.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Clear'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Clear',
     );
     if (ok == true) await history.clear();
   }
@@ -522,11 +501,11 @@ class _RecordCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: Padding(
+    final theme = context.textStyles;
+    final scheme = context.colors;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: AppCard(
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
@@ -562,7 +541,7 @@ class _RecordCard extends StatelessWidget {
                 children: [
                   Text(
                     record.title,
-                    style: theme.textTheme.titleSmall,
+                    style: theme.titleSmall,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -574,7 +553,7 @@ class _RecordCard extends StatelessWidget {
                       if (record.size > 0) formatBytes(record.size),
                       if (!exists) 'file missing',
                     ].join(' · '),
-                    style: theme.textTheme.labelSmall?.copyWith(
+                    style: theme.labelSmall?.copyWith(
                       color: exists ? scheme.onSurfaceVariant : scheme.error,
                     ),
                     maxLines: 1,
@@ -601,12 +580,14 @@ class _RecordMenu extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return PopupMenuButton<String>(
+    return AppMenuButton<String>(
+      icon: Icons.more_vert,
+      tooltip: 'Actions',
       onSelected: (v) => _handle(context, ref, v),
-      itemBuilder: (context) => const [
-        PopupMenuItem(value: 'open', child: Text('Open')),
-        PopupMenuItem(value: 'share', child: Text('Share')),
-        PopupMenuItem(value: 'delete', child: Text('Delete')),
+      items: const [
+        AppMenuItem(value: 'open', label: 'Open'),
+        AppMenuItem(value: 'share', label: 'Share'),
+        AppMenuItem(value: 'delete', label: 'Delete'),
       ],
     );
   }
@@ -616,21 +597,24 @@ class _RecordMenu extends ConsumerWidget {
     WidgetRef ref,
     String action,
   ) async {
-    final messenger = ScaffoldMessenger.of(context);
     switch (action) {
       case 'open':
         if (!await File(record.filePath).exists()) {
-          _notify(messenger, 'This file is no longer on the device.');
+          if (context.mounted) {
+            _notify(context, 'This file is no longer on the device.');
+          }
           return;
         }
         try {
           await OpenFilex.open(record.filePath);
         } catch (_) {
-          _notify(messenger, 'Could not open the file.');
+          if (context.mounted) _notify(context, 'Could not open the file.');
         }
       case 'share':
         if (!await File(record.filePath).exists()) {
-          _notify(messenger, 'This file is no longer on the device.');
+          if (context.mounted) {
+            _notify(context, 'This file is no longer on the device.');
+          }
           return;
         }
         try {
@@ -638,7 +622,7 @@ class _RecordMenu extends ConsumerWidget {
             ShareParams(title: record.title, files: [XFile(record.filePath)]),
           );
         } catch (_) {
-          _notify(messenger, 'Could not share the file.');
+          if (context.mounted) _notify(context, 'Could not share the file.');
         }
       case 'delete':
         if (await _confirm(context) == true && context.mounted) {
@@ -647,49 +631,38 @@ class _RecordMenu extends ConsumerWidget {
     }
   }
 
-  /// Same as [_showSnack] but for a caller holding a `BuildContext` rather than
-  /// this State — a row's own menu. Two identical helpers in one file is exactly
-  /// the drift this is replacing.
-  static void _notify(ScaffoldMessengerState messenger, String message) {
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+  /// Same as the page's own [_showSnack], but for a caller holding a
+  /// `BuildContext` rather than the page's State — a row's own menu. Two
+  /// identical helpers in one file is exactly the drift this replaces.
+  static void _notify(BuildContext context, String message) {
+    if (!context.mounted) return;
+    context.showToast(message);
   }
 
   Future<bool?> _confirm(BuildContext context) {
-    return showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete?'),
-        content: Text(
+    return showAppConfirm(
+      context,
+      title: 'Delete?',
+      message:
           'Remove "${record.title}" from history and delete the file if it '
           'still exists?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Delete',
+      destructive: true,
     );
   }
 
   Future<void> _deleteFile(BuildContext context, WidgetRef ref) async {
-    final messenger = ScaffoldMessenger.of(context);
     final file = File(record.filePath);
     try {
       if (await file.exists()) await file.delete();
     } catch (_) {
       // The record is kept, because it still points at a real file.
-      _notify(
-        messenger,
-        'Could not delete the file — the library entry was kept.',
-      );
+      if (context.mounted) {
+        _notify(
+          context,
+          'Could not delete the file — the library entry was kept.',
+        );
+      }
       return;
     }
     await ref.read(historyServiceProvider).remove(record.id);
@@ -704,28 +677,25 @@ class _PlaylistHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final colors = context.colors;
     return Padding(
       padding: const EdgeInsets.only(top: 12, bottom: 8),
       child: Row(
         children: [
-          Icon(Icons.playlist_play, size: 18, color: theme.colorScheme.primary),
+          Icon(Icons.playlist_play, size: 18, color: colors.primary),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               group.title,
-              style: theme.textTheme.titleSmall?.copyWith(
-                color: theme.colorScheme.primary,
-              ),
+              style: theme.titleSmall?.copyWith(color: colors.primary),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ),
           Text(
             '${group.records.length} · ${formatBytes(group.totalSize)}',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: theme.labelSmall?.copyWith(color: colors.onSurfaceVariant),
           ),
         ],
       ),
@@ -738,7 +708,8 @@ class _EmptyLibrary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final scheme = context.colors;
+    final text = context.textStyles;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -751,15 +722,11 @@ class _EmptyLibrary extends StatelessWidget {
               color: scheme.onSurfaceVariant,
             ),
             const SizedBox(height: 12),
-            Text(
-              'No downloads yet',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text('No downloads yet', style: text.titleSmall),
             const SizedBox(height: 6),
             Text(
               'Completed downloads will appear here.',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -778,29 +745,27 @@ class _NoMatches extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final colors = context.colors;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.search_off,
-              size: 48,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            Icon(Icons.search_off, size: 48, color: colors.onSurfaceVariant),
             const SizedBox(height: 12),
             Text(
               query.trim().isEmpty
                   ? 'Nothing matches this filter'
                   : 'Nothing matches "$query"',
-              style: theme.textTheme.titleSmall,
+              style: theme.titleSmall,
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 12),
-            FilledButton.tonal(
+            AppButton(
               onPressed: onClear,
+              variant: AppButtonVariant.tonal,
               child: const Text('Clear search and filters'),
             ),
           ],
@@ -827,33 +792,31 @@ class _ScanErrorBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final theme = context.textStyles;
+    final scheme = context.colors;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Card(
+      child: AppCard(
         color: scheme.errorContainer,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Icon(
-                Icons.error_outline,
-                size: 18,
-                color: scheme.onErrorContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  message,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onErrorContainer,
-                  ),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                message,
+                style: theme.bodySmall?.copyWith(
+                  color: scheme.onErrorContainer,
                 ),
               ),
-              TextButton(onPressed: onRetry, child: const Text('Try again')),
-            ],
-          ),
+            ),
+            AppButton(
+              onPressed: onRetry,
+              variant: AppButtonVariant.plain,
+              child: const Text('Try again'),
+            ),
+          ],
         ),
       ),
     );
@@ -916,8 +879,9 @@ class _DiscoveredBanner extends StatelessWidget {
                       color: theme.colorScheme.onSecondaryContainer,
                     ),
                   ),
-                  trailing: TextButton(
+                  trailing: AppButton(
                     onPressed: () => onAdopt(f),
+                    variant: AppButtonVariant.plain,
                     child: const Text('Add'),
                   ),
                 ),

@@ -1,6 +1,6 @@
-# YTDL — Material 3 Downloader
+# YTDL — Platform-Native Downloader
 
-A Flutter Material 3 app that downloads videos via a **bundled `yt-dlp` binary** + `ffmpeg` (1000+ sites: YouTube, TikTok, Vimeo, etc.). Targets **Android + Desktop (Linux/Windows/macOS)** with a red seed theme, adaptive `NavigationBar`/`NavigationRail`, and Riverpod + go_router.
+A Flutter app that downloads videos via a **bundled `yt-dlp` binary** + `ffmpeg` (1000+ sites: YouTube, TikTok, Vimeo, etc.). Targets **Android + Desktop (Linux/Windows/macOS)** and follows the host OS's widget family — **Material 3** on Android and Linux, **Cupertino** on macOS, **Fluent UI** on Windows — with one red seed theme across all three, and Riverpod + go_router.
 
 ![M3](https://img.shields.io/badge/Material-3-red) ![Flutter](https://img.shields.io/badge/Flutter-3.47-blue)
 
@@ -90,7 +90,8 @@ Cookie *values* are treated as credentials everywhere — never logged, never in
 
 - **State:** `flutter_riverpod` 3.x (`NotifierProvider` for Home, `Provider` for services). Long-lived services are `ChangeNotifier`s exposed through a plain `Provider` and consumed with `AnimatedBuilder`. Anything that must follow a settings change listens to `settingsControllerProvider` rather than the settings *service*: a provider yielding one always-equal instance never notifies, so a listener on it would never fire.
 - **Routing:** `go_router` 18 (`StatefulShellRoute.indexedStack`), with an `errorBuilder` so a deep link the app has no route for says so in the app rather than in the framework's own error page.
-- **Theme:** `ColorScheme.fromSeed(seedColor: Colors.red)` (M3), `CardThemeData`, `NavigationBar`/`NavigationRail` adaptive at 760dp.
+- **Theme:** one `ColorScheme.fromSeed(seedColor: red)` drives all three families (`core/theme/app_theme.dart`), plus the Material `CardThemeData`/`NavigationBar`/`SearchBar` chrome. Theme mode (system/light/dark) and the seed colour are the Settings pair; the *style* is not a setting — the OS decides, which is the point.
+- **Platform UI:** `core/platform_style.dart` resolves the family from `defaultTargetPlatform`, `widgets/platform/platform_app.dart` picks the root (`MaterialApp.router` / `CupertinoApp.router` / `FluentApp.router` — `fluent_ui`), and every screen is built from the wrappers in `widgets/platform/` (`AppScaffold`, `AppButton`, `AppSwitchTile`, `AppSegmented`, `AppListTile`, `AppSection`, `showAppConfirm`, `showAppToast`, …), each of which renders the family the OS asked for. Under all three roots the Material `Theme` and all three `Global*Localizations` are still installed, so colours and text read identically wherever it runs and a not-yet-converted widget renders rather than throws. The Material path is the default on every test, so the existing test suite still covers it; `test/app_style_smoke_test.dart` walks each tab under macOS and Windows overrides.
 - **Storage:** `hive` + `path_provider` (download root: `getDownloadsDirectory()` desktop / external app dir on Android, overridable in Settings). Downloads land in `Video/` or `Audio/` subfolders (`services/downloads/download_layout.dart`); playlist entries group one folder deeper, under the sanitized playlist title. Since the app moves a finished file from staging itself rather than letting yt-dlp write it to a final path, it sanitizes that folder name itself (`sanitizeFolderName`) — path separators, control characters and Windows-reserved device names included, because yt-dlp's own template sanitization never runs for a folder the app creates. Three Hive boxes: `history` (library), `settings`, `queue` (task snapshots for restart recovery). Each is opened independently at start-up and a failure is reported in the app rather than thrown, so one unusable store costs the user that feature instead of the whole app. Every reader treats a corrupt record as absent rather than crashing: the whole library load used to fail on a single bad entry.
 - **Engine:** `BinaryManager` locates `yt-dlp` in this order — system PATH (`which`/`where`, desktop only), bundled `assets/bin/<platform>/yt-dlp` (per-ABI on Android), then (desktop only) auto-downloads the official single-file build from GitHub releases into the app support dir. The desktop builds in `assets/bin/` are **not** registered in `pubspec.yaml` on purpose: `flutter.assets` has no per-platform scoping, so declaring them would package ~56 MB of desktop binaries into every Android APK too, tripling the 19 MB/ABI payload. Desktop falls through to the auto-download instead. `ytdlpVersion()` / `updateYtdlp()` power Settings updates: system installs via `yt-dlp -U`; app-managed desktop copies re-download the official build; on Android the button replaces the yt-dlp script inside the extracted CPython runtime with the official standalone release — downloaded to a temp file and verified by running `--version` with the runtime's own interpreter before it replaces the working script, so a bad download can never break the engine. There is no URL to configure. Copies to app support dir + `chmod 755`. A download whose body is implausibly small for a yt-dlp build (an error page or a captive portal served with a 200) is refused rather than made executable, and a failed download reports *why* — a 503 no longer reaches the user as "yt-dlp was not found". Prefers system `ffmpeg` on PATH; without it, requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
 - **Notifications:** `flutter_local_notifications`, `downloads` channel on Android, `LinuxNotificationDetails` on Linux, `DarwinNotificationDetails` on macOS. Permission is only requested when the Settings toggle is switched on (Android 13+ runtime grant, macOS `requestPermissions`), never at first launch. Progress throttled to percent-change + 2s; completion/failure alerts; honoring the Settings toggle. macOS progress updates are shown without an alert/banner, since it has no progress bar and a fast download would otherwise fire a banner per update.
@@ -102,7 +103,8 @@ Cookie *values* are treated as credentials everywhere — never logged, never in
 ```
 lib/
   main.dart, app.dart
-  core/theme/app_theme.dart
+  core/theme/{app_theme,app_theme_context}.dart
+  core/platform_style.dart
   core/router/app_router.dart
   core/providers.dart
   core/models/{video_info,download_task,download_record,download_options,settings_model,playlist_info,playlist_paging,collection_kind,output_template,command_template,yt_prefs,youtube_prefs,library_filter,cookie_model,cookie_profiles,cookie_browser}.dart
@@ -116,7 +118,10 @@ lib/
   services/notifications/notification_service.dart
   services/foreground/foreground_service.dart
   services/sharing/share_intent_service.dart
-  widgets/{app_shell,tab_carousel}.dart
+  widgets/{app_shell,platform}.dart
+  widgets/platform/{platform_app,platform_scaffold,platform_content,platform_controls,platform_inputs,platform_feedback,platform_toast}.dart
+  widgets/startup_banner.dart
+  widgets/tab_carousel.dart
   features/home/{home_controller,home_page,widgets/video_info_card,widgets/format_picker_sheet}.dart
   features/queue/{queue_page,batch_queue_page,batch_queue_controller}.dart
   features/library/library_page.dart
@@ -206,10 +211,10 @@ macOS builds are sandboxed, so `macos/Runner/*.entitlements` must grant:
 
 | Platform | Status |
 | -------- | ------ |
-| **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, `dataSync` foreground service, share-sheet intake. |
-| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. |
-| **Windows** | Supported. System or bundled `yt-dlp.exe`. |
-| **macOS** | Supported. Sandboxed — see *Desktop sandbox* above. Notifications are available. |
+| **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, `dataSync` foreground service, share-sheet intake. **Material 3** UI. |
+| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. **Material 3** UI — no Cupertino or Fluent equivalent exists for GTK. |
+| **Windows** | Supported. System or bundled `yt-dlp.exe`. **Fluent UI** UI, through [`fluent_ui`](https://pub.dev/packages/fluent_ui): a `NavigationView` pane, Fluent buttons/switches/dialogs, and a `ComboBox` in place of Material's drop-down. The native frame is unchanged; a custom title bar is not used. |
+| **macOS** | Supported. Sandboxed — see *Desktop sandbox* above. Notifications are available. **Cupertino** UI: `CupertinoApp`, a `CupertinoTabScaffold` tab bar, Cupertino buttons, switches and alerts. |
 | **iOS** | **Dropped.** The two dead-end scaffolds were removed from the repo; there is no iOS engine and none is planned. |
 | **Web** | **Dropped.** `dart:io` is used throughout and no web engine was ever implemented; the scaffold is removed. |
 

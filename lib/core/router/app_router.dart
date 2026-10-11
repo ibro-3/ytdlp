@@ -1,7 +1,10 @@
+import 'package:flutter/cupertino.dart' show CupertinoPage;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models/playlist_info.dart';
+import '../../core/platform_style.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../features/home/home_page.dart';
 import '../../features/library/library_page.dart';
 import '../../features/playlist/playlist_page.dart';
@@ -10,6 +13,30 @@ import '../../features/queue/queue_page.dart';
 import '../../features/settings/cookie_domains_page.dart';
 import '../../features/settings/settings_page.dart';
 import '../../widgets/app_shell.dart';
+import '../../widgets/platform/platform.dart';
+
+/// Pushes [child] with the page transition the OS uses.
+///
+/// Material's default is a fade-through, which is what `builder` produces. iOS
+/// slides from the right instead, and that slide is what a pushed screen *is* on
+/// a Mac — a Material page sliding onto a Cupertino screen reads as a foreign
+/// overlay. Every pushed route goes through here so the choice is made once.
+Page<void> _page(BuildContext context, GoRouterState state, Widget child) {
+  return switch (context.style) {
+    PlatformStyle.material => MaterialPage<void>(
+      key: state.pageKey,
+      child: child,
+    ),
+    PlatformStyle.cupertino => CupertinoPage<void>(
+      key: state.pageKey,
+      child: child,
+    ),
+    PlatformStyle.fluent => MaterialPage<void>(
+      key: state.pageKey,
+      child: child,
+    ),
+  };
+}
 
 final appRouter = GoRouter(
   initialLocation: '/download',
@@ -26,19 +53,28 @@ final appRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/download',
-              builder: (context, state) => const HomePage(),
+              pageBuilder: (context, state) =>
+                  _page(context, state, const HomePage()),
               routes: [
                 // A playlist the user picked from the Download tab. The
                 // playlist rides in `extra` because it only exists as the
                 // result of a fetch; there is no URL to deep-link to.
                 GoRoute(
                   path: 'playlist',
-                  builder: (context, state) {
+                  pageBuilder: (context, state) {
                     final playlist = state.extra;
                     if (playlist is! PlaylistInfo) {
-                      return const _PlaylistUnavailable();
+                      return _page(
+                        context,
+                        state,
+                        const _PlaylistUnavailable(),
+                      );
                     }
-                    return PlaylistPage(playlist: playlist);
+                    return _page(
+                      context,
+                      state,
+                      PlaylistPage(playlist: playlist),
+                    );
                   },
                 ),
               ],
@@ -49,11 +85,13 @@ final appRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/queue',
-              builder: (context, state) => const QueuePage(),
+              pageBuilder: (context, state) =>
+                  _page(context, state, const QueuePage()),
               routes: [
                 GoRoute(
                   path: 'batch',
-                  builder: (context, state) => const BatchQueuePage(),
+                  pageBuilder: (context, state) =>
+                      _page(context, state, const BatchQueuePage()),
                 ),
               ],
             ),
@@ -63,7 +101,8 @@ final appRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/library',
-              builder: (context, state) => const LibraryPage(),
+              pageBuilder: (context, state) =>
+                  _page(context, state, const LibraryPage()),
             ),
           ],
         ),
@@ -71,16 +110,18 @@ final appRouter = GoRouter(
           routes: [
             GoRoute(
               path: '/settings',
-              builder: (context, state) => const SettingsPage(),
+              pageBuilder: (context, state) =>
+                  _page(context, state, const SettingsPage()),
               routes: [
                 // A real route rather than a `Navigator.push` with a
-                // MaterialPageRoute: every other navigation goes through the
+                // `MaterialPageRoute`: every other navigation goes through the
                 // router, and an imperative push sits outside it — so system
                 // back, a state restore and any future redirect have no idea
                 // this page exists.
                 GoRoute(
                   path: 'cookies',
-                  builder: (context, state) => const CookieDomainsPage(),
+                  pageBuilder: (context, state) =>
+                      _page(context, state, const CookieDomainsPage()),
                 ),
               ],
             ),
@@ -97,9 +138,9 @@ class _RouteNotFound extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Not here')),
+    final scheme = context.colors;
+    return AppScaffold(
+      title: 'Not here',
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -114,14 +155,15 @@ class _RouteNotFound extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 'That link does not open anywhere in this app',
-                style: Theme.of(context).textTheme.titleSmall,
+                style: context.textStyles.titleSmall,
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              FilledButton.tonalIcon(
+              AppButton.icon(
                 onPressed: () => context.go('/download'),
-                icon: const Icon(Icons.home_outlined),
+                icon: Icons.home_outlined,
                 label: const Text('Back to Download'),
+                variant: AppButtonVariant.tonal,
               ),
             ],
           ),
@@ -139,9 +181,9 @@ class _PlaylistUnavailable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Playlist')),
+    final scheme = context.colors;
+    return AppScaffold(
+      title: 'Playlist',
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -156,20 +198,22 @@ class _PlaylistUnavailable extends StatelessWidget {
               const SizedBox(height: 12),
               Text(
                 'That playlist is no longer loaded',
-                style: Theme.of(context).textTheme.titleSmall,
+                style: context.textStyles.titleSmall,
               ),
               const SizedBox(height: 6),
               Text(
                 'Fetch the playlist link again to pick videos from it.',
                 textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
+                style: context.textStyles.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
               const SizedBox(height: 16),
-              FilledButton.tonalIcon(
+              AppButton.icon(
                 onPressed: () => context.go('/download'),
-                icon: const Icon(Icons.arrow_back),
+                icon: Icons.arrow_back,
                 label: const Text('Back to Download'),
+                variant: AppButtonVariant.tonal,
               ),
             ],
           ),

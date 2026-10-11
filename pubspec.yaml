@@ -31,6 +31,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # The localization delegates for all three widget families. `MaterialApp`
+  # registers these itself; `CupertinoApp` and `FluentApp` register only their
+  # own, and a Material widget that survives under either would then throw
+  # `No MaterialLocalizations found`.
+  flutter_localizations:
+    sdk: flutter
 
   flutter_riverpod: ^3.4.3
   go_router: ^18.0.1
@@ -61,6 +67,12 @@ dependencies:
   # in the dependency graph transitively, so this promotes it rather than
   # adding a package.
   crypto: ^3.0.7
+  # The Windows style of the UI. The app follows the host OS's widget family —
+  # Material on Android/Linux, Cupertino on macOS, Fluent here — so this is
+  # what the Windows screen's buttons, switches, dialogs and navigation panes
+  # are built from. It compiles everywhere but is only instantiated on Windows,
+  # so it adds nothing to the Android, Linux or macOS bundles.
+  fluent_ui: ^4.16.1
 
 dev_dependencies:
   flutter_test:

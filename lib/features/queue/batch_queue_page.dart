@@ -8,7 +8,9 @@ import '../../core/models/playlist_info.dart';
 import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
+import '../../widgets/platform/platform.dart';
 import 'batch_queue_controller.dart';
 
 /// Queue several links at once.
@@ -35,12 +37,14 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
   Future<void> _downloadAll(List<VideoInfo> videos) async {
     if (videos.isEmpty) return;
     final settings = ref.read(settingsControllerProvider);
-    final quality = await showModalBottomSheet<_BatchQuality>(
+    final quality = await showAppBottomSheet<_BatchQuality>(
       context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      constraints: const BoxConstraints(maxWidth: 640),
-      builder: (context) => _BatchQualitySheet(settings: settings),
+      builder: (context) => Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: _BatchQualitySheet(settings: settings),
+        ),
+      ),
     );
     if (quality == null || !mounted) return;
 
@@ -54,11 +58,7 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
     }
     if (!mounted) return;
     context.go('/queue');
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(content: Text('Queued ${videos.length} download(s)')),
-      );
+    context.showToast('Queued ${videos.length} download(s)');
   }
 
   @override
@@ -69,18 +69,16 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
         if (item.video != null && _selected.contains(item.url)) item.video!,
     ];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Queue links'),
-        actions: [
-          IconButton(
-            onPressed: () =>
-                ref.read(batchQueueControllerProvider.notifier).clear(),
-            icon: const Icon(Icons.clear_all),
-            tooltip: 'Clear the list',
-          ),
-        ],
-      ),
+    return AppScaffold(
+      title: 'Queue links',
+      actions: [
+        AppIconButton(
+          onPressed: () =>
+              ref.read(batchQueueControllerProvider.notifier).clear(),
+          icon: Icons.clear_all,
+          tooltip: 'Clear the list',
+        ),
+      ],
       body: state.total == 0
           ? const _NothingToDo()
           : Column(
@@ -109,7 +107,7 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
                 ),
               ],
             ),
-      bottomNavigationBar: state.total == 0
+      bottomBar: state.total == 0
           ? null
           : _buildBottomBar(state, selectedVideos),
     );
@@ -126,7 +124,7 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
   }
 
   Widget _buildSelectionBar(BatchState state, List<VideoInfo> selected) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
       child: Row(
@@ -137,10 +135,11 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
                   ? 'Fetching details… ${state.ready}/${state.total}'
                   : '${state.ready} of ${state.total} ready'
                         '${state.failed > 0 ? ' · ${state.failed} failed' : ''}',
-              style: theme.textTheme.bodySmall,
+              style: theme.bodySmall,
             ),
           ),
-          TextButton(
+          AppButton(
+            variant: AppButtonVariant.plain,
             onPressed: () => setState(() {
               if (_selected.length == state.videos.length) {
                 _selected.clear();
@@ -162,9 +161,11 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
   }
 
   Widget _buildBottomBar(BatchState state, List<VideoInfo> selected) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final colors = context.colors;
     return Material(
       elevation: 3,
+      color: colors.surfaceContainer,
       child: SafeArea(
         top: false,
         child: Padding(
@@ -174,14 +175,14 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
               Expanded(
                 child: Text(
                   '${selected.length} selected',
-                  style: theme.textTheme.bodyMedium,
+                  style: theme.bodyMedium,
                 ),
               ),
-              FilledButton.icon(
+              AppButton.icon(
                 onPressed: selected.isEmpty
                     ? null
                     : () => _downloadAll(selected),
-                icon: const Icon(Icons.download),
+                icon: Icons.download,
                 label: Text(
                   selected.length == 1
                       ? 'Download 1'
@@ -234,7 +235,7 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
     final tiers = _kind == FormatKind.audio
         ? AppSettings.audioTierOptions
         : AppSettings.videoTierOptions;
@@ -249,24 +250,26 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Quality for all', style: theme.textTheme.titleMedium),
+            Text('Quality for all', style: theme.titleMedium),
             const SizedBox(height: 16),
-            SegmentedButton<FormatKind>(
+            AppSegmented<FormatKind>(
               segments: const [
-                ButtonSegment(
+                (
                   value: FormatKind.video,
-                  label: Text('Video'),
-                  icon: Icon(Icons.videocam_outlined),
+                  label: 'Video',
+                  icon: Icons.videocam_outlined,
+                  enabled: true,
                 ),
-                ButtonSegment(
+                (
                   value: FormatKind.audio,
-                  label: Text('Audio'),
-                  icon: Icon(Icons.audiotrack_outlined),
+                  label: 'Audio',
+                  icon: Icons.audiotrack_outlined,
+                  enabled: true,
                 ),
               ],
-              selected: {_kind},
-              onSelectionChanged: (s) => setState(() {
-                _kind = s.first;
+              selected: _kind,
+              onSelectionChanged: (v) => setState(() {
+                _kind = v;
                 _tier = _kind == FormatKind.audio
                     ? widget.settings.defaultAudioTier
                     : widget.settings.defaultVideoTier;
@@ -278,16 +281,15 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
               runSpacing: 8,
               children: [
                 for (final tier in tiers)
-                  ChoiceChip(
-                    label: Text(_tierLabel(tier)),
+                  AppChoiceChip(
+                    label: _tierLabel(tier),
                     selected: _tier == tier,
                     onSelected: (_) => setState(() => _tier = tier),
                   ),
               ],
             ),
             const SizedBox(height: 12),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
+            AppSwitchTile(
               dense: true,
               title: const Text('Save subtitles'),
               value: _writeSubs,
@@ -296,7 +298,7 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: AppButton.icon(
                 onPressed: () => Navigator.pop(
                   context,
                   _BatchQuality(
@@ -309,7 +311,7 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
                     ),
                   ),
                 ),
-                icon: const Icon(Icons.check),
+                icon: Icons.check,
                 label: const Text('Use this for all'),
               ),
             ),
@@ -345,47 +347,46 @@ class _BatchRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return ListTile(
+    final theme = context.textStyles;
+    final scheme = context.colors;
+    return AppListTile(
+      contentPaddingZero: true,
       // An unresolved row is not selectable, so it says why rather than
       // presenting a checkbox that silently does nothing. `Tooltip` wrapping the
       // whole thing, because `Checkbox` itself has no `tooltip` parameter.
       leading: item.video == null
           ? Tooltip(
               message: 'Resolve this link first',
-              child: Checkbox(value: selected, onChanged: null),
+              child: AppCheckbox(value: selected, onChanged: (_) {}),
             )
-          : Checkbox(value: selected, onChanged: (_) => onToggle()),
+          : AppCheckbox(value: selected, onChanged: (_) => onToggle()),
       title: Text(
         item.video?.title ?? item.url,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodyMedium,
+        style: theme.bodyMedium,
       ),
       subtitle: _buildSubtitle(theme, scheme),
       trailing: _buildTrailing(scheme),
     );
   }
 
-  Widget _buildSubtitle(ThemeData theme, ColorScheme scheme) {
+  Widget? _buildSubtitle(TextTheme theme, ColorScheme scheme) {
     if (item.status == BatchItemStatus.loading) {
-      return const LinearProgressIndicator();
+      return const AppLinearProgress();
     }
     if (item.error != null) {
       return Text(
         item.error!,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+        style: theme.bodySmall?.copyWith(color: scheme.error),
       );
     }
     if (item.isPlaylist) {
       return Text(
         'Playlist · ${item.playlist!.count} videos — choose which to get',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
+        style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       );
     }
     final video = item.video;
@@ -395,9 +396,7 @@ class _BatchRow extends StatelessWidget {
     if (video == null) {
       return Text(
         'Not resolved yet',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
+        style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
       );
     }
     return Text(
@@ -406,9 +405,7 @@ class _BatchRow extends StatelessWidget {
         if (video.duration > 0) formatDuration(video.duration),
         '${video.videoFormats.length} video / ${video.audioFormats.length} audio',
       ].join(' · '),
-      style: theme.textTheme.bodySmall?.copyWith(
-        color: scheme.onSurfaceVariant,
-      ),
+      style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
     );
   }
 
@@ -419,21 +416,21 @@ class _BatchRow extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        IconButton(
+        AppIconButton(
           onPressed: onRemove,
-          icon: const Icon(Icons.close),
+          icon: Icons.close,
           tooltip: 'Remove this link',
         ),
         if (item.error != null)
-          IconButton(
+          AppIconButton(
             onPressed: onRetry,
-            icon: const Icon(Icons.refresh),
+            icon: Icons.refresh,
             tooltip: 'Try again',
           )
         else if (item.playlist case final playlist?)
-          IconButton(
+          AppIconButton(
             onPressed: () => onOpenPlaylist(playlist),
-            icon: const Icon(Icons.playlist_play),
+            icon: Icons.playlist_play,
             tooltip: 'Choose videos from this playlist',
           )
         else if (item.status != BatchItemStatus.loading)
@@ -480,7 +477,8 @@ class _NothingToDo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final scheme = context.colors;
+    final text = context.textStyles;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -489,16 +487,12 @@ class _NothingToDo extends StatelessWidget {
           children: [
             Icon(Icons.playlist_add, size: 56, color: scheme.onSurfaceVariant),
             const SizedBox(height: 12),
-            Text(
-              'No links to queue',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
+            Text('No links to queue', style: text.titleSmall),
             const SizedBox(height: 6),
             Text(
               'Paste several links on the Download tab to queue them together.',
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),

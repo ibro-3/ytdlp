@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../core/models/download_options.dart';
 import '../../../core/models/settings_model.dart';
 import '../../../core/models/video_info.dart';
+import '../../../core/theme/app_theme_context.dart';
+import '../../../widgets/platform/platform.dart';
 
 /// What the user picked in the format sheet: a [Format] plus any subtitle
 /// and thumbnail extras. `null` from [showFormatPickerSheet] means dismissed.
@@ -30,12 +32,14 @@ Future<FormatPickerResult?> showFormatPickerSheet(
   required VideoInfo video,
   required AppSettings settings,
 }) {
-  return showModalBottomSheet<FormatPickerResult>(
+  return showAppBottomSheet<FormatPickerResult>(
     context: context,
-    showDragHandle: true,
-    isScrollControlled: true,
-    constraints: const BoxConstraints(maxWidth: 640),
-    builder: (context) => _FormatPickerSheet(video: video, settings: settings),
+    builder: (context) => Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 640),
+        child: _FormatPickerSheet(video: video, settings: settings),
+      ),
+    ),
   );
 }
 
@@ -124,7 +128,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final scheme = context.colors;
     final options = _mode == FormatKind.video
         ? widget.video.videoFormats
         : widget.video.audioFormats;
@@ -140,28 +145,28 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
           children: [
             Text(
               widget.video.title,
-              style: theme.textTheme.titleMedium,
+              style: theme.titleMedium,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
             ),
             const SizedBox(height: 16),
-            SegmentedButton<FormatKind>(
+            AppSegmented<FormatKind>(
               segments: [
-                ButtonSegment(
+                (
                   value: FormatKind.video,
-                  label: const Text('Video'),
-                  icon: const Icon(Icons.videocam_outlined),
+                  label: 'Video',
+                  icon: Icons.videocam_outlined,
                   enabled: _hasVideo,
                 ),
-                ButtonSegment(
+                (
                   value: FormatKind.audio,
-                  label: const Text('Audio'),
-                  icon: const Icon(Icons.audiotrack_outlined),
+                  label: 'Audio',
+                  icon: Icons.audiotrack_outlined,
                   enabled: _hasAudio,
                 ),
               ],
-              selected: {_mode},
-              onSelectionChanged: (s) => _patch(() => _mode = s.first),
+              selected: _mode,
+              onSelectionChanged: (v) => _patch(() => _mode = v),
             ),
             // Explain a disabled Video segment instead of leaving the user
             // guessing why the picker landed on Audio.
@@ -170,8 +175,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
               Text(
                 'No downloadable video streams (needs ffmpeg to merge) — '
                 'audio only.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                style: theme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
                 ),
               ),
             ],
@@ -186,7 +191,7 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                   children: [
                     Text(
                       isVideoMode ? 'Quality' : 'Audio quality',
-                      style: theme.textTheme.labelMedium,
+                      style: theme.labelMedium,
                     ),
                     const SizedBox(height: 8),
                     if (options.isEmpty)
@@ -194,8 +199,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                         isVideoMode
                             ? 'No video streams available for this video.'
                             : 'No audio streams available for this video.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+                        style: theme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
                         ),
                       )
                     else
@@ -204,8 +209,8 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                         runSpacing: 8,
                         children: [
                           for (final f in options)
-                            ChoiceChip(
-                              label: Text(f.label),
+                            AppChoiceChip(
+                              label: f.label,
                               // Always select, never toggle off, so a
                               // Download is always possible.
                               selected: selected?.selector == f.selector,
@@ -221,63 +226,56 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
                       ),
                     if (_hasSubtitles) ...[
                       const SizedBox(height: 20),
-                      _sectionLabel(theme, 'Subtitles'),
+                      _sectionLabel(context, 'Subtitles'),
                       const SizedBox(height: 4),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         dense: true,
                         title: const Text('Save next to the file'),
-                        subtitle: const Text('.srt or .vtt sidecar'),
+                        subtitle: '.srt or .vtt sidecar',
                         value: _writeSubs,
                         onChanged: (v) => _patch(() => _writeSubs = v),
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         dense: true,
                         title: const Text('Embed in the file'),
-                        subtitle: Text(
-                          _canEmbed
-                              ? (isVideoMode
-                                    ? 'One file, no sidecars'
-                                    : 'Not available for audio files')
-                              : 'Needs ffmpeg (not available)',
-                        ),
+                        subtitle: _canEmbed
+                            ? (isVideoMode
+                                  ? 'One file, no sidecars'
+                                  : 'Not available for audio files')
+                            : 'Needs ffmpeg (not available)',
                         value: isVideoMode && _embedSubs,
-                        onChanged: _canEmbed && isVideoMode
-                            ? (v) => _patch(() => _embedSubs = v)
-                            : null,
+                        // SwitchListTile greys itself out when its callback is
+                        // null, and the other two families' controls do not —
+                        // so the wrapper is told instead.
+                        enabled: _canEmbed && isVideoMode,
+                        onChanged: (v) => _patch(() => _embedSubs = v),
                       ),
                       if (_writeSubs || (isVideoMode && _embedSubs)) ...[
-                        SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
+                        AppSwitchTile(
                           dense: true,
                           title: const Text('Include auto-generated'),
-                          subtitle: const Text(
-                            'Machine captions (marked "auto")',
-                          ),
+                          subtitle: 'Machine captions (marked "auto")',
                           value: _includeAuto,
                           onChanged: (v) => _patch(() => _includeAuto = v),
                         ),
                         const SizedBox(height: 8),
-                        _sectionLabel(theme, 'Languages'),
+                        _sectionLabel(context, 'Languages'),
                         const SizedBox(height: 8),
                         Wrap(
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            FilterChip(
-                              label: const Text('All available'),
+                            AppFilterChip(
+                              label: 'All available',
                               selected: _subLangs.isEmpty,
                               onSelected: (_) =>
                                   _patch(() => _subLangs.clear()),
                             ),
                             for (final track in widget.video.subtitleTracks)
-                              FilterChip(
-                                label: Text(
-                                  track.isAutoOnly
-                                      ? '${track.name} (auto)'
-                                      : track.name,
-                                ),
+                              AppFilterChip(
+                                label: track.isAutoOnly
+                                    ? '${track.name} (auto)'
+                                    : track.name,
                                 selected: _subLangs.contains(track.lang),
                                 onSelected: (v) => _patch(() {
                                   if (v) {
@@ -301,13 +299,13 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
             const SizedBox(height: 20),
             SizedBox(
               width: double.infinity,
-              child: FilledButton.icon(
+              child: AppButton.icon(
                 onPressed: selected == null
                     ? null
                     : () => Navigator.of(context).pop(
                         FormatPickerResult(format: selected, options: _options),
                       ),
-                icon: const Icon(Icons.download),
+                icon: Icons.download,
                 label: const Text('Download'),
               ),
             ),
@@ -317,10 +315,10 @@ class _FormatPickerSheetState extends State<_FormatPickerSheet> {
     );
   }
 
-  Widget _sectionLabel(ThemeData theme, String label) => Text(
+  Widget _sectionLabel(BuildContext context, String label) => Text(
     label,
-    style: theme.textTheme.labelMedium?.copyWith(
-      color: theme.colorScheme.primary,
+    style: context.textStyles.labelMedium?.copyWith(
+      color: context.colors.primary,
     ),
   );
 }

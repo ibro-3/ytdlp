@@ -17,7 +17,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/models/cookie_browser.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../services/cookies/cookie_domains.dart';
+import '../../widgets/platform/platform.dart';
 
 class CookieDomainsPage extends ConsumerStatefulWidget {
   const CookieDomainsPage({super.key});
@@ -91,11 +93,13 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
     final result = await service.buildGenerated(disabled: disabled);
     if (!result.wroteSomething) {
       if (!mounted) return;
+      // Deliberately no `_say` here: the banner above the list is already
+      // showing this exact sentence, and adding a toast on top of it is what
+      // put the same message on the screen twice.
       setState(() {
         _problem = result.reason;
         _rewriting = false;
       });
-      _say(result.reason ?? 'Nothing was changed');
       return;
     }
     await ref
@@ -128,11 +132,11 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
     final result = await service.buildGenerated(disabled: const {});
     if (!result.wroteSomething) {
       if (!mounted) return;
+      // The banner carries this one too; see [_toggle].
       setState(() {
         _problem = result.reason;
         _rewriting = false;
       });
-      _say(result.reason ?? 'Nothing was changed');
       return;
     }
     await ref
@@ -148,14 +152,12 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
   }
 
   void _say(String message) {
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    if (!mounted) return;
+    context.showToast(message);
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final off = _domains.where((d) => !d.enabled).toList();
     final withheld = off.fold<int>(0, (n, d) => n + d.cookieCount);
     final now = DateTime.now();
@@ -164,26 +166,25 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
     );
     final browserInUse = browser?.label;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Cookie sites'),
-        actions: [
-          if (off.isNotEmpty)
-            TextButton(
-              onPressed: _rewriting ? null : _enableAll,
-              child: const Text('Turn all on'),
-            ),
-        ],
-      ),
+    return AppScaffold(
+      title: 'Cookie sites',
+      actions: [
+        if (off.isNotEmpty)
+          AppButton(
+            onPressed: _rewriting ? null : _enableAll,
+            variant: AppButtonVariant.plain,
+            child: const Text('Turn all on'),
+          ),
+      ],
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(child: AppCircularProgress())
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
               children: [
                 Text(
                   'yt-dlp reads one cookie file. Switching a site off leaves '
                   'its cookies out of that file, so they are not sent to it.',
-                  style: theme.textTheme.bodyMedium,
+                  style: context.textStyles.bodyMedium,
                 ),
                 if (browserInUse != null) ...[
                   const SizedBox(height: 12),
@@ -235,7 +236,7 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
                     child: Center(
                       child: Text(
                         'No cookies are loaded.',
-                        style: theme.textTheme.bodyMedium,
+                        style: context.textStyles.bodyMedium,
                       ),
                     ),
                   ),
@@ -258,34 +259,29 @@ class _DomainTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final colors = context.colors;
     final stale = domain.isStaleAt(now);
-    return SwitchListTile(
-      contentPadding: EdgeInsets.zero,
-      value: domain.enabled,
-      onChanged: onChanged,
+    return AppSwitchTile(
+      // A disabled site is struck through rather than only dimmed: dimming is
+      // easy to miss on a long list, and this row's whole point is that its
+      // cookies are not going anywhere.
       title: Text(
         domain.domain,
-        style: theme.textTheme.titleMedium?.copyWith(
-          // A disabled site is struck through rather than only dimmed: dimming
-          // is easy to miss on a long list, and this row's whole point is that
-          // its cookies are not going anywhere.
+        style: theme.titleMedium?.copyWith(
           decoration: domain.enabled ? null : TextDecoration.lineThrough,
         ),
       ),
-      subtitle: Text(
-        '${domain.cookieCount} '
-        '${domain.cookieCount == 1 ? "cookie" : "cookies"} · '
-        '${domain.lifetimeLabel(now)}',
-        style: stale
-            ? theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.error,
-              )
-            : null,
-      ),
-      secondary: stale
-          ? Icon(Icons.warning_amber_rounded, color: theme.colorScheme.error)
+      subtitle:
+          '${domain.cookieCount} '
+          '${domain.cookieCount == 1 ? "cookie" : "cookies"} · '
+          '${domain.lifetimeLabel(now)}',
+      leading: stale
+          ? Icon(Icons.warning_amber_rounded, color: colors.error)
           : const Icon(Icons.language_outlined),
+      value: domain.enabled,
+      onChanged: (v) => onChanged?.call(v),
+      enabled: onChanged != null,
     );
   }
 }
@@ -301,8 +297,7 @@ class _Banner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colours = theme.colorScheme;
+    final colours = context.colors;
     final background = tone == _BannerTone.warning
         ? colours.errorContainer
         : colours.surfaceContainerHighest;
@@ -323,7 +318,7 @@ class _Banner extends StatelessWidget {
           Expanded(
             child: Text(
               text,
-              style: theme.textTheme.bodyMedium?.copyWith(color: foreground),
+              style: context.textStyles.bodyMedium?.copyWith(color: foreground),
             ),
           ),
         ],

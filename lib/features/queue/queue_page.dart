@@ -5,8 +5,10 @@ import 'package:path/path.dart' as p;
 import '../../core/models/download_task.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
 import '../../services/downloads/download_manager.dart';
+import '../../widgets/platform/platform.dart';
 
 class QueuePage extends ConsumerWidget {
   const QueuePage({super.key});
@@ -14,22 +16,20 @@ class QueuePage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final manager = ref.watch(downloadManagerProvider);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Queue'),
-        actions: [
-          // Flexible, so the menu yields width to the title on a narrow screen
-          // instead of the toolbar overflowing. App bar actions are laid out at
-          // their intrinsic width, so without this the counts plus two chips and
-          // two buttons can exceed the bar.
-          Flexible(
-            child: AnimatedBuilder(
-              animation: manager,
-              builder: (context, _) => _QueueMenu(manager: manager),
-            ),
+    return AppScaffold(
+      title: 'Queue',
+      actions: [
+        // Flexible, so the menu yields width to the title on a narrow screen
+        // instead of the toolbar overflowing. App bar actions are laid out at
+        // their intrinsic width, so without this the counts plus two chips and
+        // two buttons can exceed the bar.
+        Flexible(
+          child: AnimatedBuilder(
+            animation: manager,
+            builder: (context, _) => _QueueMenu(manager: manager),
           ),
-        ],
-      ),
+        ),
+      ],
       body: AnimatedBuilder(
         animation: manager,
         builder: (context, _) {
@@ -98,7 +98,7 @@ class _QueueMenu extends StatelessWidget {
                 parts.join(' · '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelMedium,
+                style: context.textStyles.labelMedium,
               ),
             ),
           ),
@@ -135,21 +135,18 @@ class _QueueMenu extends StatelessWidget {
         // cancel — every task dismissed, say — tapping the overflow opened a
         // blank sheet with no way out but the bar.
         if (hasFinished || hasWork)
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert),
+          AppMenuButton<String>(
+            icon: Icons.more_vert,
             tooltip: 'More queue actions',
             onSelected: (v) => _onSelect(context, v),
-            itemBuilder: (context) => [
+            items: [
               if (hasFinished)
-                PopupMenuItem(
+                AppMenuItem(
                   value: 'clear',
-                  child: Text('Clear finished (${manager.finishedCount})'),
+                  label: 'Clear finished (${manager.finishedCount})',
                 ),
               if (hasWork)
-                const PopupMenuItem(
-                  value: 'cancel_all',
-                  child: Text('Cancel all'),
-                ),
+                const AppMenuItem(value: 'cancel_all', label: 'Cancel all'),
             ],
           ),
       ],
@@ -242,8 +239,8 @@ class _TaskCard extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final manager = ref.watch(downloadManagerProvider);
-    final scheme = Theme.of(context).colorScheme;
-    final theme = Theme.of(context);
+    final scheme = context.colors;
+    final theme = context.textStyles;
 
     // Split apart because a waiting task and a running one need different
     // affordances: only a running one has progress to show or a process to
@@ -255,207 +252,193 @@ class _TaskCard extends ConsumerWidget {
     final isFailed = task.status == DownloadStatus.failed;
     final isCanceled = task.status == DownloadStatus.canceled;
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(
-                    task.format.kind == FormatKind.video
-                        ? Icons.videocam_outlined
-                        : Icons.audiotrack_outlined,
-                    color: scheme.onSurfaceVariant,
-                  ),
+    return AppCard(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        task.video.title,
-                        style: theme.textTheme.titleSmall,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        task.format.label,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                      if (task.video.duration > 0)
-                        Text(
-                          formatDuration(task.video.duration),
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      // A playlist entry says where it came from, since its
-                      // file lands in that folder.
-                      if (task.playlistTitle != null)
-                        Text(
-                          task.playlistTitle!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.primary,
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                _buildActions(context, manager, task),
-              ],
-            ),
-            const SizedBox(height: 12),
-            // A waiting task has made no progress yet, so it shows a static
-            // "Waiting" label rather than an indeterminate bar — an animating
-            // spinner on a dozen queued items reads as twelve active
-            // downloads, and it never settles.
-            if (isPaused)
-              Row(
-                children: [
-                  Icon(Icons.pause, size: 14, color: scheme.onSurfaceVariant),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      // A held download keeps its progress: the .part file is
-                      // still on disk, so resuming continues rather than
-                      // starting over.
-                      task.progress > 0
-                          ? 'Paused at ${(task.progress * 100).toStringAsFixed(1)}%'
-                          : 'Paused',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              )
-            else if (isQueued)
-              Row(
-                children: [
-                  Icon(
-                    Icons.schedule,
-                    size: 14,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Waiting to start',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              )
-            else if (isRunning) ...[
-              LinearProgressIndicator(
-                // Deterministic once yt-dlp reports any progress; indeterminate
-                // only for the moment before the first line arrives.
-                value: task.progress == 0 ? null : task.progress,
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Text(
-                    '${(task.progress * 100).toStringAsFixed(1)}%',
-                    style: theme.textTheme.labelMedium,
-                  ),
-                  const SizedBox(width: 12),
-                  if (task.speed != null)
-                    Text(
-                      task.speed!,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  const Spacer(),
-                  if (task.eta != null)
-                    Text(
-                      'ETA ${task.eta}',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                ],
-              ),
-            ] else if (isDone) ...[
-              Row(
-                children: [
-                  Icon(Icons.check_circle, size: 16, color: scheme.primary),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Completed',
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: scheme.primary,
-                    ),
-                  ),
-                  const Spacer(),
-                  if (task.filePath != null)
-                    Flexible(
-                      child: Text(
-                        p.basename(task.filePath!),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
-              ),
-              if (task.warning != null) ...[
-                const SizedBox(height: 6),
-                Text(
-                  task.warning!,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.tertiary,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ] else if (isFailed) ...[
-              Row(
-                children: [
-                  Icon(Icons.error_outline, size: 16, color: scheme.error),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      task.error ?? 'Failed',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.error,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ] else if (isCanceled) ...[
-              Text(
-                'Canceled',
-                style: theme.textTheme.labelSmall?.copyWith(
+                child: Icon(
+                  task.format.kind == FormatKind.video
+                      ? Icons.videocam_outlined
+                      : Icons.audiotrack_outlined,
                   color: scheme.onSurfaceVariant,
                 ),
               ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task.video.title,
+                      style: theme.titleSmall,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      task.format.label,
+                      style: theme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                    if (task.video.duration > 0)
+                      Text(
+                        formatDuration(task.video.duration),
+                        style: theme.labelSmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    // A playlist entry says where it came from, since its
+                    // file lands in that folder.
+                    if (task.playlistTitle != null)
+                      Text(
+                        task.playlistTitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.labelSmall?.copyWith(
+                          color: scheme.primary,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              _buildActions(context, manager, task),
             ],
+          ),
+          const SizedBox(height: 12),
+          // A waiting task has made no progress yet, so it shows a static
+          // "Waiting" label rather than an indeterminate bar — an animating
+          // spinner on a dozen queued items reads as twelve active
+          // downloads, and it never settles.
+          if (isPaused)
+            Row(
+              children: [
+                Icon(Icons.pause, size: 14, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    // A held download keeps its progress: the .part file is
+                    // still on disk, so resuming continues rather than
+                    // starting over.
+                    task.progress > 0
+                        ? 'Paused at ${(task.progress * 100).toStringAsFixed(1)}%'
+                        : 'Paused',
+                    style: theme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+            )
+          else if (isQueued)
+            Row(
+              children: [
+                Icon(Icons.schedule, size: 14, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 6),
+                Text(
+                  'Waiting to start',
+                  style: theme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            )
+          else if (isRunning) ...[
+            AppLinearProgress(
+              // Deterministic once yt-dlp reports any progress; indeterminate
+              // only for the moment before the first line arrives.
+              value: task.progress == 0 ? null : task.progress,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Text(
+                  '${(task.progress * 100).toStringAsFixed(1)}%',
+                  style: theme.labelMedium,
+                ),
+                const SizedBox(width: 12),
+                if (task.speed != null)
+                  Text(
+                    task.speed!,
+                    style: theme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                const Spacer(),
+                if (task.eta != null)
+                  Text(
+                    'ETA ${task.eta}',
+                    style: theme.labelSmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ] else if (isDone) ...[
+            Row(
+              children: [
+                Icon(Icons.check_circle, size: 16, color: scheme.primary),
+                const SizedBox(width: 6),
+                Text(
+                  'Completed',
+                  style: theme.labelMedium?.copyWith(color: scheme.primary),
+                ),
+                const Spacer(),
+                if (task.filePath != null)
+                  Flexible(
+                    child: Text(
+                      p.basename(task.filePath!),
+                      style: theme.labelSmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+            ),
+            if (task.warning != null) ...[
+              const SizedBox(height: 6),
+              Text(
+                task.warning!,
+                style: theme.labelSmall?.copyWith(color: scheme.tertiary),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ] else if (isFailed) ...[
+            Row(
+              children: [
+                Icon(Icons.error_outline, size: 16, color: scheme.error),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    task.error ?? 'Failed',
+                    style: theme.labelSmall?.copyWith(color: scheme.error),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ] else if (isCanceled) ...[
+            Text(
+              'Canceled',
+              style: theme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
           ],
-        ),
+        ],
       ),
     );
   }
@@ -493,60 +476,60 @@ class _TaskCard extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               if (isDownloading) ...[
-                IconButton(
+                AppIconButton(
                   onPressed: () => manager.pauseTask(task.id),
-                  icon: const Icon(Icons.pause),
+                  icon: Icons.pause,
                   tooltip: 'Pause this download',
                 ),
-                IconButton(
+                AppIconButton(
                   onPressed: () => manager.cancel(task.id),
-                  icon: const Icon(Icons.close),
+                  icon: Icons.close,
                   tooltip: 'Cancel this download',
                 ),
               ] else if (isPaused) ...[
-                IconButton.filledTonal(
+                AppIconButton(
                   onPressed: () => manager.resumeTask(task.id),
-                  icon: const Icon(Icons.play_arrow),
+                  icon: Icons.play_arrow,
                   tooltip: 'Resume this download',
                 ),
-                IconButton(
+                AppIconButton(
                   onPressed: () => manager.cancel(task.id),
-                  icon: const Icon(Icons.close),
+                  icon: Icons.close,
                   tooltip: 'Cancel this download',
                 ),
               ] else if (isDone) ...[
-                IconButton.filledTonal(
+                AppIconButton(
                   onPressed: () => _open(context, manager, task),
-                  icon: const Icon(Icons.play_arrow),
+                  icon: Icons.play_arrow,
                   tooltip: 'Open the file',
                 ),
-                IconButton(
+                AppIconButton(
                   onPressed: () => _share(context, manager, task),
-                  icon: const Icon(Icons.share_outlined),
+                  icon: Icons.share_outlined,
                   tooltip: 'Share the file',
                 ),
-                IconButton(
+                AppIconButton(
                   onPressed: () => _delete(context, manager, task),
-                  icon: const Icon(Icons.delete_outline),
+                  icon: Icons.delete_outline,
                   tooltip: 'Delete file',
                 ),
               ] else if (isFailed || isCanceled) ...[
                 // Retry covers a canceled download too: its partial is kept,
                 // so this continues rather than re-downloading.
-                IconButton.filledTonal(
+                AppIconButton(
                   onPressed: () => manager.retry(task),
-                  icon: const Icon(Icons.refresh),
+                  icon: Icons.refresh,
                   tooltip: 'Try again',
                 ),
-                IconButton(
+                AppIconButton(
                   onPressed: () => manager.dismiss(task.id),
-                  icon: const Icon(Icons.close),
+                  icon: Icons.close,
                   tooltip: 'Remove from the queue',
                 ),
               ] else
-                IconButton(
+                AppIconButton(
                   onPressed: () => manager.dismiss(task.id),
-                  icon: const Icon(Icons.close),
+                  icon: Icons.close,
                   tooltip: 'Remove from the queue',
                 ),
             ],
@@ -558,14 +541,14 @@ class _TaskCard extends ConsumerWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
+                AppIconButton(
                   onPressed: onMoveUp,
-                  icon: const Icon(Icons.arrow_upward, size: 18),
+                  icon: Icons.arrow_upward,
                   tooltip: 'Move earlier in the queue',
                 ),
-                IconButton(
+                AppIconButton(
                   onPressed: onMoveDown,
-                  icon: const Icon(Icons.arrow_downward, size: 18),
+                  icon: Icons.arrow_downward,
                   tooltip: 'Move later in the queue',
                 ),
               ],
@@ -582,13 +565,7 @@ class _TaskCard extends ConsumerWidget {
   ) async {
     final ok = await manager.openTask(task);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('Could not open the file (it may be missing).'),
-          ),
-        );
+      context.showToast('Could not open the file (it may be missing).');
     }
   }
 
@@ -599,11 +576,7 @@ class _TaskCard extends ConsumerWidget {
   ) async {
     final ok = await manager.shareTask(task);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('Could not share the file.')),
-        );
+      context.showToast('Could not share the file.');
     }
   }
 
@@ -614,15 +587,9 @@ class _TaskCard extends ConsumerWidget {
   ) async {
     final ok = await manager.deleteTask(task);
     if (!ok && context.mounted) {
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not delete the file — the library entry was kept.',
-            ),
-          ),
-        );
+      context.showToast(
+        'Could not delete the file — the library entry was kept.',
+      );
     }
   }
 }

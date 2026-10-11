@@ -20,6 +20,7 @@ import '../../core/models/video_info.dart';
 import '../../core/models/yt_prefs.dart';
 import '../../core/models/youtube_prefs.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../services/cookies/cookie_jar.dart';
 import '../../services/settings/backup_service.dart';
 import '../../services/settings/template_store.dart';
@@ -27,6 +28,7 @@ import '../../services/updates/app_update_service.dart';
 import '../../services/ytdlp/arg_tokenizer.dart';
 import '../../services/ytdlp/binary_manager.dart';
 import '../../services/ytdlp/ejs_installer.dart';
+import '../../widgets/platform/platform.dart';
 import '../../widgets/tab_carousel.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
@@ -116,7 +118,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Future<void> _pickDownloadFolder() async {
-    final messenger = ScaffoldMessenger.of(context);
     String? picked;
     try {
       picked = await FilePicker.getDirectoryPath(
@@ -128,9 +129,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (picked == null || picked.isEmpty) return; // Cancelled or unsupported.
     final problem = await _validateWritableFolder(picked);
     if (problem != null) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(problem)));
+      if (mounted) context.showToast(problem);
       return;
     }
     await _patch(
@@ -149,9 +148,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// The file is copied into the app's support directory so the picked path
   void _say(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(content: Text(message)));
+    context.showToast(message);
   }
 
   /// Writes settings and templates to a JSON file the user chose.
@@ -230,26 +227,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
     // Checked before the await, so the dialog is shown on a live context.
     if (!mounted) return;
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Replace settings?'),
-        content: Text(
+    final ok = await showAppConfirm(
+      context,
+      title: 'Replace settings?',
+      message:
           'This replaces your current preferences'
           '${parsed.templates.isEmpty ? '' : ' and ${parsed.templates.length} '
                     'saved template(s)'} with the ones in the backup.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Restore'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Restore',
     );
     if (ok != true || !mounted) return;
 
@@ -291,7 +276,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// whatever the user has switched off. Keeping the original is what makes a
   /// switch reversible; rewriting the import in place would not be.
   Future<void> _pickCookiesFile() async {
-    final messenger = ScaffoldMessenger.of(context);
     PlatformFile? picked;
     try {
       picked = await FilePicker.pickFile(
@@ -320,24 +304,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       }
     }
     if (bytes == null || bytes.isEmpty) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text("Couldn't read that file")),
-        );
+      if (mounted) context.showToast("Couldn't read that file");
       return;
     }
     final text = utf8.decode(bytes, allowMalformed: true);
     if (!CookieJar.looksLikeCookieJar(text)) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              'That does not look like a cookies.txt (Netscape format)',
-            ),
-          ),
+      if (mounted) {
+        context.showToast(
+          'That does not look like a cookies.txt (Netscape format)',
         );
+      }
       return;
     }
     try {
@@ -360,24 +336,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           ),
         );
       }
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text(
-              result.wroteSomething
-                  ? 'Cookies saved — ${result.sites} '
-                        '${result.sites == 1 ? "site" : "sites"}'
-                  : result.reason ?? 'Nothing was saved',
-            ),
-          ),
+      if (mounted) {
+        context.showToast(
+          result.wroteSomething
+              ? 'Cookies saved — ${result.sites} '
+                    '${result.sites == 1 ? "site" : "sites"}'
+              : result.reason ?? 'Nothing was saved',
         );
+      }
     } catch (e) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text("Couldn't save the cookies: $e")),
-        );
+      if (mounted) context.showToast("Couldn't save the cookies: $e");
     }
   }
 
@@ -411,7 +379,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// browser specification on `:` and a path cannot survive that. See
   /// `cookie_browser.dart`.
   Future<void> _pickBrowserProfileRoot() async {
-    final messenger = ScaffoldMessenger.of(context);
     String? picked;
     var failed = false;
     try {
@@ -437,11 +404,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final names = await profileNamesIn(picked);
     if (!mounted) return;
     if (names.isEmpty) {
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(content: Text(ProfileProblem.notAProfileRoot.message!)),
-        );
+      if (mounted) context.showToast(ProfileProblem.notAProfileRoot.message!);
       return;
     }
     final settings = ref.read(settingsControllerProvider);
@@ -481,8 +444,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   @override
   Widget build(BuildContext context) {
     final settings = ref.watch(settingsControllerProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Settings')),
+    return AppScaffold(
+      title: 'Settings',
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -495,33 +458,36 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      SegmentedButton<ThemeMode>(
+                      AppSegmented<ThemeMode>(
                         segments: const [
-                          ButtonSegment(
+                          (
                             value: ThemeMode.system,
-                            label: Text('System'),
-                            icon: Icon(Icons.settings_suggest_outlined),
+                            label: 'System',
+                            icon: Icons.settings_suggest_outlined,
+                            enabled: true,
                           ),
-                          ButtonSegment(
+                          (
                             value: ThemeMode.light,
-                            label: Text('Light'),
-                            icon: Icon(Icons.light_mode_outlined),
+                            label: 'Light',
+                            icon: Icons.light_mode_outlined,
+                            enabled: true,
                           ),
-                          ButtonSegment(
+                          (
                             value: ThemeMode.dark,
-                            label: Text('Dark'),
-                            icon: Icon(Icons.dark_mode_outlined),
+                            label: 'Dark',
+                            icon: Icons.dark_mode_outlined,
+                            enabled: true,
                           ),
                         ],
-                        selected: {settings.themeMode},
-                        onSelectionChanged: (s) => unawaited(
-                          _patch(settings.copyWith(themeMode: s.first)),
+                        selected: settings.themeMode,
+                        onSelectionChanged: (mode) => unawaited(
+                          _patch(settings.copyWith(themeMode: mode)),
                         ),
                       ),
                       const SizedBox(height: 16),
                       Text(
                         'Theme color',
-                        style: Theme.of(context).textTheme.labelMedium,
+                        style: context.textStyles.labelMedium,
                       ),
                       const SizedBox(height: 8),
                       Wrap(
@@ -529,7 +495,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         runSpacing: 12,
                         children: [
                           for (final (name, value) in AppSettings.seedOptions)
-                            _SeedSwatch(
+                            AppSeedSwatch(
                               name: name,
                               color: Color(value),
                               selected: settings.seedColor == value,
@@ -548,8 +514,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppListTile(
+                        contentPaddingZero: true,
                         leading: const Icon(Icons.folder_outlined),
                         title: const Text('Download folder'),
                         subtitle: Text(
@@ -563,13 +529,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (settings.downloadRoot.isNotEmpty)
-                              IconButton(
-                                icon: const Icon(Icons.refresh),
+                              AppIconButton(
+                                icon: Icons.refresh,
                                 tooltip: 'Reset to default',
                                 onPressed: _resetDownloadFolder,
                               ),
-                            IconButton(
-                              icon: const Icon(Icons.folder_open),
+                            AppIconButton(
+                              icon: Icons.folder_open,
                               tooltip: settings.downloadRoot.isEmpty
                                   ? 'Choose folder'
                                   : 'Change folder',
@@ -583,14 +549,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         'Videos and audio are saved in separate Video/ and '
                         'Audio/ subfolders. Playlist entries later group into '
                         'one folder per playlist inside the matching one.',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        style: context.textStyles.bodySmall?.copyWith(
+                          color: context.colors.onSurfaceVariant,
                         ),
                       ),
                       const SizedBox(height: 12),
                       Text(
                         'Default video quality',
-                        style: Theme.of(context).textTheme.labelMedium,
+                        style: context.textStyles.labelMedium,
                       ),
                       const SizedBox(height: 8),
                       Wrap(
@@ -598,8 +564,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         runSpacing: 8,
                         children: [
                           for (final t in AppSettings.videoTierOptions)
-                            ChoiceChip(
-                              label: Text(AppSettings.videoTierLabel(t)),
+                            AppChoiceChip(
+                              label: AppSettings.videoTierLabel(t),
                               selected: settings.defaultVideoTier == t,
                               onSelected: (_) => unawaited(
                                 _patch(
@@ -612,7 +578,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       const SizedBox(height: 16),
                       Text(
                         'Default audio quality',
-                        style: Theme.of(context).textTheme.labelMedium,
+                        style: context.textStyles.labelMedium,
                       ),
                       const SizedBox(height: 8),
                       Wrap(
@@ -620,8 +586,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         runSpacing: 8,
                         children: [
                           for (final t in AppSettings.audioTierOptions)
-                            ChoiceChip(
-                              label: Text(AppSettings.audioTierLabel(t)),
+                            AppChoiceChip(
+                              label: AppSettings.audioTierLabel(t),
                               selected: settings.defaultAudioTier == t,
                               onSelected: (_) => unawaited(
                                 _patch(
@@ -631,13 +597,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             ),
                         ],
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         title: const Text('Audio only by default'),
-                        subtitle: const Text(
-                          'Pre-select M4A audio when opening the download '
-                          'format sheet',
-                        ),
+                        subtitle:
+                            'Pre-select M4A audio when opening the download '
+                            'format sheet',
                         value: settings.defaultAudioOnly,
                         onChanged: (v) => unawaited(
                           _patch(settings.copyWith(defaultAudioOnly: v)),
@@ -646,34 +610,31 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       const SizedBox(height: 16),
                       Text(
                         'Subtitle & thumbnail defaults',
-                        style: Theme.of(context).textTheme.labelMedium,
+                        style: context.textStyles.labelMedium,
                       ),
                       const SizedBox(height: 4),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         dense: true,
                         title: const Text('Subtitles next to the file'),
-                        subtitle: const Text('.srt/.vtt sidecar'),
+                        subtitle: '.srt/.vtt sidecar',
                         value: settings.defaultWriteSubs,
                         onChanged: (v) => unawaited(
                           _patch(settings.copyWith(defaultWriteSubs: v)),
                         ),
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         dense: true,
                         title: const Text('Embed subtitles'),
-                        subtitle: const Text('Only when ffmpeg is available'),
+                        subtitle: 'Only when ffmpeg is available',
                         value: settings.defaultEmbedSubs,
                         onChanged: (v) => unawaited(
                           _patch(settings.copyWith(defaultEmbedSubs: v)),
                         ),
                       ),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         dense: true,
                         title: const Text('Include auto-generated captions'),
-                        subtitle: const Text('Machine captions, marked "auto"'),
+                        subtitle: 'Machine captions, marked "auto"',
                         value: settings.defaultIncludeAutoSubs,
                         onChanged: (v) => unawaited(
                           _patch(settings.copyWith(defaultIncludeAutoSubs: v)),
@@ -696,8 +657,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppListTile(
+                        contentPaddingZero: true,
                         leading: const Icon(Icons.cookie_outlined),
                         title: const Text('Cookies (optional)'),
                         subtitle: Text(
@@ -718,8 +679,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             if (settings.cookiesPath.isNotEmpty) ...[
-                              IconButton(
-                                icon: const Icon(Icons.tune),
+                              AppIconButton(
+                                icon: Icons.tune,
                                 tooltip:
                                     _cookieSourceOf(settings) ==
                                         CookieSource.browser
@@ -729,8 +690,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                 onPressed: () =>
                                     context.push('/settings/cookies'),
                               ),
-                              IconButton(
-                                icon: const Icon(Icons.close),
+                              AppIconButton(
+                                icon: Icons.close,
                                 tooltip: 'Remove cookies',
                                 onPressed: () => _removeCookies(settings),
                               ),
@@ -738,8 +699,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               // A browser source is a cookie source too, so it
                               // needs its own way out; the jar buttons above
                               // only appear once a jar exists.
-                              IconButton(
-                                icon: const Icon(Icons.close),
+                              AppIconButton(
+                                icon: Icons.close,
                                 tooltip: 'Stop using browser cookies',
                                 onPressed: () => unawaited(
                                   _patch(
@@ -751,8 +712,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                 ),
                               ),
                             ],
-                            IconButton(
-                              icon: const Icon(Icons.folder_open),
+                            AppIconButton(
+                              icon: Icons.folder_open,
                               tooltip: settings.cookiesPath.isEmpty
                                   ? 'Choose cookies.txt'
                                   : 'Change cookies.txt',
@@ -771,29 +732,26 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                         onBrowse: _pickBrowserProfileRoot,
                       ),
                       const SizedBox(height: 12),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppListTile(
+                        contentPaddingZero: true,
                         leading: const Icon(Icons.save_alt_outlined),
                         title: const Text('Back up settings'),
-                        subtitle: const Text(
-                          'Saves preferences and argument templates to a file',
-                        ),
+                        subtitle: 'Saves preferences and argument templates to a file',
                         onTap: _exportBackup,
                       ),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppListTile(
+                        contentPaddingZero: true,
                         leading: const Icon(Icons.settings_backup_restore),
                         title: const Text('Restore from a backup'),
                         onTap: _importBackup,
                       ),
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppListTile(
+                        contentPaddingZero: true,
                         leading: const Icon(Icons.bug_report_outlined),
                         title: const Text('Copy diagnostics'),
-                        subtitle: const Text(
-                          'Versions, paths and settings for a bug report. '
-                          'Never includes cookies',
-                        ),
+                        subtitle:
+                            'Versions, paths and settings for a bug report. '
+                            'Never includes cookies',
                         onTap: _copyDiagnostics,
                       ),
                     ],
@@ -805,8 +763,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppListTile(
+                        contentPaddingZero: true,
                         leading: const Icon(Icons.terminal_outlined),
                         title: const Text('yt-dlp'),
                         subtitle: Text(
@@ -816,31 +774,25 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               ? 'Not installed'
                               : 'v$_version',
                         ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.refresh),
+                        trailing: AppIconButton(
+                          icon: Icons.refresh,
                           tooltip: 'Check version',
                           onPressed: _versionLoading ? null : _loadVersion,
                         ),
                       ),
                       const SizedBox(height: 8),
-                      FilledButton.icon(
+                      AppButton.icon(
                         onPressed: _updating ? null : _updateEngine,
                         icon: _updating
-                            ? const SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(Icons.system_update_outlined),
+                            ? Icons.hourglass_empty
+                            : Icons.system_update_outlined,
                         label: Text(_updating ? 'Updating…' : 'Update yt-dlp'),
                       ),
                       if (_engineMessage != null) ...[
                         const SizedBox(height: 8),
                         SelectableText(
                           _engineMessage!,
-                          style: Theme.of(context).textTheme.bodySmall,
+                          style: context.textStyles.bodySmall,
                         ),
                       ],
                       const Divider(height: 24),
@@ -858,12 +810,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   title: 'Notifications',
                   child: Column(
                     children: [
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
+                      AppSwitchTile(
                         title: const Text('Download notifications'),
-                        subtitle: const Text(
-                          'Progress and completion alerts (Android 13+ asks for permission)',
-                        ),
+                        subtitle: 'Progress and completion alerts (Android 13+ asks for permission)',
                         value: settings.notificationsEnabled,
                         onChanged: (v) async {
                           var enable = v;
@@ -872,17 +821,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                 .read(notificationServiceProvider)
                                 .requestPermission();
                             if (!enable && context.mounted) {
-                              ScaffoldMessenger.of(context)
-                                ..hideCurrentSnackBar()
-                                ..showSnackBar(
-                                  const SnackBar(
-                                    content: Text(
-                                      'Notification permission was denied. '
-                                      'Allow it in system settings to get '
-                                      'download alerts.',
-                                    ),
-                                  ),
-                                );
+                              context.showToast(
+                                'Notification permission was denied. '
+                                'Allow it in system settings to get '
+                                'download alerts.',
+                              );
                             }
                           }
                           await _patch(
@@ -903,13 +846,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                                   success: true,
                                   detail: 'You will see progress here during downloads.',
                                 );
-                            ScaffoldMessenger.of(context)
-                              ..hideCurrentSnackBar()
-                              ..showSnackBar(
-                                const SnackBar(
-                                  content: Text('Test notification sent'),
-                                ),
-                              );
+                            context.showToast('Test notification sent');
                           },
                           icon: const Icon(Icons.notifications_outlined),
                           label: const Text('Send test notification'),
@@ -1014,28 +951,20 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return ExpansionTile(
-      tilePadding: EdgeInsets.zero,
-      childrenPadding: EdgeInsets.zero,
-      title: const Text('Advanced'),
-      subtitle: Text(
-        widget.settings.extraArgs.trim().isEmpty &&
-                widget.settings.outputTemplate.trim().isEmpty
-            ? 'Extra yt-dlp flags and file naming'
-            : 'Custom flags and template set',
-        style: theme.textTheme.bodySmall?.copyWith(
-          color: scheme.onSurfaceVariant,
-        ),
-      ),
+    return AppExpander(
+      title: 'Advanced',
+      subtitle:
+          widget.settings.extraArgs.trim().isEmpty &&
+              widget.settings.outputTemplate.trim().isEmpty
+          ? 'Extra yt-dlp flags and file naming'
+          : 'Custom flags and template set',
       children: [
         // A TabBar rather than a bare swipe: a carousel with no visible tab
         // strip is undiscoverable, and the strip is also what makes it obvious
         // that the template moved rather than disappeared.
-        TabBar(
-          controller: _tabController,
-          tabs: [for (final title in _pages) Tab(text: title)],
+        AppTabStrip(
+          tabs: _pages,
+          tabController: _tabController,
           onTap: (i) => _pageController.animateToPage(
             i,
             duration: const Duration(milliseconds: 200),
@@ -1050,7 +979,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
           controller: _pageController,
           pages: [
             for (var i = 0; i < _pages.length; i++)
-              _buildPage(i, theme, scheme),
+              _buildPage(i, context.textStyles, context.colors),
           ],
           fallbackHeight: _fallbackHeight,
           // Capped to the window rather than left unbounded: the carousel is
@@ -1090,13 +1019,13 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
   /// height, and a short page simply has space under it.
   static const double _fallbackHeight = 700;
 
-  Widget _buildPage(int index, ThemeData theme, ColorScheme scheme) =>
+  Widget _buildPage(int index, TextTheme theme, ColorScheme scheme) =>
       switch (index) {
         1 => _buildTemplatePage(theme, scheme),
         _ => _buildFlagsPage(theme, scheme),
       };
 
-  Widget _buildFlagsPage(ThemeData theme, ColorScheme scheme) {
+  Widget _buildFlagsPage(TextTheme theme, ColorScheme scheme) {
     final store = ref.watch(templateStoreProvider);
     final issues = _issues;
     return Column(
@@ -1104,30 +1033,20 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
       children: [
         Align(
           alignment: Alignment.centerLeft,
-          child: Text('Extra yt-dlp flags', style: theme.textTheme.labelMedium),
+          child: Text('Extra yt-dlp flags', style: theme.labelMedium),
         ),
         const SizedBox(height: 4),
         Text(
           'Added to every download. Flags the app sets itself — output path, '
           'format, playlist — are ignored so a download cannot escape its '
           'folder.',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
+          style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 8),
-        TextField(
+        AppTextField(
           controller: _args,
-          minLines: 1,
-          maxLines: 4,
+          placeholder: '--concurrent-fragments 4 --embed-metadata',
           onChanged: (_) => setState(() {}),
-          style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: '--concurrent-fragments 4 --embed-metadata',
-            border: const OutlineInputBorder(),
-            errorText: issues.where((i) => i.isBlocking).firstOrNull?.message,
-          ),
         ),
         for (final issue in issues.where((i) => !i.isBlocking))
           Padding(
@@ -1144,7 +1063,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
                 Expanded(
                   child: Text(
                     issue.message,
-                    style: theme.textTheme.bodySmall?.copyWith(
+                    style: theme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
                     ),
                   ),
@@ -1155,15 +1074,11 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         const SizedBox(height: 12),
         Row(
           children: [
-            Expanded(
-              child: Text(
-                'Saved templates',
-                style: theme.textTheme.labelMedium,
-              ),
-            ),
+            Expanded(child: Text('Saved templates', style: theme.labelMedium)),
             if (store.templates.isNotEmpty)
-              TextButton(
+              AppButton(
                 onPressed: () => store.clear(),
+                variant: AppButtonVariant.plain,
                 child: const Text('Clear all'),
               ),
           ],
@@ -1172,9 +1087,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         if (store.templates.isEmpty)
           Text(
             'None saved yet.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
+            style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           )
         else
           Wrap(
@@ -1182,11 +1095,11 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
             runSpacing: 8,
             children: [
               for (final t in store.templates)
-                InputChip(
-                  label: Text(t.name),
+                AppInputChip(
+                  label: t.name,
                   onPressed: () => setState(() => _args.text = t.args),
                   onDeleted: () => store.remove(t.name),
-                  deleteButtonTooltipMessage: 'Delete ${t.name}',
+                  deleteTooltip: 'Delete ${t.name}',
                 ),
             ],
           ),
@@ -1200,41 +1113,32 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
 
   /// The file name page: everything about the output template, and nothing
   /// else, so it is short enough not to need scrolling on most screens.
-  Widget _buildTemplatePage(ThemeData theme, ColorScheme scheme) {
-    final templateErrors = _templateIssues;
+  Widget _buildTemplatePage(TextTheme theme, ColorScheme scheme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Align(
           alignment: Alignment.centerLeft,
-          child: Text('File name template', style: theme.textTheme.labelMedium),
+          child: Text('File name template', style: theme.labelMedium),
         ),
         const SizedBox(height: 4),
         Text(
           'yt-dlp output template. Must end in an extension so the app can tell '
           'the media file from its sidecars.',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
+          style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 8),
-        TextField(
+        AppTextField(
           controller: _template,
+          placeholder: OutputTemplate.defaultTemplate,
           onChanged: (_) => setState(() {}),
-          style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: OutputTemplate.defaultTemplate,
-            border: const OutlineInputBorder(),
-            errorText: templateErrors.isEmpty ? null : templateErrors.first,
-          ),
         ),
         const SizedBox(height: 8),
         Text(
           'Example: ${OutputTemplate(_template.text).preview(video: _sampleVideo)}',
           maxLines: 2,
           overflow: TextOverflow.ellipsis,
-          style: theme.textTheme.bodySmall?.copyWith(
+          style: theme.bodySmall?.copyWith(
             fontFamily: 'monospace',
             color: scheme.onSurfaceVariant,
           ),
@@ -1245,8 +1149,8 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
           runSpacing: 8,
           children: [
             for (final (field, label) in OutputTemplate.knownFields)
-              ActionChip(
-                label: Text(label),
+              AppActionChip(
+                label: label,
                 onPressed: () => setState(() => _insertField(field)),
               ),
           ],
@@ -1257,13 +1161,14 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
             Expanded(
               child: Text(
                 describeTemplate(_template.text),
-                style: theme.textTheme.bodySmall?.copyWith(
+                style: theme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
                 ),
               ),
             ),
-            TextButton(
+            AppButton(
               onPressed: () => setState(() => _template.text = ''),
+              variant: AppButtonVariant.plain,
               child: const Text('Reset'),
             ),
           ],
@@ -1348,15 +1253,15 @@ Widget _prefChips(
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        Text(label, style: context.textStyles.bodySmall),
         const SizedBox(height: 6),
         Wrap(
           spacing: 8,
           runSpacing: 8,
           children: [
             for (final o in options)
-              ChoiceChip(
-                label: Text(o.toUpperCase()),
+              AppChoiceChip(
+                label: o.toUpperCase(),
                 selected: selected == o,
                 onSelected: (_) => onChanged(o),
               ),
@@ -1380,8 +1285,8 @@ Widget _prefSlider(
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text('$label: $value', style: Theme.of(context).textTheme.bodyMedium),
-      Slider(
+      Text('$label: $value', style: context.textStyles.bodyMedium),
+      AppSlider(
         value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
         min: min.toDouble(),
         max: max.toDouble(),
@@ -1393,8 +1298,9 @@ Widget _prefSlider(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(
           helper,
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: context.textStyles.bodySmall?.copyWith(
+            color: context.colors.onSurfaceVariant,
+          ),
         ),
       ),
     ],
@@ -1425,7 +1331,7 @@ class _NetworkSection extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final prefs = settings.ytPrefs;
-    final theme = Theme.of(context);
+    final themeOf = Theme.of(context);
     void patch(YtPrefs next) => _patchPrefs(settings, onPatch, next);
 
     return _Section(
@@ -1436,8 +1342,8 @@ class _NetworkSection extends ConsumerWidget {
           Text(
             'Route every download through a proxy, and pace requests so a busy '
             'host is not hammered.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+            style: themeOf.textTheme.bodySmall?.copyWith(
+              color: themeOf.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 12),
@@ -1499,18 +1405,17 @@ class _NetworkSection extends ConsumerWidget {
             '${YtPrefs.maxRetries}. A raw --retries in the extra-arguments '
             'field still wins: yt-dlp lets the last occurrence of a flag '
             'take effect.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+            style: themeOf.textTheme.bodySmall?.copyWith(
+              color: themeOf.colorScheme.onSurfaceVariant,
             ),
           ),
           const SizedBox(height: 4),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             title: const Text('Unmetered connections only'),
             subtitle: Text(
               'New downloads wait for Wi-Fi or Ethernet. A download '
               'already running is never interrupted.',
-              style: theme.textTheme.bodySmall,
+              style: themeOf.textTheme.bodySmall,
             ),
             value: settings.wifiOnly,
             onChanged: (v) =>
@@ -1593,8 +1498,8 @@ class _PostProcessingBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final themeOf = Theme.of(context);
+    final scheme = themeOf.colorScheme;
     final available = canPost ?? false;
     final probePending = canPost == null;
     // Shown when postprocessing is configured but the capability is missing,
@@ -1615,7 +1520,7 @@ class _PostProcessingBody extends StatelessWidget {
             'ffmpeg rewrites the file after it downloads: converting the '
             'container, or writing tags into it. Each of these needs ffmpeg '
             'and ffprobe.',
-            style: theme.textTheme.bodySmall?.copyWith(
+            style: themeOf.textTheme.bodySmall?.copyWith(
               color: scheme.onSurfaceVariant,
             ),
           ),
@@ -1626,7 +1531,7 @@ class _PostProcessingBody extends StatelessWidget {
                 probePending
                     ? 'Looking for ffmpeg and ffprobe…'
                     : 'ffprobe is not available here, so these are disabled.',
-                style: theme.textTheme.bodySmall?.copyWith(
+                style: themeOf.textTheme.bodySmall?.copyWith(
                   color: probePending ? scheme.onSurfaceVariant : scheme.error,
                 ),
               ),
@@ -1637,11 +1542,12 @@ class _PostProcessingBody extends StatelessWidget {
               child: Text(
                 'Post-processing is switched on but ffprobe is not '
                 'available, so these flags are left off the command line.',
-                style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+                style: themeOf.textTheme.bodySmall?.copyWith(
+                  color: scheme.error,
+                ),
               ),
             ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Convert to audio only'),
             subtitle: Text(
@@ -1650,9 +1556,8 @@ class _PostProcessingBody extends StatelessWidget {
                   : unavailableReason,
             ),
             value: prefs.extractAudio,
-            onChanged: available
-                ? (v) => patch(prefs.copyWith(extractAudio: v))
-                : null,
+            enabled: available,
+            onChanged: (v) => patch(prefs.copyWith(extractAudio: v)),
           ),
           if (prefs.extractAudio)
             _prefChips(
@@ -1662,8 +1567,7 @@ class _PostProcessingBody extends StatelessWidget {
               selected: prefs.audioFormat,
               onChanged: (v) => patch(prefs.copyWith(audioFormat: v)),
             ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Remux (no re-encode)'),
             subtitle: Text(
@@ -1672,9 +1576,8 @@ class _PostProcessingBody extends StatelessWidget {
                   : unavailableReason,
             ),
             value: prefs.remuxVideo.isNotEmpty,
-            onChanged: available
-                ? (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : ''))
-                : null,
+            enabled: available,
+            onChanged: (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : '')),
           ),
           if (prefs.remuxVideo.isNotEmpty)
             _prefChips(
@@ -1684,8 +1587,7 @@ class _PostProcessingBody extends StatelessWidget {
               selected: prefs.remuxVideo,
               onChanged: (v) => patch(prefs.copyWith(remuxVideo: v)),
             ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Embed metadata'),
             subtitle: Text(
@@ -1694,33 +1596,28 @@ class _PostProcessingBody extends StatelessWidget {
                   : unavailableReason,
             ),
             value: prefs.embedMetadata,
-            onChanged: available
-                ? (v) => patch(prefs.copyWith(embedMetadata: v))
-                : null,
+            enabled: available,
+            onChanged: (v) => patch(prefs.copyWith(embedMetadata: v)),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Embed chapters'),
             subtitle: Text(
               available ? 'Chapter markers in the file' : unavailableReason,
             ),
             value: prefs.embedChapters,
-            onChanged: available
-                ? (v) => patch(prefs.copyWith(embedChapters: v))
-                : null,
+            enabled: available,
+            onChanged: (v) => patch(prefs.copyWith(embedChapters: v)),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Remove sponsor segments'),
             subtitle: Text(
               available ? 'Cuts out SponsorBlock segments' : unavailableReason,
             ),
             value: prefs.sponsorblockRemove,
-            onChanged: available
-                ? (v) => patch(prefs.copyWith(sponsorblockRemove: v))
-                : null,
+            enabled: available,
+            onChanged: (v) => patch(prefs.copyWith(sponsorblockRemove: v)),
           ),
         ],
       ),
@@ -1759,64 +1656,47 @@ class _QueueSection extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          DropdownButtonFormField<int?>(
-            initialValue: settings.maxConcurrency,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              isDense: true,
-              labelText: 'Simultaneous downloads',
-              helperText:
-                  'Higher values can slow a phone down; 1–2 suits most '
-                  'connections',
-              border: OutlineInputBorder(),
-            ),
+          AppDropdown<int?>(
+            value: settings.maxConcurrency,
+            label: 'Simultaneous downloads',
+            helper:
+                'Higher values can slow a phone down; 1–2 suits most '
+                'connections',
             items: [
-              const DropdownMenuItem(
-                value: null,
-                child: Text('Automatic (1 on mobile, 2 on desktop)'),
-              ),
+              (value: null, label: 'Automatic (1 on mobile, 2 on desktop)'),
               for (
                 var n = AppSettings.concurrencyMin;
                 n <= AppSettings.concurrencyMax;
                 n++
               )
-                DropdownMenuItem(value: n, child: Text('$n')),
+                (value: n, label: '$n'),
             ],
             onChanged: (v) => unawaited(
               onPatch(settings.copyWith(maxConcurrencySetter: () => v)),
             ),
           ),
           const SizedBox(height: 12),
-          DropdownButtonFormField<int>(
+          AppDropdown<int>(
             // Snapped to the option set rather than passed through. The stored
             // value is clamped on read but not rounded, so a restored backup or
             // a hand-edited box holding (say) 33 produced a value matching no
             // item, which trips the "exactly one item must have this value"
             // assertion and takes the page down in debug.
-            initialValue: _queueSizeOptions.contains(settings.maxQueueSize)
+            value: _queueSizeOptions.contains(settings.maxQueueSize)
                 ? settings.maxQueueSize
                 : _defaultQueueSizeOption,
-            isExpanded: true,
-            decoration: const InputDecoration(
-              isDense: true,
-              labelText: 'Remembered queue entries',
-              helperText:
-                  'How many downloads survive an app restart. Raise it for '
-                  'large playlists',
-              border: OutlineInputBorder(),
-            ),
-            items: [
-              for (final n in _queueSizeOptions)
-                DropdownMenuItem(value: n, child: Text('$n')),
-            ],
+            label: 'Remembered queue entries',
+            helper:
+                'How many downloads survive an app restart. Raise it for '
+                'large playlists',
+            items: [for (final n in _queueSizeOptions) (value: n, label: '$n')],
             onChanged: (v) => unawaited(
               onPatch(
                 settings.copyWith(maxQueueSize: v ?? _defaultQueueSizeOption),
               ),
             ),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Record livestreams from the start'),
             value: prefs.liveFromStart,
@@ -1826,13 +1706,11 @@ class _QueueSection extends ConsumerWidget {
               prefs.copyWith(liveFromStart: v),
             ),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Skip already-downloaded videos'),
-            subtitle: const Text(
-              'Keeps a ledger in the app folder and skips anything in it',
-            ),
+            subtitle:
+                'Keeps a ledger in the app folder and skips anything in it',
             value: prefs.downloadArchive,
             onChanged: (v) => _patchPrefs(
               settings,
@@ -1840,14 +1718,12 @@ class _QueueSection extends ConsumerWidget {
               prefs.copyWith(downloadArchive: v),
             ),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
             title: const Text('Write without a .part file'),
-            subtitle: const Text(
-              'No resume after a failure, but the file is visible while '
-              'downloading',
-            ),
+            subtitle:
+                'No resume after a failure, but the file is visible while '
+                'downloading',
             value: prefs.noPart,
             onChanged: (v) =>
                 _patchPrefs(settings, onPatch, prefs.copyWith(noPart: v)),
@@ -1899,15 +1775,9 @@ class _SaveTemplateButtonState extends ConsumerState<_SaveTemplateButton> {
     );
     if (!mounted) return;
     _name.clear();
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            ok ? 'Saved template "$name"' : 'Could not save the template',
-          ),
-        ),
-      );
+    context.showToast(
+      ok ? 'Saved template "$name"' : 'Could not save the template',
+    );
   }
 
   @override
@@ -2014,8 +1884,8 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final themeOf = Theme.of(context);
+    final scheme = themeOf.colorScheme;
     final blocked = unavailableReason();
     final selected = CookieBrowser.byArgument(settings.cookieBrowser);
     final source = resolveCookieSource(
@@ -2036,33 +1906,29 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (blocked != null)
-            Text(blocked, style: theme.textTheme.bodySmall)
+            Text(blocked, style: themeOf.textTheme.bodySmall)
           else ...[
             Text(
               'Reads the login you already have in a browser, so there is no '
               'jar to export. yt-dlp decrypts it itself — the app never sees '
               'a cookie value.',
-              style: theme.textTheme.bodyMedium,
+              style: themeOf.textTheme.bodyMedium,
             ),
             const SizedBox(height: 4),
             Text(
               'yt-dlp can only read Chromium cookies on Linux when its '
               'decryption extras are installed; if a download fails with a '
               'decryption error, that is what is missing.',
-              style: theme.textTheme.bodySmall,
+              style: themeOf.textTheme.bodySmall,
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              initialValue: selected?.argument ?? '',
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Browser',
-                border: OutlineInputBorder(),
-              ),
+            AppDropdown<String>(
+              value: selected?.argument ?? '',
+              label: 'Browser',
               items: [
-                const DropdownMenuItem(value: '', child: Text('None')),
+                (value: '', label: 'None'),
                 for (final b in CookieBrowser.values)
-                  DropdownMenuItem(value: b.argument, child: Text(b.label)),
+                  (value: b.argument, label: b.label),
               ],
               onChanged: (value) => _pick(selected, value ?? ''),
             ),
@@ -2076,15 +1942,15 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
                 child: Text(
                   '${selected.label} cookies can only be read on macOS. '
                   'Picking another browser avoids a download that cannot work.',
-                  style: theme.textTheme.bodySmall?.copyWith(
+                  style: themeOf.textTheme.bodySmall?.copyWith(
                     color: scheme.error,
                   ),
                 ),
               ),
             ],
             const SizedBox(height: 12),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
+            AppListTile(
+              contentPaddingZero: true,
               dense: true,
               title: const Text('Profile folder'),
               subtitle: Text(
@@ -2103,35 +1969,28 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
             ),
             if (selected != null) ...[
               const SizedBox(height: 4),
-              DropdownButtonFormField<String>(
-                initialValue: profiles.contains(settings.cookieBrowserProfile)
+              AppDropdown<String>(
+                value: profiles.contains(settings.cookieBrowserProfile)
                     ? settings.cookieBrowserProfile
                     : '',
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Profile',
-                  border: OutlineInputBorder(),
-                ),
+                label: 'Profile',
+                enabled: profiles.isNotEmpty,
                 items: [
-                  const DropdownMenuItem(
-                    value: '',
-                    child: Text("The browser's own default"),
-                  ),
-                  for (final p in profiles)
-                    DropdownMenuItem(value: p, child: Text(p)),
+                  (value: '', label: "The browser's own default"),
+                  for (final p in profiles) (value: p, label: p),
                 ],
-                onChanged: profiles.isEmpty
-                    ? null
-                    : (value) => unawaited(
-                        widget.onPatch(
-                          settings.copyWith(cookieBrowserProfile: value ?? ''),
-                        ),
-                      ),
+                // `enabled` above disables the control when there is nothing
+                // to choose from, so this callback always gets a value.
+                onChanged: (value) => unawaited(
+                  widget.onPatch(
+                    settings.copyWith(cookieBrowserProfile: value ?? ''),
+                  ),
+                ),
               ),
               if (scanning)
                 const Padding(
                   padding: EdgeInsets.only(top: 8),
-                  child: LinearProgressIndicator(),
+                  child: AppLinearProgress(),
                 )
               else if (profiles.isEmpty)
                 Padding(
@@ -2143,7 +2002,7 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
                               'default, which is right for most people.'
                         : (ProfileProblem.notAProfileRoot.message ??
                               'That folder has no browser profiles in it.'),
-                    style: theme.textTheme.bodySmall?.copyWith(
+                    style: themeOf.textTheme.bodySmall?.copyWith(
                       color: scheme.error,
                     ),
                   ),
@@ -2163,7 +2022,7 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
                       ? 'That is a path, not a profile name, so yt-dlp was '
                             'not pointed at it: ${profileProblem.message}'
                       : 'That profile is being ignored: ${profileProblem.message}',
-                  style: theme.textTheme.bodySmall?.copyWith(
+                  style: themeOf.textTheme.bodySmall?.copyWith(
                     color: scheme.error,
                   ),
                 ),
@@ -2177,7 +2036,7 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
                   'yt-dlp is given one cookie source, never two — with both, a '
                   'site you switched off would still go out from the browser. '
                   'Turn this off to go back to the file.',
-                  style: theme.textTheme.bodySmall,
+                  style: themeOf.textTheme.bodySmall,
                 ),
               ),
             if (source == CookieSource.browser &&
@@ -2190,7 +2049,7 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
                   'you switched off are still stored, but nothing is filtering '
                   'them out of a browser\'s cookies — those switches have no '
                   'effect until you turn this off.',
-                  style: theme.textTheme.bodySmall?.copyWith(
+                  style: themeOf.textTheme.bodySmall?.copyWith(
                     color: scheme.error,
                   ),
                 ),
@@ -2218,19 +2077,7 @@ class _Section extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 12),
-            child,
-          ],
-        ),
-      ),
-    );
+    return AppSection(title: title, child: child);
   }
 }
 
@@ -2250,21 +2097,21 @@ class _AppUpdateRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (checking) {
-      return const ListTile(
-        contentPadding: EdgeInsets.zero,
+      return AppListTile(
+        contentPaddingZero: true,
         leading: Icon(Icons.system_update_alt_outlined),
         title: Text('App version'),
-        subtitle: Text('Checking…'),
+        subtitle: 'Checking…',
       );
     }
     if (error != null) {
-      return ListTile(
-        contentPadding: EdgeInsets.zero,
+      return AppListTile(
+        contentPaddingZero: true,
         leading: const Icon(Icons.error_outline),
         title: const Text('App version'),
-        subtitle: Text('Could not check for updates: $error'),
-        trailing: IconButton(
-          icon: const Icon(Icons.refresh),
+        subtitle: 'Could not check for updates: $error',
+        trailing: AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Retry',
           onPressed: onRetry,
         ),
@@ -2277,96 +2124,52 @@ class _AppUpdateRow extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return switch (result!.status) {
-      AppUpdateStatus.updateAvailable => ListTile(
-        contentPadding: EdgeInsets.zero,
+      AppUpdateStatus.updateAvailable => AppListTile(
+        contentPaddingZero: true,
         leading: const Icon(Icons.system_update_alt_outlined),
         title: const Text('Update available'),
-        subtitle: Text(
-          'Version ${result!.release!.version} is out — you have an older build.',
-        ),
-        trailing: TextButton(
+        subtitle:
+            'Version ${result!.release!.version} is out — you have an older build.',
+        trailing: AppButton(
           onPressed: () => launchUrl(Uri.parse(result!.release!.url)),
+          variant: AppButtonVariant.plain,
           child: const Text('Download'),
         ),
       ),
-      AppUpdateStatus.upToDate => ListTile(
-        contentPadding: EdgeInsets.zero,
+      AppUpdateStatus.upToDate => AppListTile(
+        contentPaddingZero: true,
         leading: const Icon(Icons.check_circle_outline),
         title: const Text('App version'),
-        subtitle: const Text('Up to date'),
-        trailing: IconButton(
-          icon: const Icon(Icons.refresh),
+        subtitle: 'Up to date',
+        trailing: AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Check again',
           onPressed: onRetry,
         ),
       ),
-      AppUpdateStatus.unreachable => ListTile(
-        contentPadding: EdgeInsets.zero,
+      AppUpdateStatus.unreachable => AppListTile(
+        contentPaddingZero: true,
         leading: const Icon(Icons.cloud_off_outlined),
         title: const Text('App version'),
-        subtitle: const Text('Could not reach the update server'),
-        trailing: IconButton(
-          icon: const Icon(Icons.refresh),
+        subtitle: 'Could not reach the update server',
+        trailing: AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Retry',
           onPressed: onRetry,
         ),
       ),
-      AppUpdateStatus.unknownCurrent => ListTile(
-        contentPadding: EdgeInsets.zero,
+      AppUpdateStatus.unknownCurrent => AppListTile(
+        contentPaddingZero: true,
         leading: const Icon(Icons.help_outline),
         title: const Text('App version'),
-        subtitle: const Text('Version unknown outside a release build'),
-        trailing: IconButton(
-          icon: const Icon(Icons.refresh),
+        subtitle: 'Version unknown outside a release build',
+        trailing: AppIconButton(
+          icon: Icons.refresh,
           tooltip: 'Retry',
           onPressed: onRetry,
         ),
       ),
     };
-  }
-}
-
-class _SeedSwatch extends StatelessWidget {
-  const _SeedSwatch({
-    required this.name,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-  final String name;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Column(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: color,
-              shape: BoxShape.circle,
-              border: selected
-                  ? Border.all(
-                      color: Theme.of(context).colorScheme.onSurface,
-                      width: 3,
-                    )
-                  : null,
-            ),
-            child: selected
-                ? const Icon(Icons.check, color: Colors.white)
-                : null,
-          ),
-          const SizedBox(height: 4),
-          Text(name, style: Theme.of(context).textTheme.labelSmall),
-        ],
-      ),
-    );
   }
 }
 
@@ -2403,7 +2206,6 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
   }
 
   Future<void> _install() async {
-    final messenger = ScaffoldMessenger.of(context);
     setState(() {
       _installing = true;
       _error = null;
@@ -2422,11 +2224,7 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
         _ejs = info;
         _installing = false;
       });
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(content: Text('JavaScript runtime installed')),
-        );
+      if (mounted) context.showToast('JavaScript runtime installed');
     } on EjsInstallException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -2449,8 +2247,8 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final themeOf = Theme.of(context);
+    final scheme = themeOf.colorScheme;
     final yt = widget.settings.youtube;
     final ejs = _ejs;
 
@@ -2463,13 +2261,13 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
       children: [
         Align(
           alignment: Alignment.centerLeft,
-          child: Text('YouTube', style: theme.textTheme.labelMedium),
+          child: Text('YouTube', style: themeOf.textTheme.labelMedium),
         ),
         const SizedBox(height: 4),
         Text(
           'YouTube hides formats behind a proof-of-origin token, which yt-dlp '
           'obtains with a small JavaScript component.',
-          style: theme.textTheme.bodySmall?.copyWith(
+          style: themeOf.textTheme.bodySmall?.copyWith(
             color: scheme.onSurfaceVariant,
           ),
         ),
@@ -2487,17 +2285,18 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
             Expanded(
               child: Text(
                 ejs?.summary ?? 'Checking the JavaScript runtime…',
-                style: theme.textTheme.bodySmall,
+                style: themeOf.textTheme.bodySmall,
               ),
             ),
             if (!_installing)
-              TextButton(
+              AppButton(
                 onPressed: _install,
+                variant: AppButtonVariant.plain,
                 child: Text(ejs?.isUsable == true ? 'Update' : 'Install'),
               ),
           ],
         ),
-        if (_installing) const LinearProgressIndicator(),
+        if (_installing) const AppLinearProgress(),
         if (ejs?.isUsable == true)
           Align(
             alignment: Alignment.centerLeft,
@@ -2511,16 +2310,16 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
               _error!,
-              style: theme.textTheme.bodySmall?.copyWith(color: scheme.error),
+              style: themeOf.textTheme.bodySmall?.copyWith(color: scheme.error),
             ),
           ),
         const Divider(height: 28),
-        Text('Extra player clients', style: theme.textTheme.labelSmall),
+        Text('Extra player clients', style: themeOf.textTheme.labelSmall),
         const SizedBox(height: 4),
         Text(
           'Some formats are only offered to particular clients. Adding more can '
           'unlock them, at the cost of more requests to YouTube.',
-          style: theme.textTheme.bodySmall?.copyWith(
+          style: themeOf.textTheme.bodySmall?.copyWith(
             color: scheme.onSurfaceVariant,
           ),
         ),
@@ -2531,8 +2330,8 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
           children: [
             for (final client in YoutubeClient.values)
               if (client != YoutubeClient.web)
-                FilterChip(
-                  label: Text(client.label),
+                AppFilterChip(
+                  label: client.label,
                   selected: yt.extraClients.contains(client),
                   onSelected: (v) => patch(
                     yt.copyWith(

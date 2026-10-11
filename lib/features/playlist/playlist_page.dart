@@ -10,8 +10,10 @@ import '../../core/models/playlist_paging.dart';
 import '../../core/models/settings_model.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
+import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
 import '../../services/ytdlp/ytdlp_service.dart';
+import '../../widgets/platform/platform.dart';
 
 /// Lets the user pick which entries of a playlist or channel to download.
 ///
@@ -236,17 +238,15 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
     final visible = _visible;
     final chosenCount = _selected.length;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(playlist.kind.label),
-        actions: [
-          IconButton(
-            onPressed: () => _selectAllVisible(selected: !_allVisibleSelected),
-            icon: Icon(_allVisibleSelected ? Icons.deselect : Icons.select_all),
-            tooltip: _allVisibleSelected ? 'Clear selection' : 'Select all',
-          ),
-        ],
-      ),
+    return AppScaffold(
+      title: playlist.kind.label,
+      actions: [
+        AppIconButton(
+          onPressed: () => _selectAllVisible(selected: !_allVisibleSelected),
+          icon: _allVisibleSelected ? Icons.deselect : Icons.select_all,
+          tooltip: _allVisibleSelected ? 'Clear selection' : 'Select all',
+        ),
+      ],
       body: SafeArea(
         child: Center(
           child: ConstrainedBox(
@@ -285,12 +285,13 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
           ),
         ),
       ),
-      bottomNavigationBar: _buildBottomBar(chosenCount),
+      bottomBar: _buildBottomBar(chosenCount),
     );
   }
 
   Widget _buildHeader(PlaylistInfo playlist) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final scheme = context.colors;
     final notice = playlist.paging.truncationNotice(playlist.count);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -299,9 +300,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
         children: [
           Text(
             playlist.title,
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w700,
-            ),
+            style: theme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
           Text(
@@ -311,9 +310,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
               if (playlist.totalDuration > 0)
                 formatPlaylistDuration(playlist.totalDuration),
             ].join(' · '),
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
           // The count above counts what is *listed*. When the listing is a
           // slice, this says so next to it — a 200-video channel shown as
@@ -328,14 +325,14 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
                   Icon(
                     Icons.info_outline,
                     size: 15,
-                    color: theme.colorScheme.onSurfaceVariant,
+                    color: scheme.onSurfaceVariant,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       notice,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
+                      style: theme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -354,7 +351,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   bool get _buildsLoadMore => _playlist.paging.hasMore || _loadError != null;
 
   Widget _buildLoadMore() {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
       child: Column(
@@ -366,22 +363,15 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
               child: Text(
                 _loadError!,
                 textAlign: TextAlign.center,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.error,
-                ),
+                style: theme.bodySmall?.copyWith(color: context.colors.error),
               ),
             ),
-          OutlinedButton.icon(
-            // Disabled while in flight so a double tap cannot fire two
-            // requests for the same slice and duplicate its entries.
+          // Disabled while in flight so a double tap cannot fire two
+          // requests for the same slice and duplicate its entries.
+          AppButton.icon(
             onPressed: _loadingMore ? null : _loadMore,
-            icon: _loadingMore
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.expand_more),
+            icon: Icons.expand_more,
+            variant: AppButtonVariant.outlined,
             label: Text(_loadingMore ? 'Loading…' : 'Load more'),
           ),
         ],
@@ -390,7 +380,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   }
 
   Widget _buildSearch(int visibleCount) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
     final total = _playlist.count;
     final filtered = visibleCount != total;
     return Padding(
@@ -398,33 +388,28 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          TextField(
+          AppTextField(
             controller: _search,
+            placeholder: 'Filter videos',
             onChanged: (v) => setState(() => _query = v),
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              isDense: true,
-              prefixIcon: const Icon(Icons.search, size: 20),
-              hintText: 'Filter videos',
-              border: const OutlineInputBorder(),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      onPressed: () {
-                        _search.clear();
-                        setState(() => _query = '');
-                      },
-                    ),
-            ),
+            prefix: const Icon(Icons.search, size: 20),
+            suffix: _query.isEmpty
+                ? null
+                : AppIconButton(
+                    icon: Icons.close,
+                    onPressed: () {
+                      _search.clear();
+                      setState(() => _query = '');
+                    },
+                  ),
           ),
           if (filtered)
             Padding(
               padding: const EdgeInsets.only(top: 6, left: 4),
               child: Text(
                 'Showing $visibleCount of $total',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                style: theme.bodySmall?.copyWith(
+                  color: context.colors.onSurfaceVariant,
                 ),
               ),
             ),
@@ -445,22 +430,24 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SegmentedButton<FormatKind>(
+          AppSegmented<FormatKind>(
             segments: const [
-              ButtonSegment(
+              (
                 value: FormatKind.video,
-                icon: Icon(Icons.videocam_outlined),
-                label: Text('Video'),
+                label: 'Video',
+                icon: Icons.videocam_outlined,
+                enabled: true,
               ),
-              ButtonSegment(
+              (
                 value: FormatKind.audio,
-                icon: Icon(Icons.audiotrack_outlined),
-                label: Text('Audio'),
+                label: 'Audio',
+                icon: Icons.audiotrack_outlined,
+                enabled: true,
               ),
             ],
-            selected: {_kind},
-            onSelectionChanged: (s) => setState(() {
-              _kind = s.first;
+            selected: _kind,
+            onSelectionChanged: (v) => setState(() {
+              _kind = v;
               // The tier menus hold different units, so reset to the matching
               // default rather than carrying a height into a bitrate cap.
               final settings = ref.read(settingsControllerProvider);
@@ -477,55 +464,44 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
             runSpacing: 8,
             children: [
               for (final tier in tiers)
-                ChoiceChip(
-                  label: Text(
-                    isAudio
-                        ? AppSettings.audioTierLabel(tier)
-                        : AppSettings.videoTierLabel(tier),
-                  ),
+                AppChoiceChip(
+                  label: isAudio
+                      ? AppSettings.audioTierLabel(tier)
+                      : AppSettings.videoTierLabel(tier),
                   selected: _tier == tier,
                   onSelected: (_) => setState(() => _tier = tier),
                 ),
             ],
           ),
           const SizedBox(height: 4),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
+            title: const Text('Save subtitles'),
+            subtitle: _includeAuto
+                ? 'Including auto-generated captions, all languages'
+                : 'Manually authored tracks, all languages',
             value: _writeSubs,
             onChanged: (v) => setState(() => _writeSubs = v),
-            title: const Text('Save subtitles'),
-            subtitle: Text(
-              _includeAuto
-                  ? 'Including auto-generated captions, all languages'
-                  : 'Manually authored tracks, all languages',
-            ),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
-            value: _includeAuto,
-            onChanged: _writeSubs
-                ? (v) => setState(() => _includeAuto = v)
-                : null,
             title: const Text('Include auto-generated captions'),
+            value: _includeAuto,
+            enabled: _writeSubs,
+            onChanged: (v) => setState(() => _includeAuto = v),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
+          AppSwitchTile(
             dense: true,
-            value: _embedSubs,
-            // Audio cannot carry a subtitle track, and embedding needs ffprobe.
-            onChanged: (!isAudio && canEmbed)
-                ? (v) => setState(() => _embedSubs = v)
-                : null,
             title: const Text('Embed subtitles'),
-            subtitle: Text(
-              isAudio
-                  ? 'Only available for video downloads'
-                  : canEmbed
-                  ? 'Puts the subtitle track inside the file'
-                  : 'Needs ffmpeg and ffprobe, which are not both available',
-            ),
+            // Audio cannot carry a subtitle track, and embedding needs ffprobe.
+            enabled: !isAudio && canEmbed,
+            subtitle: isAudio
+                ? 'Only available for video downloads'
+                : canEmbed
+                ? 'Puts the subtitle track inside the file'
+                : 'Needs ffmpeg and ffprobe, which are not both available',
+            value: _embedSubs,
+            onChanged: (v) => setState(() => _embedSubs = v),
           ),
         ],
       ),
@@ -533,9 +509,11 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   }
 
   Widget _buildBottomBar(int chosenCount) {
-    final theme = Theme.of(context);
+    final theme = context.textStyles;
+    final colors = context.colors;
     return Material(
       elevation: 3,
+      color: colors.surfaceContainer,
       child: SafeArea(
         top: false,
         child: Padding(
@@ -547,12 +525,12 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
                   chosenCount == 0
                       ? 'Nothing selected'
                       : '$chosenCount selected',
-                  style: theme.textTheme.bodyMedium,
+                  style: theme.bodyMedium,
                 ),
               ),
-              FilledButton.icon(
+              AppButton.icon(
                 onPressed: chosenCount == 0 ? null : _download,
-                icon: const Icon(Icons.download),
+                icon: Icons.download,
                 label: Text(
                   chosenCount == 1 ? 'Download 1' : 'Download $chosenCount',
                 ),
@@ -578,45 +556,41 @@ class _EntryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return CheckboxListTile(
+    final theme = context.textStyles;
+    final colors = context.colors;
+    return AppCheckboxTile(
       value: selected,
       onChanged: (_) => onToggle(),
-      controlAffinity: ListTileControlAffinity.leading,
       dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
       title: Text(
         entry.title,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.bodyMedium,
+        style: theme.bodyMedium,
       ),
       subtitle: entry.duration > 0
           ? Text(
               formatDuration(entry.duration),
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
+              style: theme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
             )
           : null,
-      secondary: ClipRRect(
+      trailing: ClipRRect(
         borderRadius: BorderRadius.circular(6),
         child: SizedBox(
           width: 72,
           height: 41,
           child: entry.thumbnail == null
               ? ColoredBox(
-                  color: theme.colorScheme.surfaceContainerHighest,
+                  color: colors.surfaceContainerHighest,
                   child: const Icon(Icons.movie_outlined, size: 18),
                 )
               : CachedNetworkImage(
                   imageUrl: entry.thumbnail!,
                   fit: BoxFit.cover,
-                  placeholder: (_, _) => ColoredBox(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                  ),
+                  placeholder: (_, _) =>
+                      ColoredBox(color: colors.surfaceContainerHighest),
                   errorWidget: (_, _, _) => ColoredBox(
-                    color: theme.colorScheme.surfaceContainerHighest,
+                    color: colors.surfaceContainerHighest,
                     child: const Icon(Icons.broken_image_outlined, size: 18),
                   ),
                 ),
@@ -631,14 +605,15 @@ class _NoMatches extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final scheme = context.colors;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Text(
           'No videos match that filter',
-          style: Theme.of(context).textTheme.bodyMedium
-              ?.copyWith(color: scheme.onSurfaceVariant),
+          style: context.textStyles.bodyMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
         ),
       ),
     );
