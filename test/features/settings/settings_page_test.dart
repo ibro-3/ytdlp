@@ -304,6 +304,18 @@ void main() {
       expect(find.text('Remembered queue entries'), findsOneWidget);
       expect(find.text('Write without a .part file'), findsOneWidget);
     });
+
+    testWidgets('the sections span the window they are given', (tester) async {
+      // A desktop window is scrolled by pointing anywhere at it. The lone
+      // `Center` + `ConstrainedBox(maxWidth: 760)` used to leave the wheel
+      // working only over a column in the middle of the window, and a
+      // scrollbar with it.
+      await pump(tester, size: const Size(1200, 800));
+      expect(
+        tester.getSize(find.byType(Scrollable).first).width,
+        closeTo(1200, 1),
+      );
+    });
   });
 
   group('browser cookies', () {

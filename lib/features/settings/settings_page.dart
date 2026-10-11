@@ -28,6 +28,7 @@ import '../../services/updates/app_update_service.dart';
 import '../../services/ytdlp/arg_tokenizer.dart';
 import '../../services/ytdlp/binary_manager.dart';
 import '../../services/ytdlp/ejs_installer.dart';
+import '../../widgets/app_full_width.dart';
 import '../../widgets/platform/platform.dart';
 import '../../widgets/tab_carousel.dart';
 
@@ -447,416 +448,410 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return AppScaffold(
       title: 'Settings',
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-              children: [
-                _Section(
-                  title: 'Appearance',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppSegmented<ThemeMode>(
-                        segments: const [
-                          (
-                            value: ThemeMode.system,
-                            label: 'System',
-                            icon: Icons.settings_suggest_outlined,
-                            enabled: true,
-                          ),
-                          (
-                            value: ThemeMode.light,
-                            label: 'Light',
-                            icon: Icons.light_mode_outlined,
-                            enabled: true,
-                          ),
-                          (
-                            value: ThemeMode.dark,
-                            label: 'Dark',
-                            icon: Icons.dark_mode_outlined,
-                            enabled: true,
-                          ),
-                        ],
-                        selected: settings.themeMode,
-                        onSelectionChanged: (mode) => unawaited(
-                          _patch(settings.copyWith(themeMode: mode)),
+        child: AppFullWidth(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              _Section(
+                title: 'Appearance',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppSegmented<ThemeMode>(
+                      segments: const [
+                        (
+                          value: ThemeMode.system,
+                          label: 'System',
+                          icon: Icons.settings_suggest_outlined,
+                          enabled: true,
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Theme color',
-                        style: context.textStyles.labelMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          for (final (name, value) in AppSettings.seedOptions)
-                            AppSeedSwatch(
-                              name: name,
-                              color: Color(value),
-                              selected: settings.seedColor == value,
-                              onTap: () => unawaited(
-                                _patch(settings.copyWith(seedColor: value)),
-                              ),
+                        (
+                          value: ThemeMode.light,
+                          label: 'Light',
+                          icon: Icons.light_mode_outlined,
+                          enabled: true,
+                        ),
+                        (
+                          value: ThemeMode.dark,
+                          label: 'Dark',
+                          icon: Icons.dark_mode_outlined,
+                          enabled: true,
+                        ),
+                      ],
+                      selected: settings.themeMode,
+                      onSelectionChanged: (mode) =>
+                          unawaited(_patch(settings.copyWith(themeMode: mode))),
+                    ),
+                    const SizedBox(height: 16),
+                    Text('Theme color', style: context.textStyles.labelMedium),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final (name, value) in AppSettings.seedOptions)
+                          AppSeedSwatch(
+                            name: name,
+                            color: Color(value),
+                            selected: settings.seedColor == value,
+                            onTap: () => unawaited(
+                              _patch(settings.copyWith(seedColor: value)),
                             ),
-                        ],
-                      ),
-                    ],
-                  ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _Section(
-                  title: 'Downloads',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppListTile(
-                        contentPaddingZero: true,
-                        leading: const Icon(Icons.folder_outlined),
-                        title: const Text('Download folder'),
-                        subtitle: Text(
-                          settings.downloadRoot.isEmpty
-                              ? 'Default (platform Downloads folder)'
-                              : settings.downloadRoot,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (settings.downloadRoot.isNotEmpty)
-                              AppIconButton(
-                                icon: Icons.refresh,
-                                tooltip: 'Reset to default',
-                                onPressed: _resetDownloadFolder,
-                              ),
+              ),
+              const SizedBox(height: 12),
+              _Section(
+                title: 'Downloads',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppListTile(
+                      contentPaddingZero: true,
+                      leading: const Icon(Icons.folder_outlined),
+                      title: const Text('Download folder'),
+                      subtitle: Text(
+                        settings.downloadRoot.isEmpty
+                            ? 'Default (platform Downloads folder)'
+                            : settings.downloadRoot,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (settings.downloadRoot.isNotEmpty)
                             AppIconButton(
-                              icon: Icons.folder_open,
-                              tooltip: settings.downloadRoot.isEmpty
-                                  ? 'Choose folder'
-                                  : 'Change folder',
-                              onPressed: _pickDownloadFolder,
+                              icon: Icons.refresh,
+                              tooltip: 'Reset to default',
+                              onPressed: _resetDownloadFolder,
                             ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Videos and audio are saved in separate Video/ and '
-                        'Audio/ subfolders. Playlist entries later group into '
-                        'one folder per playlist inside the matching one.',
-                        style: context.textStyles.bodySmall?.copyWith(
-                          color: context.colors.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Default video quality',
-                        style: context.textStyles.labelMedium,
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final t in AppSettings.videoTierOptions)
-                            AppChoiceChip(
-                              label: AppSettings.videoTierLabel(t),
-                              selected: settings.defaultVideoTier == t,
-                              onSelected: (_) => unawaited(
-                                _patch(
-                                  settings.copyWith(defaultVideoTier: () => t),
-                                ),
-                              ),
-                            ),
+                          AppIconButton(
+                            icon: Icons.folder_open,
+                            tooltip: settings.downloadRoot.isEmpty
+                                ? 'Choose folder'
+                                : 'Change folder',
+                            onPressed: _pickDownloadFolder,
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Default audio quality',
-                        style: context.textStyles.labelMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Videos and audio are saved in separate Video/ and '
+                      'Audio/ subfolders. Playlist entries later group into '
+                      'one folder per playlist inside the matching one.',
+                      style: context.textStyles.bodySmall?.copyWith(
+                        color: context.colors.onSurfaceVariant,
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          for (final t in AppSettings.audioTierOptions)
-                            AppChoiceChip(
-                              label: AppSettings.audioTierLabel(t),
-                              selected: settings.defaultAudioTier == t,
-                              onSelected: (_) => unawaited(
-                                _patch(
-                                  settings.copyWith(defaultAudioTier: () => t),
-                                ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Default video quality',
+                      style: context.textStyles.labelMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final t in AppSettings.videoTierOptions)
+                          AppChoiceChip(
+                            label: AppSettings.videoTierLabel(t),
+                            selected: settings.defaultVideoTier == t,
+                            onSelected: (_) => unawaited(
+                              _patch(
+                                settings.copyWith(defaultVideoTier: () => t),
                               ),
                             ),
-                        ],
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Default audio quality',
+                      style: context.textStyles.labelMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (final t in AppSettings.audioTierOptions)
+                          AppChoiceChip(
+                            label: AppSettings.audioTierLabel(t),
+                            selected: settings.defaultAudioTier == t,
+                            onSelected: (_) => unawaited(
+                              _patch(
+                                settings.copyWith(defaultAudioTier: () => t),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    AppSwitchTile(
+                      title: const Text('Audio only by default'),
+                      subtitle:
+                          'Pre-select M4A audio when opening the download '
+                          'format sheet',
+                      value: settings.defaultAudioOnly,
+                      onChanged: (v) => unawaited(
+                        _patch(settings.copyWith(defaultAudioOnly: v)),
                       ),
-                      AppSwitchTile(
-                        title: const Text('Audio only by default'),
-                        subtitle:
-                            'Pre-select M4A audio when opening the download '
-                            'format sheet',
-                        value: settings.defaultAudioOnly,
-                        onChanged: (v) => unawaited(
-                          _patch(settings.copyWith(defaultAudioOnly: v)),
-                        ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Subtitle & thumbnail defaults',
+                      style: context.textStyles.labelMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    AppSwitchTile(
+                      dense: true,
+                      title: const Text('Subtitles next to the file'),
+                      subtitle: '.srt/.vtt sidecar',
+                      value: settings.defaultWriteSubs,
+                      onChanged: (v) => unawaited(
+                        _patch(settings.copyWith(defaultWriteSubs: v)),
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Subtitle & thumbnail defaults',
-                        style: context.textStyles.labelMedium,
+                    ),
+                    AppSwitchTile(
+                      dense: true,
+                      title: const Text('Embed subtitles'),
+                      subtitle: 'Only when ffmpeg is available',
+                      value: settings.defaultEmbedSubs,
+                      onChanged: (v) => unawaited(
+                        _patch(settings.copyWith(defaultEmbedSubs: v)),
                       ),
-                      const SizedBox(height: 4),
-                      AppSwitchTile(
-                        dense: true,
-                        title: const Text('Subtitles next to the file'),
-                        subtitle: '.srt/.vtt sidecar',
-                        value: settings.defaultWriteSubs,
-                        onChanged: (v) => unawaited(
-                          _patch(settings.copyWith(defaultWriteSubs: v)),
-                        ),
+                    ),
+                    AppSwitchTile(
+                      dense: true,
+                      title: const Text('Include auto-generated captions'),
+                      subtitle: 'Machine captions, marked "auto"',
+                      value: settings.defaultIncludeAutoSubs,
+                      onChanged: (v) => unawaited(
+                        _patch(settings.copyWith(defaultIncludeAutoSubs: v)),
                       ),
-                      AppSwitchTile(
-                        dense: true,
-                        title: const Text('Embed subtitles'),
-                        subtitle: 'Only when ffmpeg is available',
-                        value: settings.defaultEmbedSubs,
-                        onChanged: (v) => unawaited(
-                          _patch(settings.copyWith(defaultEmbedSubs: v)),
-                        ),
-                      ),
-                      AppSwitchTile(
-                        dense: true,
-                        title: const Text('Include auto-generated captions'),
-                        subtitle: 'Machine captions, marked "auto"',
-                        value: settings.defaultIncludeAutoSubs,
-                        onChanged: (v) => unawaited(
-                          _patch(settings.copyWith(defaultIncludeAutoSubs: v)),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _NetworkSection(settings: settings, onPatch: _patch),
-                const SizedBox(height: 12),
-                _PostProcessingSection(settings: settings, onPatch: _patch),
-                const SizedBox(height: 12),
-                _QueueSection(settings: settings, onPatch: _patch),
-                const SizedBox(height: 12),
-                _AdvancedSettings(settings: settings, onPatch: _patch),
-                const SizedBox(height: 12),
-                _Section(
-                  title: 'Privacy & data',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppListTile(
-                        contentPaddingZero: true,
-                        leading: const Icon(Icons.cookie_outlined),
-                        title: const Text('Cookies (optional)'),
-                        subtitle: Text(
-                          _cookieSourceOf(settings) == CookieSource.browser
-                              ? 'Set aside — the browser is the source now'
-                              : settings.cookiesPath.isEmpty
-                              ? 'Off — some sites need a cookies.txt to allow '
-                                    'downloads'
-                              : settings.cookieDisabledDomains.isEmpty
-                              ? 'On — every site in the file is sent'
-                              : 'On — ${settings.cookieDisabledDomains.length} '
-                                    '${settings.cookieDisabledDomains.length == 1 ? "site" : "sites"} '
-                                    'switched off',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (settings.cookiesPath.isNotEmpty) ...[
-                              AppIconButton(
-                                icon: Icons.tune,
-                                tooltip:
-                                    _cookieSourceOf(settings) ==
-                                        CookieSource.browser
-                                    ? 'Choose which sites are sent — not '
-                                          'available for a browser'
-                                    : 'Choose which sites are sent',
-                                onPressed: () =>
-                                    context.push('/settings/cookies'),
-                              ),
-                              AppIconButton(
-                                icon: Icons.close,
-                                tooltip: 'Remove cookies',
-                                onPressed: () => _removeCookies(settings),
-                              ),
-                            ] else if (settings.cookieBrowser.isNotEmpty) ...[
-                              // A browser source is a cookie source too, so it
-                              // needs its own way out; the jar buttons above
-                              // only appear once a jar exists.
-                              AppIconButton(
-                                icon: Icons.close,
-                                tooltip: 'Stop using browser cookies',
-                                onPressed: () => unawaited(
-                                  _patch(
-                                    settings.copyWith(
-                                      cookieBrowser: '',
-                                      cookieBrowserProfile: '',
-                                    ),
+              ),
+              const SizedBox(height: 12),
+              _NetworkSection(settings: settings, onPatch: _patch),
+              const SizedBox(height: 12),
+              _PostProcessingSection(settings: settings, onPatch: _patch),
+              const SizedBox(height: 12),
+              _QueueSection(settings: settings, onPatch: _patch),
+              const SizedBox(height: 12),
+              _AdvancedSettings(settings: settings, onPatch: _patch),
+              const SizedBox(height: 12),
+              _Section(
+                title: 'Privacy & data',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppListTile(
+                      contentPaddingZero: true,
+                      leading: const Icon(Icons.cookie_outlined),
+                      title: const Text('Cookies (optional)'),
+                      subtitle: Text(
+                        _cookieSourceOf(settings) == CookieSource.browser
+                            ? 'Set aside — the browser is the source now'
+                            : settings.cookiesPath.isEmpty
+                            ? 'Off — some sites need a cookies.txt to allow '
+                                  'downloads'
+                            : settings.cookieDisabledDomains.isEmpty
+                            ? 'On — every site in the file is sent'
+                            : 'On — ${settings.cookieDisabledDomains.length} '
+                                  '${settings.cookieDisabledDomains.length == 1 ? "site" : "sites"} '
+                                  'switched off',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (settings.cookiesPath.isNotEmpty) ...[
+                            AppIconButton(
+                              icon: Icons.tune,
+                              tooltip:
+                                  _cookieSourceOf(settings) ==
+                                      CookieSource.browser
+                                  ? 'Choose which sites are sent — not '
+                                        'available for a browser'
+                                  : 'Choose which sites are sent',
+                              onPressed: () =>
+                                  context.push('/settings/cookies'),
+                            ),
+                            AppIconButton(
+                              icon: Icons.close,
+                              tooltip: 'Remove cookies',
+                              onPressed: () => _removeCookies(settings),
+                            ),
+                          ] else if (settings.cookieBrowser.isNotEmpty) ...[
+                            // A browser source is a cookie source too, so it
+                            // needs its own way out; the jar buttons above
+                            // only appear once a jar exists.
+                            AppIconButton(
+                              icon: Icons.close,
+                              tooltip: 'Stop using browser cookies',
+                              onPressed: () => unawaited(
+                                _patch(
+                                  settings.copyWith(
+                                    cookieBrowser: '',
+                                    cookieBrowserProfile: '',
                                   ),
                                 ),
                               ),
-                            ],
-                            AppIconButton(
-                              icon: Icons.folder_open,
-                              tooltip: settings.cookiesPath.isEmpty
-                                  ? 'Choose cookies.txt'
-                                  : 'Change cookies.txt',
-                              onPressed: _pickCookiesFile,
                             ),
                           ],
-                        ),
-                        // The tile itself stays non-navigable so the trailing
-                        // buttons are the only way in: a tap target covering
-                        // the row would swallow the import button on the right.
+                          AppIconButton(
+                            icon: Icons.folder_open,
+                            tooltip: settings.cookiesPath.isEmpty
+                                ? 'Choose cookies.txt'
+                                : 'Change cookies.txt',
+                            onPressed: _pickCookiesFile,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 12),
-                      _BrowserCookieSection(
-                        settings: settings,
-                        onPatch: _patch,
-                        onBrowse: _pickBrowserProfileRoot,
-                      ),
-                      const SizedBox(height: 12),
-                      AppListTile(
-                        contentPaddingZero: true,
-                        leading: const Icon(Icons.save_alt_outlined),
-                        title: const Text('Back up settings'),
-                        subtitle: 'Saves preferences and argument templates to a file',
-                        onTap: _exportBackup,
-                      ),
-                      AppListTile(
-                        contentPaddingZero: true,
-                        leading: const Icon(Icons.settings_backup_restore),
-                        title: const Text('Restore from a backup'),
-                        onTap: _importBackup,
-                      ),
-                      AppListTile(
-                        contentPaddingZero: true,
-                        leading: const Icon(Icons.bug_report_outlined),
-                        title: const Text('Copy diagnostics'),
-                        subtitle:
-                            'Versions, paths and settings for a bug report. '
-                            'Never includes cookies',
-                        onTap: _copyDiagnostics,
-                      ),
-                    ],
-                  ),
+                      // The tile itself stays non-navigable so the trailing
+                      // buttons are the only way in: a tap target covering
+                      // the row would swallow the import button on the right.
+                    ),
+                    const SizedBox(height: 12),
+                    _BrowserCookieSection(
+                      settings: settings,
+                      onPatch: _patch,
+                      onBrowse: _pickBrowserProfileRoot,
+                    ),
+                    const SizedBox(height: 12),
+                    AppListTile(
+                      contentPaddingZero: true,
+                      leading: const Icon(Icons.save_alt_outlined),
+                      title: const Text('Back up settings'),
+                      subtitle:
+                          'Saves preferences and argument templates to a file',
+                      onTap: _exportBackup,
+                    ),
+                    AppListTile(
+                      contentPaddingZero: true,
+                      leading: const Icon(Icons.settings_backup_restore),
+                      title: const Text('Restore from a backup'),
+                      onTap: _importBackup,
+                    ),
+                    AppListTile(
+                      contentPaddingZero: true,
+                      leading: const Icon(Icons.bug_report_outlined),
+                      title: const Text('Copy diagnostics'),
+                      subtitle:
+                          'Versions, paths and settings for a bug report. '
+                          'Never includes cookies',
+                      onTap: _copyDiagnostics,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _Section(
-                  title: 'Engine',
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      AppListTile(
-                        contentPaddingZero: true,
-                        leading: const Icon(Icons.terminal_outlined),
-                        title: const Text('yt-dlp'),
-                        subtitle: Text(
-                          _versionLoading
-                              ? 'Checking…'
-                              : _version == null
-                              ? 'Not installed'
-                              : 'v$_version',
-                        ),
-                        trailing: AppIconButton(
-                          icon: Icons.refresh,
-                          tooltip: 'Check version',
-                          onPressed: _versionLoading ? null : _loadVersion,
-                        ),
+              ),
+              const SizedBox(height: 12),
+              _Section(
+                title: 'Engine',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    AppListTile(
+                      contentPaddingZero: true,
+                      leading: const Icon(Icons.terminal_outlined),
+                      title: const Text('yt-dlp'),
+                      subtitle: Text(
+                        _versionLoading
+                            ? 'Checking…'
+                            : _version == null
+                            ? 'Not installed'
+                            : 'v$_version',
                       ),
+                      trailing: AppIconButton(
+                        icon: Icons.refresh,
+                        tooltip: 'Check version',
+                        onPressed: _versionLoading ? null : _loadVersion,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    AppButton.icon(
+                      onPressed: _updating ? null : _updateEngine,
+                      icon: _updating
+                          ? Icons.hourglass_empty
+                          : Icons.system_update_outlined,
+                      label: Text(_updating ? 'Updating…' : 'Update yt-dlp'),
+                    ),
+                    if (_engineMessage != null) ...[
                       const SizedBox(height: 8),
-                      AppButton.icon(
-                        onPressed: _updating ? null : _updateEngine,
-                        icon: _updating
-                            ? Icons.hourglass_empty
-                            : Icons.system_update_outlined,
-                        label: Text(_updating ? 'Updating…' : 'Update yt-dlp'),
-                      ),
-                      if (_engineMessage != null) ...[
-                        const SizedBox(height: 8),
-                        SelectableText(
-                          _engineMessage!,
-                          style: context.textStyles.bodySmall,
-                        ),
-                      ],
-                      const Divider(height: 24),
-                      _AppUpdateRow(
-                        result: _appUpdate,
-                        checking: _checkingAppUpdate,
-                        error: _appUpdateError,
-                        onRetry: _checkAppUpdate,
+                      SelectableText(
+                        _engineMessage!,
+                        style: context.textStyles.bodySmall,
                       ),
                     ],
-                  ),
+                    const Divider(height: 24),
+                    _AppUpdateRow(
+                      result: _appUpdate,
+                      checking: _checkingAppUpdate,
+                      error: _appUpdateError,
+                      onRetry: _checkAppUpdate,
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                _Section(
-                  title: 'Notifications',
-                  child: Column(
-                    children: [
-                      AppSwitchTile(
-                        title: const Text('Download notifications'),
-                        subtitle: 'Progress and completion alerts (Android 13+ asks for permission)',
-                        value: settings.notificationsEnabled,
-                        onChanged: (v) async {
-                          var enable = v;
-                          if (v && Platform.isAndroid) {
-                            enable = await ref
-                                .read(notificationServiceProvider)
-                                .requestPermission();
-                            if (!enable && context.mounted) {
-                              context.showToast(
-                                'Notification permission was denied. '
-                                'Allow it in system settings to get '
-                                'download alerts.',
-                              );
-                            }
+              ),
+              const SizedBox(height: 12),
+              _Section(
+                title: 'Notifications',
+                child: Column(
+                  children: [
+                    AppSwitchTile(
+                      title: const Text('Download notifications'),
+                      subtitle: 'Progress and completion alerts (Android 13+ asks for permission)',
+                      value: settings.notificationsEnabled,
+                      onChanged: (v) async {
+                        var enable = v;
+                        if (v && Platform.isAndroid) {
+                          enable = await ref
+                              .read(notificationServiceProvider)
+                              .requestPermission();
+                          if (!enable && context.mounted) {
+                            context.showToast(
+                              'Notification permission was denied. '
+                              'Allow it in system settings to get '
+                              'download alerts.',
+                            );
                           }
-                          await _patch(
-                            settings.copyWith(notificationsEnabled: enable),
-                          );
+                        }
+                        await _patch(
+                          settings.copyWith(notificationsEnabled: enable),
+                        );
+                      },
+                    ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: FilledButton.tonalIcon(
+                        onPressed: () {
+                          ref
+                              .read(notificationServiceProvider)
+                              .showDone(
+                                taskId:
+                                    'test-${DateTime.now().millisecondsSinceEpoch}',
+                                title: 'Notifications work',
+                                success: true,
+                                detail: 'You will see progress here during downloads.',
+                              );
+                          context.showToast('Test notification sent');
                         },
+                        icon: const Icon(Icons.notifications_outlined),
+                        label: const Text('Send test notification'),
                       ),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: FilledButton.tonalIcon(
-                          onPressed: () {
-                            ref
-                                .read(notificationServiceProvider)
-                                .showDone(
-                                  taskId:
-                                      'test-${DateTime.now().millisecondsSinceEpoch}',
-                                  title: 'Notifications work',
-                                  success: true,
-                                  detail: 'You will see progress here during downloads.',
-                                );
-                            context.showToast('Test notification sent');
-                          },
-                          icon: const Icon(Icons.notifications_outlined),
-                          label: const Text('Send test notification'),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

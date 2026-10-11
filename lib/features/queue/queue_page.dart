@@ -8,6 +8,7 @@ import '../../core/providers.dart';
 import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
 import '../../services/downloads/download_manager.dart';
+import '../../widgets/app_full_width.dart';
 import '../../widgets/platform/platform.dart';
 
 class QueuePage extends ConsumerWidget {
@@ -37,31 +38,28 @@ class QueuePage extends ConsumerWidget {
           if (tasks.isEmpty) {
             return const _EmptyQueue();
           }
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-                itemCount: tasks.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 12),
-                itemBuilder: (context, i) {
-                  final task = tasks[i];
-                  // Reordering only means something for a task that is
-                  // waiting. A held one is not: releasing it puts it at the
-                  // back of the queue, so its arrows would promise an ordering
-                  // the scheduler would not honour.
-                  final canReorder = task.status == DownloadStatus.queued;
-                  return _TaskCard(
-                    task: task,
-                    onMoveUp: canReorder
-                        ? () => manager.reorder(task.id, -1)
-                        : null,
-                    onMoveDown: canReorder
-                        ? () => manager.reorder(task.id, 1)
-                        : null,
-                  );
-                },
-              ),
+          return AppFullWidth(
+            child: ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              itemCount: tasks.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 12),
+              itemBuilder: (context, i) {
+                final task = tasks[i];
+                // Reordering only means something for a task that is
+                // waiting. A held one is not: releasing it puts it at the
+                // back of the queue, so its arrows would promise an ordering
+                // the scheduler would not honour.
+                final canReorder = task.status == DownloadStatus.queued;
+                return _TaskCard(
+                  task: task,
+                  onMoveUp: canReorder
+                      ? () => manager.reorder(task.id, -1)
+                      : null,
+                  onMoveDown: canReorder
+                      ? () => manager.reorder(task.id, 1)
+                      : null,
+                );
+              },
             ),
           );
         },

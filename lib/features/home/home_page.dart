@@ -13,6 +13,7 @@ import '../../core/providers.dart';
 import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/url_validator.dart';
 import '../../services/sharing/share_intent_service.dart';
+import '../../widgets/app_full_width.dart';
 import '../../widgets/platform/platform.dart';
 import '../queue/batch_queue_controller.dart';
 import 'home_controller.dart';
@@ -185,47 +186,44 @@ class _HomePageState extends ConsumerState<HomePage> {
         icon: Icons.content_paste,
       ),
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-              children: [
-                _buildHero(context),
-                const SizedBox(height: 12),
-                _buildUrlBar(),
+        child: AppFullWidth(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              _buildHero(context),
+              const SizedBox(height: 12),
+              _buildUrlBar(),
+              const SizedBox(height: 16),
+              if (state.isLoading)
+                const _FetchingCard()
+              else if (state.error != null)
+                _ErrorCard(
+                  message: state.error!,
+                  onRetry: _lastUrl == null ? null : _retry,
+                )
+              else if (playlist != null)
+                _PlaylistSummary(playlist: playlist)
+              else if (video != null) ...[
+                VideoInfoCard(video: video),
                 const SizedBox(height: 16),
-                if (state.isLoading)
-                  const _FetchingCard()
-                else if (state.error != null)
-                  _ErrorCard(
-                    message: state.error!,
-                    onRetry: _lastUrl == null ? null : _retry,
-                  )
-                else if (playlist != null)
-                  _PlaylistSummary(playlist: playlist)
-                else if (video != null) ...[
-                  VideoInfoCard(video: video),
-                  const SizedBox(height: 16),
-                  // One button: format + quality live in the bottom sheet.
-                  AppButton.icon(
-                    onPressed: hasFormats ? () => _download(video) : null,
-                    icon: Icons.download,
-                    label: const Text('Download'),
-                  ),
-                  if (!hasFormats) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'No downloadable formats for this video.',
-                      style: context.textStyles.bodySmall?.copyWith(
-                        color: context.colors.onSurfaceVariant,
-                      ),
+                // One button: format + quality live in the bottom sheet.
+                AppButton.icon(
+                  onPressed: hasFormats ? () => _download(video) : null,
+                  icon: Icons.download,
+                  label: const Text('Download'),
+                ),
+                if (!hasFormats) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'No downloadable formats for this video.',
+                    style: context.textStyles.bodySmall?.copyWith(
+                      color: context.colors.onSurfaceVariant,
                     ),
-                  ],
-                ] else
-                  const _EmptyHint(),
-              ],
-            ),
+                  ),
+                ],
+              ] else
+                const _EmptyHint(),
+            ],
           ),
         ),
       ),

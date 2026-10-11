@@ -171,6 +171,14 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ### Fixed
 
+- **Scrolling on desktop only worked over a column in the middle of the
+  window.** Every screen wrapped its scroll view in a `Center` plus a
+  `ConstrainedBox` capped at 760 px, which is what a phone wants. On a
+  desktop window it did not just leave dead space: the scroll view itself —
+  and with it the mouse wheel and the scrollbar — existed only inside that
+  column, so pointing at the rest of the window scrolled nothing. The pages
+  now fill the window they are given, and `AppFullWidth` is the one place
+  the rule lives.
 - **Library rows kept claiming a deleted file was present.** The existence
   probe recorded every path it had ever checked and never cleared the set, so
   the first answer stood for the life of the process. A file removed from

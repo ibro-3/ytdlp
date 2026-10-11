@@ -507,7 +507,7 @@ void main() {
     });
   });
 
-  testWidgets('the layout is constrained to a readable width', (tester) async {
+  testWidgets('the list fills the window it is given', (tester) async {
     tester.view.physicalSize = const Size(1400, 1600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -520,12 +520,12 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // A wide window still renders the list at a readable width rather than
-    // stretching cards across the whole screen.
-    final box = tester
-        .widgetList<ConstrainedBox>(find.byType(ConstrainedBox))
-        .firstWhere((b) => b.constraints.maxWidth == 760);
-    expect(box.constraints.maxWidth, 760);
+    // A wide window is scrolled by pointing anywhere at it, so the list spans
+    // the whole window rather than a capped column in the middle of it. The
+    // old `Center` + `ConstrainedBox(maxWidth: 760)` left the wheel working
+    // only over the column, which is the part of a desktop window you are
+    // never actually pointing at.
+    expect(tester.getSize(find.byType(Scrollable).first).width, 1400);
   });
 
   testWidgets('a completed task offers open, share and delete', (tester) async {

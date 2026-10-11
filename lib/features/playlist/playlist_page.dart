@@ -13,6 +13,7 @@ import '../../core/providers.dart';
 import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
 import '../../services/ytdlp/ytdlp_service.dart';
+import '../../widgets/app_full_width.dart';
 import '../../widgets/platform/platform.dart';
 
 /// Lets the user pick which entries of a playlist or channel to download.
@@ -248,40 +249,37 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
         ),
       ],
       body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 760),
-            child: Column(
-              children: [
-                _buildHeader(playlist),
-                _buildOptions(playlist),
-                _buildSearch(visible.length),
-                const Divider(height: 1),
-                Expanded(
-                  child: visible.isEmpty
-                      ? const _NoMatches()
-                      : ListView.builder(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          // One extra row for the "load more" footer. Counting
-                          // it only when there is something to load keeps the
-                          // list exactly as tall as its entries otherwise, so
-                          // the complete-playlist case is unchanged.
-                          itemCount: visible.length + (_buildsLoadMore ? 1 : 0),
-                          itemBuilder: (context, i) {
-                            if (i >= visible.length) {
-                              return _buildLoadMore();
-                            }
-                            final entry = visible[i];
-                            return _EntryRow(
-                              entry: entry,
-                              selected: _selected.contains(entry.id),
-                              onToggle: () => _toggle(entry.id),
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
+        child: AppFullWidth(
+          child: Column(
+            children: [
+              _buildHeader(playlist),
+              _buildOptions(playlist),
+              _buildSearch(visible.length),
+              const Divider(height: 1),
+              Expanded(
+                child: visible.isEmpty
+                    ? const _NoMatches()
+                    : ListView.builder(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        // One extra row for the "load more" footer. Counting
+                        // it only when there is something to load keeps the
+                        // list exactly as tall as its entries otherwise, so
+                        // the complete-playlist case is unchanged.
+                        itemCount: visible.length + (_buildsLoadMore ? 1 : 0),
+                        itemBuilder: (context, i) {
+                          if (i >= visible.length) {
+                            return _buildLoadMore();
+                          }
+                          final entry = visible[i];
+                          return _EntryRow(
+                            entry: entry,
+                            selected: _selected.contains(entry.id),
+                            onToggle: () => _toggle(entry.id),
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
         ),
       ),

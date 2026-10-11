@@ -15,6 +15,7 @@ import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
 import '../../services/downloads/folder_scanner.dart';
 import '../../services/downloads/history_service.dart';
+import '../../widgets/app_full_width.dart';
 import '../../widgets/platform/platform.dart';
 
 class LibraryPage extends ConsumerStatefulWidget {
@@ -243,23 +244,18 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
               else if (_discovered != null && _discovered!.isNotEmpty)
                 _DiscoveredBanner(files: _discovered!, onAdopt: _adopt),
               Expanded(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 760),
-                    child: ListView.builder(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                      itemCount: rows.length,
-                      itemBuilder: (context, i) => switch (rows[i]) {
-                        _HeaderRow(:final group) => _PlaylistHeader(
-                          group: group,
-                        ),
-                        _RecordRow(:final record) => _RecordCard(
-                          record: record,
-                          exists: _existsFor(record.filePath),
-                        ),
-                        _SpacerRow() => const SizedBox(height: 8),
-                      },
-                    ),
+                child: AppFullWidth(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    itemCount: rows.length,
+                    itemBuilder: (context, i) => switch (rows[i]) {
+                      _HeaderRow(:final group) => _PlaylistHeader(group: group),
+                      _RecordRow(:final record) => _RecordCard(
+                        record: record,
+                        exists: _existsFor(record.filePath),
+                      ),
+                      _SpacerRow() => const SizedBox(height: 8),
+                    },
                   ),
                 ),
               ),
