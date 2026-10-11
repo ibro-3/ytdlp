@@ -3,6 +3,8 @@ import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import 'platform_gtk.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
 
 /// How hard a button says "do this", in order of prominence.
@@ -166,6 +168,62 @@ class AppButton extends StatelessWidget {
             ),
           },
         );
+
+      case PlatformStyle.gtk:
+        final content = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 16),
+              const SizedBox(width: 8),
+            ],
+            child,
+          ],
+        );
+        // Adwaita has three kinds of button, and none of them lifts: the
+        // accent-filled `suggested-action`, the bordered `flat` button, and the
+        // text-only one. So a filled action is a 6dp flat accent, a tonal one
+        // is the same on a neutral fill, and plain and outlined are both
+        // bordered — GTK has no "outlined with a coloured label".
+        return ConstrainedBox(
+          constraints: const BoxConstraints(
+            minHeight: AppTheme.gtkControlHeight,
+          ),
+          child: switch (variant) {
+            AppButtonVariant.filled => FilledButton(
+              onPressed: onPressed,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, AppTheme.gtkControlHeight),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
+                ),
+              ),
+              child: content,
+            ),
+            AppButtonVariant.tonal => FilledButton.tonal(
+              onPressed: onPressed,
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, AppTheme.gtkControlHeight),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
+                ),
+              ),
+              child: content,
+            ),
+            AppButtonVariant.plain ||
+            AppButtonVariant.outlined => OutlinedButton(
+              onPressed: onPressed,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, AppTheme.gtkControlHeight),
+                side: BorderSide(color: context.colors.outline),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
+                ),
+              ),
+              child: content,
+            ),
+          },
+        );
     }
   }
 
@@ -219,6 +277,13 @@ class AppIconButton extends StatelessWidget {
       PlatformStyle.fluent => fui.IconButton(
         icon: Icon(icon),
         onPressed: onPressed,
+      ),
+      // GTK's header-bar button is a flat, square, 32dp icon target with a
+      // hover fill — never a filled circle, and never a ripple.
+      PlatformStyle.gtk => GtkIconButton(
+        icon: icon,
+        onPressed: onPressed,
+        tooltip: tooltip,
       ),
     };
     // Material's own IconButton shows a tooltip, and nesting a second one would

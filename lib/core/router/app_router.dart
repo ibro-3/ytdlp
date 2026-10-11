@@ -31,7 +31,9 @@ Page<void> _page(BuildContext context, GoRouterState state, Widget child) {
       key: state.pageKey,
       child: child,
     ),
-    PlatformStyle.fluent => MaterialPage<void>(
+    // GTK4 and Fluent both fade rather than slide: the horizontal slide is a
+    // phone gesture, and neither desktop is a carousel.
+    PlatformStyle.gtk || PlatformStyle.fluent => MaterialPage<void>(
       key: state.pageKey,
       child: child,
     ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
 
 /// A dismissed-able strip listing what failed at start-up.
@@ -44,6 +45,27 @@ class _StartupBannerState extends State<StartupBanner> {
             onAccent: colors.onErrorContainer,
             onDismiss: _dismiss,
             borderRadius: BorderRadius.zero,
+          ),
+        ),
+      ),
+      // GTK's banner is the in-app kind: a rounded card on the view
+      // background, with the same wording.
+      PlatformStyle.gtk => Material(
+        color: colors.errorContainer,
+        child: SafeArea(
+          bottom: false,
+          child: _BannerRow(
+            problems: problems,
+            textStyle: text.bodySmall?.copyWith(color: colors.onErrorContainer),
+            titleStyle: text.titleSmall?.copyWith(
+              color: colors.onErrorContainer,
+              fontWeight: FontWeight.w600,
+            ),
+            iconColor: colors.onErrorContainer,
+            accent: colors.errorContainer,
+            onAccent: colors.onErrorContainer,
+            onDismiss: _dismiss,
+            borderRadius: BorderRadius.circular(AppTheme.gtkSurfaceRadius),
           ),
         ),
       ),

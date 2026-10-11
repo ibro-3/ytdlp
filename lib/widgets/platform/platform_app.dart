@@ -10,7 +10,7 @@ import '../../core/router/app_router.dart';
 import '../../core/theme/app_theme.dart';
 import '../startup_banner.dart';
 
-/// The app's root: one of the three OS widget families, chosen once.
+/// The app's root: one of the four OS widget families, chosen once.
 ///
 /// The alternative — one Material app retinted three ways — is what this
 /// replaced, and it is why the previous build looked like an Android app
@@ -95,6 +95,26 @@ class PlatformApp extends ConsumerWidget {
           ),
           routerConfig: appRouter,
           localizationsDelegates: _localizationsDelegates,
+          builder: buildUnderRoot,
+        );
+      case PlatformStyle.gtk:
+        // A Material root, because the family is drawn from Material widgets
+        // plus Adwaita's own metrics and greys: there is no GTK package whose
+        // theme the way Fluent's would have to be provided.
+        return MaterialApp.router(
+          title: 'YTDL',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.gtk(brightness: resolved, seedColor: settings.seed),
+          // A MaterialApp takes a theme *pair*, so this is the other half of
+          // the same light/dark choice rather than a second derivation.
+          darkTheme: AppTheme.gtk(
+            brightness: resolved == Brightness.dark
+                ? Brightness.light
+                : Brightness.dark,
+            seedColor: settings.seed,
+          ),
+          themeMode: settings.themeMode,
+          routerConfig: appRouter,
           builder: buildUnderRoot,
         );
       case PlatformStyle.fluent:

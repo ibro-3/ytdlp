@@ -4,6 +4,8 @@ import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import 'platform_gtk.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
 import 'platform_controls.dart';
 
@@ -90,6 +92,16 @@ class AppListTile extends StatelessWidget {
         trailing: trailing,
         onPressed: onTap == null ? null : () => onTap!(),
       ),
+      // GTK4's list row is flat and full-width, separated by a hairline rather
+      // than by a card — a bordered group of rows, not a stack of them.
+      PlatformStyle.gtk => GtkListRow(
+        dense: dense,
+        leading: leading,
+        title: title,
+        subtitle: subtitle,
+        trailing: trailing,
+        onTap: onTap,
+      ),
     };
   }
 }
@@ -131,6 +143,28 @@ class AppSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [header, const SizedBox(height: 12), child],
           ),
+        ),
+      ),
+      // Adwaita's preferences group: a small title, then one bordered box
+      // holding the rows.
+      PlatformStyle.gtk => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(left: 4, bottom: 6, top: 4),
+              child: header,
+            ),
+            Container(
+              decoration: BoxDecoration(
+                color: colors.surfaceContainerLowest,
+                borderRadius: BorderRadius.circular(AppTheme.gtkSurfaceRadius),
+                border: Border.all(color: colors.outlineVariant),
+              ),
+              child: Padding(padding: const EdgeInsets.all(16), child: child),
+            ),
+          ],
         ),
       ),
       PlatformStyle.cupertino => Column(
@@ -201,6 +235,17 @@ class AppCard extends StatelessWidget {
         padding: padding ?? const EdgeInsets.all(16),
         child: child,
       ),
+      // A GTK card is a bordered box on the view background, not a raised
+      // surface: 12dp corners, one hairline, no shadow.
+      PlatformStyle.gtk => Container(
+        padding: padding ?? const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: color ?? colors.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(AppTheme.gtkSurfaceRadius),
+          border: Border.all(color: colors.outlineVariant),
+        ),
+        child: child,
+      ),
     };
   }
 }
@@ -258,6 +303,16 @@ class AppExpander extends StatelessWidget {
         // Cupertino's expander takes one child, so the section's rows are
         // wrapped in a column here rather than at every call site.
         return CupertinoExpansionTile(
+          title: titleWidget,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [?subtitleWidget, ...children],
+          ),
+        );
+      // GTK's expander is a bordered box: the header is a row inside it, and
+      // the chevron turns. Its own disclosure, so no `ExpansionTile`.
+      case PlatformStyle.gtk:
+        return GtkExpander(
           title: titleWidget,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -373,6 +428,13 @@ class AppActionChip extends StatelessWidget {
       ),
       PlatformStyle.fluent => fui.Button(
         onPressed: onPressed,
+        child: Text(label),
+      ),
+      // A GTK action pill: the same shape, and the one thing it always does is
+      // fill on hover, because GTK has no "tap" state to animate.
+      PlatformStyle.gtk => GtkPill(
+        selected: false,
+        onTap: onPressed,
         child: Text(label),
       ),
     };

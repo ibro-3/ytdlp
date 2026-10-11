@@ -3,6 +3,8 @@ import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import '../../core/theme/app_theme.dart';
+import 'platform_gtk.dart';
 import '../../core/theme/app_theme_context.dart';
 
 /// A confirmation dialog, in the family the OS asked for.
@@ -77,6 +79,19 @@ Future<bool> showAppConfirm(
             child: Text(confirmLabel),
           ),
         ],
+      ),
+    ),
+    // An Adwaita dialog: a rounded box with a title strip along the top, the
+    // message under it, and the buttons in a row along the bottom with the
+    // suggested action last — which is the opposite of Material's order.
+    PlatformStyle.gtk => showDialog<bool>(
+      context: context,
+      builder: (context) => _GtkDialog(
+        title: title,
+        message: message,
+        cancelLabel: cancelLabel,
+        confirmLabel: confirmLabel,
+        destructive: destructive,
       ),
     ),
   };
@@ -171,6 +186,16 @@ Future<void> showAppActionSheet({
         ],
       ),
     ),
+    // GTK has no action sheet: what it has is a popover menu, so a choice of
+    // actions for one row opens one of those.
+    PlatformStyle.gtk => _showGtkMenu<void>(
+      context: context,
+      title: title,
+      entries: [
+        for (final action in actions)
+          (label: action.label, onPressed: action.onPressed),
+      ],
+    ),
   };
 }
 
@@ -213,6 +238,16 @@ Future<T?> showAppBottomSheet<T>({
     PlatformStyle.fluent => fui.showDialog<T>(
       context: context,
       builder: (context) => _FluentSheetBody(builder: builder),
+    ),
+    // GTK's sheet is a rounded surface attached to the bottom edge, with no
+    // drag handle — it is dismissed by tapping outside or pressing Escape.
+    PlatformStyle.gtk => showDialog<T>(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.3),
+      builder: (context) => Align(
+        alignment: Alignment.bottomCenter,
+        child: _GtkSheetBody(builder: builder),
+      ),
     ),
   };
 }
@@ -331,6 +366,12 @@ class AppMenuButton<T> extends StatelessWidget {
         tooltip: tooltip,
       ),
       PlatformStyle.fluent => _FluentMenuButton<T>(
+        icon: icon,
+        items: items,
+        onSelected: onSelected,
+        tooltip: tooltip,
+      ),
+      PlatformStyle.gtk => _GtkMenuButton<T>(
         icon: icon,
         items: items,
         onSelected: onSelected,
@@ -475,6 +516,12 @@ class AppCircularProgress extends StatelessWidget {
         height: 18,
         child: fui.ProgressRing(strokeWidth: strokeWidth ?? 2),
       ),
+      // GTK's spinner is the same idea as the others': a turning arc.
+      PlatformStyle.gtk => SizedBox(
+        width: AppTheme.gtkControlHeight,
+        height: AppTheme.gtkControlHeight,
+        child: CircularProgressIndicator(strokeWidth: strokeWidth ?? 2),
+      ),
     };
   }
 }
@@ -507,6 +554,17 @@ class AppLinearProgress extends StatelessWidget {
         child: _CupertinoBar(value: value, track: track, fill: fill),
       ),
       PlatformStyle.fluent => fui.ProgressBar(value: value),
+      // GTK's bar is 4dp and its indeterminate state is a segment that
+      // travels, not stripes that crawl.
+      PlatformStyle.gtk => ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: LinearProgressIndicator(
+          value: value,
+          minHeight: 4,
+          backgroundColor: track,
+          valueColor: AlwaysStoppedAnimation(fill),
+        ),
+      ),
     };
   }
 }
@@ -557,3 +615,284 @@ class _CupertinoBar extends StatelessWidget {
 
 /// The theme's error colour, named once so the call sites read plainly.
 Color _error(BuildContext context) => context.colors.error;
+
+// --- GTK dialogs, sheets and menus ----------------------------------------
+
+/// An Adwaita dialog.
+///
+/// GTK4's dialog is not a card over a scrim: it is a window with a title strip
+/// along the top, the message under it, and a button row along the bottom whose
+/// suggested action is on the *right* — the reverse of Material's order. A
+/// destructive action is filled with the error colour rather than tinting its
+/// label only.
+class _GtkDialog extends StatelessWidget {
+  const _GtkDialog({
+    required this.title,
+    required this.message,
+    required this.cancelLabel,
+    required this.confirmLabel,
+    required this.destructive,
+  });
+
+  final String title;
+  final String message;
+  final String cancelLabel;
+  final String confirmLabel;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      backgroundColor: colors.surfaceContainerLowest,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.gtkSurfaceRadius),
+        side: BorderSide(color: colors.outline),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              title,
+              style: Theme.of(context).textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              style: Theme.of(context).textTheme.bodyMedium
+                  ?.copyWith(color: colors.onSurfaceVariant),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, AppTheme.gtkControlHeight),
+                    side: BorderSide(color: colors.outline),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
+                    ),
+                  ),
+                  child: Text(cancelLabel),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, AppTheme.gtkControlHeight),
+                    backgroundColor: destructive ? colors.error : null,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
+                    ),
+                  ),
+                  child: Text(confirmLabel),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The rounded surface a GTK bottom sheet grows into: attached to the bottom
+/// edge, no drag handle, dismissed by tapping outside or pressing Escape.
+class _GtkSheetBody<T> extends StatelessWidget {
+  const _GtkSheetBody({required this.builder});
+
+  final WidgetBuilder builder;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return SafeArea(
+      child: Container(
+        margin: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLowest,
+          borderRadius: BorderRadius.circular(AppTheme.gtkSurfaceRadius),
+          border: Border.all(color: colors.outline),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 24,
+            ),
+          ],
+        ),
+        // The picker that uses this scrolls itself, so the sheet must be able
+        // to be as tall as the window allows.
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: builder(context),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A GTK popover menu, anchored to its own trigger.
+///
+/// Material's popup and Fluent's `MenuFlyout` both anchor to the button; GTK's
+/// does too, and the [AppMenuButton] wrapper gives it the trigger.
+Future<T?> _showGtkMenu<T extends Object?>({
+  required BuildContext context,
+  String? title,
+  List<({String label, VoidCallback onPressed})> entries = const [],
+}) {
+  return showDialog<T>(
+    context: context,
+    barrierColor: Colors.transparent,
+    builder: (context) => _GtkMenuCard(title: title, entries: entries),
+  );
+}
+
+/// The rounded, shadowed card the GTK menu opens as.
+class _GtkMenuCard extends StatelessWidget {
+  const _GtkMenuCard({required this.title, required this.entries});
+
+  final String? title;
+  final List<({String label, VoidCallback onPressed})> entries;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final text = context.textStyles;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 220, maxWidth: 320),
+        child: Material(
+          color: colors.surfaceContainerLowest,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.gtkSurfaceRadius),
+            side: BorderSide(color: colors.outline),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (title != null)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                    child: Text(
+                      title!,
+                      style: text.labelMedium?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                for (final entry in entries)
+                  GtkMenuRow(
+                    label: entry.label,
+                    selected: false,
+                    foreground: colors.onSurface,
+                    textStyle: text.bodyMedium,
+                    highlight: colors.surfaceContainerHighest,
+                    onTap: () {
+                      Navigator.of(context).pop();
+                      entry.onPressed();
+                    },
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The GTK menu button, anchored like the other families' are.
+class _GtkMenuButton<T> extends StatefulWidget {
+  const _GtkMenuButton({
+    required this.icon,
+    required this.items,
+    required this.onSelected,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final List<AppMenuItem<T>> items;
+  final ValueChanged<T> onSelected;
+  final String? tooltip;
+
+  @override
+  State<_GtkMenuButton<T>> createState() => _GtkMenuButtonState<T>();
+}
+
+class _GtkMenuButtonState<T> extends State<_GtkMenuButton<T>> {
+  final LayerLink _link = LayerLink();
+  OverlayEntry? _entry;
+
+  @override
+  void dispose() {
+    _close();
+    super.dispose();
+  }
+
+  void _close() {
+    _entry?.remove();
+    _entry = null;
+  }
+
+  void _open() {
+    if (_entry != null) return;
+    final overlay = Overlay.of(context);
+    _entry = OverlayEntry(
+      builder: (context) => Positioned(
+        top: 0,
+        right: 0,
+        child: CompositedTransformFollower(
+          link: _link,
+          targetAnchor: Alignment.bottomRight,
+          followerAnchor: Alignment.topRight,
+          child: TapRegion(
+            onTapOutside: (_) => _close(),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: _GtkMenuCard(
+                title: null,
+                entries: [
+                  for (final item in widget.items)
+                    (
+                      label: item.checked == true
+                          ? '✓  ${item.label}'
+                          : item.label,
+                      onPressed: () => widget.onSelected(item.value),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    overlay.insert(_entry!);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CompositedTransformTarget(
+      link: _link,
+      child: GtkIconButton(
+        icon: widget.icon,
+        tooltip: widget.tooltip,
+        onPressed: _open,
+      ),
+    );
+  }
+}

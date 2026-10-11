@@ -45,9 +45,14 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "YTDL");
+    // The title lives in the Flutter header bar now, the way a GTK4 app puts
+    // it there: this bar carries only the window controls, so it is left
+    // titleless rather than stacking a second "YTDL" above the app's own.
+    // The window title is still set below, because that is what the taskbar,
+    // the WM and Alt-Tab read.
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+    gtk_window_set_title(window, "YTDL");
   } else {
     gtk_window_set_title(window, "YTDL");
   }

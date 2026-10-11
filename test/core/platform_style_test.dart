@@ -14,9 +14,12 @@ import 'package:ytdlp/core/platform_style.dart';
 /// driven by `debugDefaultTargetPlatformOverride`.
 void main() {
   group('platformStyleOf', () {
-    test('Android and Linux draw Material', () {
+    test('Android draws Material', () {
       expect(platformStyleOf(TargetPlatform.android), PlatformStyle.material);
-      expect(platformStyleOf(TargetPlatform.linux), PlatformStyle.material);
+    });
+
+    test('Linux draws the GTK family', () {
+      expect(platformStyleOf(TargetPlatform.linux), PlatformStyle.gtk);
     });
 
     test('Apple platforms draw Cupertino', () {
@@ -42,6 +45,19 @@ void main() {
       expect(find.byType(MaterialApp), findsNothing);
       // Cleared before the test ends: the binding refuses to finish a test
       // that leaves this set, and a `tearDown` runs after that check.
+      debugDefaultTargetPlatformOverride = null;
+    });
+
+    testWidgets('is a MaterialApp on Linux, because GTK is a Material tree', (
+      tester,
+    ) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.linux;
+      await tester.pumpWidget(const _StyleProbe());
+
+      // GTK is drawn from Material widgets plus Adwaita's own chrome, so the
+      // root is a MaterialApp — what makes it GTK is the *theme*, which the
+      // style probe here does not carry.
+      expect(find.byType(MaterialApp), findsOneWidget);
       debugDefaultTargetPlatformOverride = null;
     });
 

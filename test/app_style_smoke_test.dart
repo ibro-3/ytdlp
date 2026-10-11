@@ -100,8 +100,8 @@ void main() {
   for (final platform in [
     TargetPlatform.macOS,
     TargetPlatform.windows,
-    TargetPlatform.android,
     TargetPlatform.linux,
+    TargetPlatform.android,
   ]) {
     testWidgets('$platform: every screen renders without throwing', (
       tester,
@@ -138,10 +138,19 @@ void main() {
 }
 
 /// What the family's own frame looks like in the tree.
+///
+/// GTK's is the header-bar height, which no other family uses: a 42dp bar is
+/// what makes a Linux window read as a GTK app rather than as a retinted
+/// Android one.
 final _frameFor = <PlatformStyle, Finder>{
   PlatformStyle.material: find.byType(AppBar),
   PlatformStyle.cupertino: find.byType(CupertinoNavigationBar),
   PlatformStyle.fluent: find.byType(fui.ScaffoldPage),
+  PlatformStyle.gtk: find.byWidgetPredicate(
+    (widget) =>
+        widget is Container &&
+        widget.constraints?.maxHeight == AppTheme.gtkHeaderHeight,
+  ),
 };
 
 /// A [DownloadManager] that has nothing running and never starts anything.
@@ -192,8 +201,11 @@ class _RootForStyle extends StatelessWidget {
         localizationsDelegates: delegates,
         home: child,
       ),
-      PlatformStyle.material => MaterialApp(
+      // GTK is a Material tree: what makes it GTK is the theme, so this is
+      // `AppTheme.gtk` rather than a fourth kind of root.
+      PlatformStyle.material || PlatformStyle.gtk => MaterialApp(
         theme: AppTheme.light(),
+        darkTheme: AppTheme.dark(),
         localizationsDelegates: delegates,
         home: Scaffold(body: child),
       ),

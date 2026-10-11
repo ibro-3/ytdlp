@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
 
 /// A short message over the app, in the family the OS asked for.
@@ -144,6 +145,18 @@ class _StyledToast extends StatelessWidget {
     final colors = context.colors;
     final text = context.textStyles.bodyMedium;
     final Style style = switch (context.style) {
+      // GTK has no snackbar. What it has is an in-window banner, which is a
+      // card on the view background rather than an inverted one — a light card
+      // pinned to the bottom, dismissible, sitting *inside* the app.
+      PlatformStyle.gtk => (
+        background: colors.surfaceContainerLowest,
+        foreground: colors.onSurface,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(
+            Radius.circular(AppTheme.gtkSurfaceRadius),
+          ),
+        ),
+      ),
       PlatformStyle.material => (
         background: colors.inverseSurface,
         foreground: colors.onInverseSurface,
@@ -172,6 +185,9 @@ class _StyledToast extends StatelessWidget {
       shape: style.shape,
       elevation: 0,
       clipBehavior: Clip.antiAlias,
+      // GTK's banner is bordered rather than floating over a scrim, and the
+      // shadow a Material snackbar has is the wrong depth for it.
+      shadowColor: Colors.transparent,
       child: Padding(
         padding: EdgeInsets.fromLTRB(16, 12, action == null ? 16 : 8, 12),
         child: Row(

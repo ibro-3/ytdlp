@@ -13,6 +13,8 @@ import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import 'platform_gtk.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
 import 'platform_controls.dart';
 import 'platform_feedback.dart';
@@ -78,7 +80,7 @@ class AppSegmented<T extends Object> extends StatelessWidget {
             // A disabled segment is drawn but does not select: neither of the
             // other two families can disable a segment, so the control stays
             // one piece and the option is refused here.
-            final segment = segments.firstWhere((s) => s.value == v);
+            final segment = segments.firstWhere((x) => x.value == v);
             if (!segment.enabled) return;
             onSelectionChanged(v);
           },
@@ -87,7 +89,6 @@ class AppSegmented<T extends Object> extends StatelessWidget {
           unselectedColor: colors.surfaceContainerHighest,
           selectedColor: colors.primary,
         );
-
       case PlatformStyle.fluent:
         return Row(
           mainAxisSize: MainAxisSize.min,
@@ -115,43 +116,29 @@ class AppSegmented<T extends Object> extends StatelessWidget {
               ),
           ],
         );
-    }
-  }
-}
-
-class _SegmentedLabel extends StatelessWidget {
-  const _SegmentedLabel({
-    required this.label,
-    required this.icon,
-    this.enabled = true,
-  });
-
-  final String label;
-  final IconData? icon;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[Icon(icon, size: 16), const SizedBox(width: 4)],
-          Flexible(
-            child: Text(
-              label,
-              style: TextStyle(
-                color: enabled
-                    ? colors.onSurface
-                    : colors.onSurface.withValues(alpha: 0.38),
-              ),
-            ),
+      case PlatformStyle.gtk:
+        // GTK4's linked box: one bordered control with a divider between the
+        // options and the current one filled — no pill, no gap.
+        return Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
+            border: Border.all(color: colors.outline),
           ),
-        ],
-      ),
-    );
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < segments.length; i++)
+                GtkSegmentedItem<T>(
+                  segment: segments[i],
+                  selected: segments[i].value == selected,
+                  first: i == 0,
+                  last: i == segments.length - 1,
+                  onTap: () => onSelectionChanged(segments[i].value),
+                ),
+            ],
+          ),
+        );
+    }
   }
 }
 
@@ -212,6 +199,11 @@ class AppChoiceChip extends StatelessWidget {
           ),
         ),
       ),
+      PlatformStyle.gtk => GtkPill(
+        selected: selected,
+        onTap: () => onSelected(true),
+        child: Text(label),
+      ),
     };
   }
 
@@ -242,6 +234,7 @@ class AppSwitch extends StatelessWidget {
         checked: value,
         onChanged: (v) => onChanged(v),
       ),
+      PlatformStyle.gtk => GtkSwitch(value: value, onChanged: onChanged),
     };
   }
 }
@@ -386,6 +379,26 @@ class AppSlider extends StatelessWidget {
         label: label,
         onChanged: onChanged,
       ),
+      // GTK's slider is a 4dp track with a plain round knob; the theme already
+      // sets the track height, and the knob shape is the only thing missing.
+      PlatformStyle.gtk => SliderTheme(
+        data: SliderThemeData(
+          trackHeight: 4,
+          thumbShape: const RoundSliderThumbShape(
+            enabledThumbRadius: 10,
+            elevation: 0,
+          ),
+          overlayShape: SliderComponentShape.noOverlay,
+        ),
+        child: Slider(
+          value: value.clamp(min, max),
+          min: min,
+          max: max,
+          divisions: divisions,
+          label: label,
+          onChanged: onChanged,
+        ),
+      ),
     };
   }
 }
@@ -469,6 +482,24 @@ class AppTextField extends StatelessWidget {
           if (suffix != null) ...[const SizedBox(width: 8), suffix!],
         ],
       ),
+      // A Material `TextField`, because the GTK look is an entry theme rather
+      // than a different widget: `AppTheme.gtk`'s `inputDecorationTheme` is
+      // what makes it a bordered box with a 2dp focused frame.
+      PlatformStyle.gtk => TextField(
+        controller: controller,
+        obscureText: obscureText,
+        maxLines: obscureText ? 1 : maxLines,
+        autofocus: autofocus,
+        enabled: enabled,
+        decoration: InputDecoration(
+          hintText: placeholder,
+          prefixIcon: prefix,
+          suffixIcon: suffix,
+        ),
+        textInputAction: TextInputAction.done,
+        onSubmitted: onSubmitted,
+        onChanged: onChanged,
+      ),
       PlatformStyle.fluent => fui.TextBox(
         controller: controller,
         obscureText: obscureText,
@@ -528,6 +559,20 @@ class AppSearchField extends StatelessWidget {
           style: TextStyle(color: colors.onSurface),
           onSubmitted: onSubmitted,
         );
+      case PlatformStyle.gtk:
+        // GTK's search entry is the same bordered box, with the icon inside it
+        // and no fill.
+        return TextField(
+          controller: controller,
+          onSubmitted: onSubmitted,
+          decoration: InputDecoration(
+            hintText: placeholder,
+            prefixIcon: const Icon(Icons.link, size: 18),
+            suffixIcon: trailing == null
+                ? null
+                : Row(mainAxisSize: MainAxisSize.min, children: trailing!),
+          ),
+        );
       case PlatformStyle.fluent:
         return fui.TextBox(
           controller: controller,
@@ -566,6 +611,12 @@ class AppCheckbox extends StatelessWidget {
       ),
       PlatformStyle.fluent => fui.Checkbox(
         checked: value,
+        onChanged: (v) => onChanged(v ?? false),
+      ),
+      // Adwaita's checkbox is a rounded square that fills with the accent, so
+      // Material's own is already the right shape.
+      PlatformStyle.gtk => Checkbox(
+        value: value,
         onChanged: (v) => onChanged(v ?? false),
       ),
     };
@@ -618,6 +669,25 @@ class AppLabelChip extends StatelessWidget {
         decoration: BoxDecoration(
           color: colors.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14, color: colors.onSurfaceVariant),
+              const SizedBox(width: 6),
+            ],
+            Text(label, style: text),
+          ],
+        ),
+      ),
+      // GTK4 has no chip. What it has for a non-interactive tag is a pill on
+      // the neutral fill — which is the same shape, minus the tap.
+      PlatformStyle.gtk => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(999),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -697,6 +767,14 @@ class AppFilterChip extends StatelessWidget {
             child: Text(label),
           ),
         ),
+      ),
+      // The same pill, but a toggle: selected fills with the accent, the way
+      // GTK's toggle button does.
+      PlatformStyle.gtk => GtkPill(
+        selected: selected,
+        onTap: () => onSelected(!selected),
+        showCheck: true,
+        child: Text(label),
       ),
     };
   }
@@ -832,6 +910,14 @@ class AppDropdown<T> extends StatelessWidget {
         enabled: enabled,
       ),
       PlatformStyle.fluent => _FluentDropdown<T>(
+        value: value,
+        items: items,
+        onChanged: onChanged,
+        label: label,
+        helper: helper,
+        enabled: enabled,
+      ),
+      PlatformStyle.gtk => GtkDropdown<T>(
         value: value,
         items: items,
         onChanged: onChanged,
@@ -1054,6 +1140,11 @@ class AppTabStrip extends StatelessWidget {
     return AnimatedBuilder(
       animation: tabController,
       builder: (context, _) => switch (context.style) {
+        PlatformStyle.gtk => GtkTabStrip(
+          tabs: tabs,
+          index: tabController.index,
+          onTap: onTap,
+        ),
         PlatformStyle.cupertino => CupertinoSlidingSegmentedControl<int>(
           groupValue: tabController.index,
           onValueChanged: (v) {
@@ -1083,6 +1174,42 @@ class AppTabStrip extends StatelessWidget {
         ),
         PlatformStyle.material => tabBar,
       },
+    );
+  }
+}
+
+class _SegmentedLabel extends StatelessWidget {
+  const _SegmentedLabel({
+    required this.label,
+    required this.icon,
+    this.enabled = true,
+  });
+
+  final String label;
+  final IconData? icon;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[Icon(icon, size: 16), const SizedBox(width: 4)],
+          Flexible(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: enabled
+                    ? colors.onSurface
+                    : colors.onSurface.withValues(alpha: 0.38),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

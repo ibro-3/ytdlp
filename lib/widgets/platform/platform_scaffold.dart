@@ -1,16 +1,19 @@
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart'
+    show CupertinoNavigationBar, CupertinoPageScaffold;
 import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:flutter/material.dart';
 
 import '../../core/platform_style.dart';
+import 'platform_gtk.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
 
-/// The screen frame: an app bar, a body, and optional trailing actions.
+/// The screen frame: a header bar, a body, and optional trailing actions.
 ///
-/// One wrapper because the OS decides which frame a screen gets — Material
-/// `Scaffold`/`AppBar`, a `CupertinoPageScaffold`/`CupertinoNavigationBar`, or a
-/// Fluent `ScaffoldPage`/`PageHeader`. Screens describe the frame once; the
-/// family is chosen here and nowhere else.
+/// One wrapper because the OS decides which frame a screen gets — a Material
+/// `Scaffold`/`AppBar`, a `CupertinoPageScaffold`/`CupertinoNavigationBar`, a
+/// Fluent `ScaffoldPage`/`PageHeader`, or GTK4's header bar. Screens describe the
+/// frame once; the family is chosen here and nowhere else.
 class AppScaffold extends StatelessWidget {
   const AppScaffold({
     super.key,
@@ -21,18 +24,16 @@ class AppScaffold extends StatelessWidget {
     this.bottomBar,
   });
 
-  /// The screen's title. Null means no app bar at all.
+  /// The screen's title. Null means no header bar at all.
   final String? title;
 
-  /// Trailing app-bar widgets, laid out at their intrinsic width (which is
-  /// what Material does, and what the queue page's counts-and-buttons row
-  /// already assumes).
+  /// Trailing header-bar widgets, laid out at their intrinsic width.
   final List<Widget> actions;
 
   final Widget body;
 
   /// Rendered floating over the body, bottom-right. Material has
-  /// `Scaffold.floatingActionButton` for this; the two other families do not,
+  /// `Scaffold.floatingActionButton` for this; the other three families do not,
   /// so they get a positioned overlay instead.
   final Widget? floatingActionButton;
 
@@ -42,7 +43,7 @@ class AppScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // SafeArea used to be applied inside every screen. Moving it here keeps it
-    // in one place and gives Cupertino's and Fluent's full-bleed bars the same
+    // in one place and gives every family's full-bleed bars the same
     // notch-and-gesture handling Material had.
     Widget content = SafeArea(child: body);
     final fab = floatingActionButton;
@@ -97,7 +98,80 @@ class AppScaffold extends StatelessWidget {
           content: content,
           bottomBar: bottomBar,
         );
+      case PlatformStyle.gtk:
+        return _GtkFrame(
+          title: title,
+          actions: actions,
+          bottomBar: bottomBar,
+          child: content,
+        );
     }
+  }
+}
+
+/// The GTK4 frame: a 42px header bar, the window's title in it, and the body
+/// below.
+///
+/// GTK4 apps put their chrome in a header bar and give the window the
+/// decorations — the native runner already draws the client-side window
+/// controls for us, so this bar carries no close button and stops short of the
+/// left edge by the width of those controls. It is the one frame here built
+/// out of Material widgets, because that is what the app has: a `Container`
+/// at the header height over the body, with a bottom hairline rather than an
+/// elevation.
+class _GtkFrame extends StatelessWidget {
+  const _GtkFrame({
+    required this.title,
+    required this.actions,
+    required this.bottomBar,
+    required this.child,
+  });
+
+  final String? title;
+  final List<Widget> actions;
+  final Widget? bottomBar;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final greys = AppTheme.gtkGreys(Theme.of(context).brightness);
+    final text = Theme.of(context).textTheme;
+    final bar = Container(
+      height: AppTheme.gtkHeaderHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(
+        color: greys.header,
+        border: Border(bottom: BorderSide(color: greys.border)),
+      ),
+      child: Row(
+        children: [
+          // Room for the runner's client-side window controls, which sit
+          // outside the Flutter view.
+          const SizedBox(width: 60),
+          if (title case final titleText?)
+            Text(
+              titleText,
+              style: text.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                fontSize: 15,
+              ),
+            ),
+          const Spacer(),
+          for (final action in actions) action,
+        ],
+      ),
+    );
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (title != null) bar,
+          Expanded(child: child),
+          ?bottomBar,
+        ],
+      ),
+    );
   }
 }
 
@@ -105,7 +179,9 @@ class AppScaffold extends StatelessWidget {
 ///
 /// Material's is a filled circle; the Fluent equivalent is a circular icon
 /// button; Cupertino has none, so it is a circle tinted with the theme's accent
-/// — the shape a Mac user expects from a floating control.
+/// — the shape a Mac user expects from a floating control. GTK has no FAB at
+/// all: what it has is a button in the header bar, so this is a flat round
+/// accent-tinted icon button with no shadow.
 class AppFab extends StatelessWidget {
   const AppFab({
     super.key,
@@ -146,6 +222,11 @@ class AppFab extends StatelessWidget {
       PlatformStyle.fluent => fui.IconButton(
         icon: Icon(icon),
         onPressed: onPressed,
+      ),
+      PlatformStyle.gtk => GtkFab(
+        onPressed: onPressed,
+        icon: icon,
+        tooltip: tooltip,
       ),
     };
   }
