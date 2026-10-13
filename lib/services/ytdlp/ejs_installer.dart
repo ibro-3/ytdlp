@@ -128,20 +128,34 @@ class EjsInstaller {
   /// not the same thing as mutual exclusion between callers.
   Future<T> _serialised<T>(Future<T> Function() action) {
     final completer = Completer<T>();
-    _queue = _queue.then<void>((_) {
+    // The callback is `async` and *awaits* the action, which is what makes the
+    // chain a queue rather than a starter: a `.then` whose callback returns
+    // immediately completes as soon as that callback returns, so the action
+    // below would be left running while the next queued install began — two of
+    // them recreating the one shared staging directory, the race this exists to
+    // prevent.
+    _queue = _queue.then<void>((_) async {
       // Errors are reported to [completer], not to the queue: one failed install
       // must not break the wait for the next.
-      unawaited(
-        action().then<void>(
-          (_) => completer.complete,
-          onError: (Object e, StackTrace s) {
-            completer.completeError(e, s);
-          },
-        ),
-      );
+      try {
+        completer.complete(await action());
+      } catch (e, s) {
+        completer.completeError(e, s);
+      }
     });
     return completer.future;
   }
+
+  /// Exposes [_serialised] for a test.
+  ///
+  /// The install itself needs a real bundled CPython runtime to reach the queue,
+  /// so off-device there is otherwise no way to assert the two properties that
+  /// matter: that a *successful* action completes the future it handed back (a
+  /// tear-off instead of a call left it pending for ever, and every successful
+  /// install hung the Settings button on "Installing…"), and that the next queued
+  /// action does not begin until the current one has finished.
+  @visibleForTesting
+  Future<T> serialised<T>(Future<T> Function() action) => _serialised(action);
 
   /// Probes the installed runtime, caching the answer.
   ///

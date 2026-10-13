@@ -599,6 +599,19 @@ class DownloadManager extends ChangeNotifier {
   /// released later, rather than having genuinely failed.
   bool _isPausing(DownloadTask task) => _pausing.contains(task.id);
 
+  /// Records [task] as held and drops it from the in-flight hold set.
+  ///
+  /// Shared by both places a hold lands — the process-spawn guard and the
+  /// post-exit check — so a held task always ends up in the same state, with
+  /// the speed and ETA that would otherwise keep ticking on a card that is no
+  /// longer moving.
+  void _hold(DownloadTask task) {
+    _pausing.remove(task.id);
+    task.status = DownloadStatus.paused;
+    task.speed = null;
+    task.eta = null;
+  }
+
   Future<void> _run(DownloadTask task) async {
     final id = task.id;
     Directory? staging;
@@ -645,6 +658,20 @@ class DownloadManager extends ChangeNotifier {
         // it spawned) keeps writing into the staging directory that `dismiss`
         // and `clearFinished` are free to delete underneath it.
         await _reap(dl, id);
+        return;
+      }
+      // A hold taken while the process was still being spawned. `_pump` marks a
+      // task `downloading` before `_run` registers it in `_processes`, and the
+      // gap spans `startDownload` — which itself resolves the engine and probes
+      // for ffmpeg, both process spawns — so a hold arriving in that window
+      // found nothing to signal and the download carried on to completion. It
+      // then reported itself as held work with a finished file stranded in
+      // staging, never moved into place. Applied here for the same reason the
+      // cancel check above is: this is the first moment there is a handle.
+      if (_isPausing(task)) {
+        dl.cancel();
+        await _reap(dl, id);
+        _hold(task);
         return;
       }
       _processes[id] = dl;
@@ -701,10 +728,7 @@ class DownloadManager extends ChangeNotifier {
         // Stopped on purpose by pauseTask. A non-zero exit is just the kill, so
         // it is not treated as a failure: the task is held with its .part
         // intact and releasing it continues from there.
-        _pausing.remove(id);
-        task.status = DownloadStatus.paused;
-        task.speed = null;
-        task.eta = null;
+        _hold(task);
         return;
       }
       if (code != 0) {
@@ -1154,14 +1178,45 @@ class DownloadManager extends ChangeNotifier {
       await File(source).rename(target);
     } on FileSystemException {
       await File(source).copy(target);
-      await _deleteRecursive(source);
+      await _deleteEntity(source);
     }
   }
 
+  /// Deletes a directory and everything under it.
+  ///
+  /// Deliberately directory-only, and named for it: an earlier `_deleteRecursive`
+  /// was also called with a *file* path from the copy-then-delete fallback above,
+  /// where `Directory(path).exists()` is false for a regular file and the delete
+  /// silently did nothing — leaving the copy in place and the source behind in
+  /// staging, on exactly the cross-filesystem path that fallback exists to serve.
   Future<void> _deleteRecursive(String path) async {
     try {
       final dir = Directory(path);
       if (await dir.exists()) await dir.delete(recursive: true);
+    } catch (_) {}
+  }
+
+  /// Deletes whatever [path] names — file or directory.
+  ///
+  /// Best effort. Used on paths whose kind is not known in advance, where a
+  /// failure to delete leaves an orphan rather than corrupting anything the app
+  /// reports as a download.
+  Future<void> _deleteEntity(String path) async {
+    try {
+      final type = await FileStat.stat(path).then(
+        (s) => s.type,
+        onError: (Object _) => FileSystemEntityType.notFound,
+      );
+      switch (type) {
+        case FileSystemEntityType.file:
+          await File(path).delete();
+        case FileSystemEntityType.directory:
+          await Directory(path).delete(recursive: true);
+        default:
+          // Already gone, or something exotic (a socket or fifo) that has no
+          // business in a staging directory and is not worth handling.
+          break;
+      }
     } catch (_) {}
   }
 

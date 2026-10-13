@@ -696,16 +696,21 @@ class YtdlpService implements DownloadEngine {
           // An error ends this pipe as surely as a close does, so it completes the
           // same future rather than leaving `_drain` waiting on a stream that is
           // never going to deliver another event.
-          onError: (Object _, StackTrace _) => outDone.complete(),
-          onDone: outDone.complete,
+          //
+          // Guarded because `cancelOnError: false` means an error is *followed*
+          // by `onDone` — completing twice throws `StateError` from inside the
+          // listener, where nothing can catch it, so an otherwise ordinary socket
+          // reset became an unhandled async error.
+          onError: (Object _, StackTrace _) => _completeOnce(outDone),
+          onDone: () => _completeOnce(outDone),
           cancelOnError: false,
         );
     final errSub = process.stderr
         .transform(lenientDecoder)
         .listen(
           (chunk) => err.add(chunk),
-          onError: (Object _, StackTrace _) => errDone.complete(),
-          onDone: errDone.complete,
+          onError: (Object _, StackTrace _) => _completeOnce(errDone),
+          onDone: () => _completeOnce(errDone),
           cancelOnError: false,
         );
 
@@ -762,6 +767,17 @@ class YtdlpService implements DownloadEngine {
       stderrOverflowed: err.overflowed,
       killedForFlood: killedForFlood,
     );
+  }
+
+  /// Completes [done] at most once.
+  ///
+  /// A pipe subscription is wired to both `onError` and `onDone`, and with
+  /// `cancelOnError: false` an error is delivered *and then* the stream closes,
+  /// so the second `complete()` would throw `StateError` — from inside a stream
+  /// callback, where it surfaces as an unhandled async error rather than as
+  /// something the fetch could report.
+  static void _completeOnce(Completer<void> done) {
+    if (!done.isCompleted) done.complete();
   }
 
   /// Waits for the pipe to finish, then cancels it.
