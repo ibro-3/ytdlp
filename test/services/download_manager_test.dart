@@ -190,6 +190,56 @@ class _EndlessProcess implements DownloadProcess {
   }
 }
 
+/// Holds [startDownload] open, so a test can act while the manager has already
+/// marked a task `downloading` but has no process registered to signal yet.
+///
+/// That window is real: the manager sets the status in `_pump`, then awaits
+/// `startDownload`, which resolves the engine and probes for ffmpeg — both
+/// process spawns — before `_run` puts the handle in `_processes`.
+class _SlowStartEngine implements DownloadEngine {
+  final Completer<void> _gate = Completer<void>();
+  _FakeProcess? process;
+
+  /// True once the manager is inside `startDownload` and blocked on the gate.
+  bool get spawnStarted => _gate.isCompleted || _entered;
+  bool _entered = false;
+
+  /// Lets the spawn finish. After this the process exists and the run loop
+  /// begins reading its output.
+  void releaseSpawn() {
+    if (!_gate.isCompleted) _gate.complete();
+  }
+
+  @override
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required DownloadOptions options,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
+    List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
+  }) async {
+    _entered = true;
+    await _gate.future;
+    // A real file, so the only thing that can stop this download being reported
+    // as complete is the manager actually stopping it.
+    final file = File(p.join(outputDir, 'Title [abc123].mp4'));
+    await file.parent.create(recursive: true);
+    await file.writeAsString('video-bytes');
+    return process = _FakeProcess(
+      lines: ['[download] Destination: ${file.path}'],
+      exitCode: Completer<int>().future,
+      exitOnCancel: true,
+    );
+  }
+}
+
 /// Hands back one specific process, so a test can observe it directly.
 class _FixedProcessEngine implements DownloadEngine {
   _FixedProcessEngine(this.process);
@@ -1111,8 +1161,41 @@ void main() {
       },
     );
 
-    test('a held task goes back to waiting on release, at the back', () async {
-      final engine = _FakeEngine(
+    test(
+      'a hold taken while the process is still spawning still stops the '
+      'download',
+      () async {
+        // The window this covers: `_pump` marks a task `downloading` before
+        // `_run` can register it in `_processes`, and the gap spans
+        // `startDownload`, which resolves the engine and probes for ffmpeg. A
+        // hold arriving there found nothing to signal, so the download ran on
+        // to completion and then reported itself as held work — with a finished
+        // file stranded in staging, never moved into place.
+        final engine = _SlowStartEngine();
+        final m = manager(engine);
+        addTearDown(m.dispose);
+
+        m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+        await waitUntil(() => engine.spawnStarted);
+
+        final task = m.tasks.single;
+        expect(task.status, DownloadStatus.downloading);
+        expect(m.pauseTask(task.id), isTrue);
+
+        engine.releaseSpawn();
+        await waitUntil(() => task.status != DownloadStatus.downloading);
+
+        expect(task.status, DownloadStatus.paused);
+        expect(task.filePath, isNull, reason: 'nothing was moved into place');
+        expect(
+          engine.process!.cancelCount,
+          greaterThan(0),
+          reason: 'the spawned process must actually be stopped',
+        );
+      },
+    );
+
+    test('a held task goes back to waiting on release, at the back', () async {      final engine = _FakeEngine(
         exitCode: Completer<int>().future,
         exitOnCancel: true,
       );
@@ -2019,6 +2102,57 @@ void main() {
   });
 
   group('DownloadManager cleanup and ops', () {
+    test('a completed download leaves nothing behind in staging', () async {
+      // The copy-then-delete fallback in `_renameIntoPlace` deletes the source
+      // after a cross-filesystem copy. It used to call the directory-only
+      // delete, whose `Directory(path).exists()` is false for a regular file, so
+      // the delete silently did nothing and the finished file stayed in staging
+      // alongside the copy. Asserted on the end state rather than the fallback,
+      // because the fallback itself needs two filesystems to trigger.
+      final engine = _FakeEngine(sidecars: true);
+      final m = manager(engine);
+      addTearDown(m.dispose);
+
+      final t = m.enqueue(
+        video: _video('clean'),
+        format: _video('clean').videoFormats.first,
+      );
+      await waitUntil(() => t.status == DownloadStatus.completed);
+
+      final staging = Directory(
+        p.join(tempRoot.path, '.ytdlp-staging', t.stagingPath ?? 'gone'),
+      );
+      expect(
+        staging.existsSync(),
+        isFalse,
+        reason: 'a completed download must not keep its staging directory',
+      );
+    });
+
+    test('deleteEntity removes a file, not just a directory', () async {
+      // `_deleteRecursive` — directory-only — silently did nothing here, which
+      // is what left the source behind on the cross-filesystem move.
+      final m = manager(_FakeEngine());
+      addTearDown(m.dispose);
+
+      final file = File(p.join(tempRoot.path, 'a-file.txt'))
+        ..writeAsStringSync('bytes');
+      await m.deleteEntity(file.path);
+      expect(file.existsSync(), isFalse);
+
+      final dir = Directory(p.join(tempRoot.path, 'a-dir'))
+        ..createSync(recursive: true);
+      File(p.join(dir.path, 'inside.txt')).writeAsStringSync('bytes');
+      await m.deleteEntity(dir.path);
+      expect(dir.existsSync(), isFalse);
+    });
+
+    test('deleteEntity tolerates a path that is not there', () async {
+      final m = manager(_FakeEngine());
+      addTearDown(m.dispose);
+      await m.deleteEntity(p.join(tempRoot.path, 'never-existed'));
+    });
+
     test('deleteTask removes the file and history entry', () async {
       final engine = _FakeEngine();
       final m = manager(engine);

@@ -1201,6 +1201,13 @@ class DownloadManager extends ChangeNotifier {
   /// Best effort. Used on paths whose kind is not known in advance, where a
   /// failure to delete leaves an orphan rather than corrupting anything the app
   /// reports as a download.
+  ///
+  /// Visible for testing because the bug it replaces is not reachable any other
+  /// way: it only ever fires on the copy-then-delete fallback above, which needs
+  /// an EXDEV rename — two filesystems in one test run.
+  @visibleForTesting
+  Future<void> deleteEntity(String path) => _deleteEntity(path);
+
   Future<void> _deleteEntity(String path) async {
     try {
       final type = await FileStat.stat(path).then(
