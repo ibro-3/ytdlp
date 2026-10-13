@@ -14,6 +14,7 @@ import '../../core/models/youtube_prefs.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
 import 'json_payload.dart';
+import 'process_kill.dart';
 
 /// Builds the yt-dlp command line for one download.
 ///
@@ -238,7 +239,6 @@ class YtdlpProcess implements DownloadProcess {
   YtdlpProcess(this._process);
   final Process _process;
 
-  Timer? _escalate;
   bool _canceled = false;
 
   /// Decodes one of the child's pipes into lines.
@@ -295,42 +295,15 @@ class YtdlpProcess implements DownloadProcess {
   }
 
   @override
-  Future<int> get exitCode async {
-    final code = await _process.exitCode;
-    _escalate?.cancel();
-    _escalate = null;
-    return code;
-  }
-
-  /// How long a canceled process is given to shut down cleanly before being
-  /// killed outright.
-  static const Duration _killGrace = Duration(seconds: 5);
+  Future<int> get exitCode => _process.exitCode;
 
   @override
   void cancel() {
     if (_canceled) return;
     _canceled = true;
-    bool sent = false;
-    try {
-      _process.kill(ProcessSignal.sigterm);
-      sent = true;
-    } catch (_) {
-      try {
-        _process.kill();
-        sent = true;
-      } catch (_) {}
-    }
-    if (!sent) return;
-    // yt-dlp installs a SIGTERM handler and finishes the fragment it is on, so a
-    // wedged child can outlive the cancel indefinitely — and the Android runtime
-    // is a Python parent whose ffmpeg children never see the signal at all.
-    // Escalating means a pause can always complete, rather than leaving the task
-    // stuck in `downloading` with no slot ever freed again.
-    _escalate = Timer(_killGrace, () {
-      try {
-        _process.kill(ProcessSignal.sigkill);
-      } catch (_) {}
-    });
+    // The escalation lives in `killProcess`, which drops its timer as soon as
+    // the child is reaped; `exitCode` no longer has to know about it.
+    killProcess(_process);
   }
 }
 
@@ -376,18 +349,24 @@ class YtdlpService implements DownloadEngine {
   /// be a playlist is a second, cheaper request made with `--flat-playlist` to
   /// enumerate the entries — flat entries carry no stream data, which keeps
   /// even a large collection inside the metadata byte budget.
-  Future<FetchResult> fetch(String url) async {
+  ///
+  /// [cancelled] abandons the fetch: the child is killed and whatever it had
+  /// produced is dropped, so a superseded request stops costing a yt-dlp
+  /// process and the rest of its 90-second budget. The result is *not* an
+  /// error — the caller has already moved on, and throwing here would surface
+  /// a failure for something that succeeded at being ignored.
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     final r = await _binary.ensureRunner();
     final hasFfmpeg = await _binary.hasFfmpeg();
     // Embedding/conversion also needs ffprobe, which is not implied by ffmpeg.
     final canPostprocess = await _binary.hasFfprobe();
 
-    final run = await _runCaptured(r, [
-      '-J',
-      '--no-warnings',
-      '--no-playlist',
-      url,
-    ], timeout: _metadataTimeout);
+    final run = await _runCaptured(
+      r,
+      ['-J', '--no-warnings', '--no-playlist', url],
+      timeout: _metadataTimeout,
+      cancelled: cancelled,
+    );
     if (run.timedOut) {
       throw const YtdlpException(
         'Getting video info timed out. The site may be slow — try again.',
@@ -403,6 +382,7 @@ class YtdlpService implements DownloadEngine {
         url: url,
         hasFfmpeg: hasFfmpeg,
         canPostprocess: canPostprocess,
+        cancelled: cancelled,
       );
     }
 
@@ -454,6 +434,7 @@ class YtdlpService implements DownloadEngine {
     required String url,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     final playlist = await _fetchPlaylistSliceWith(
       r,
@@ -461,6 +442,7 @@ class YtdlpService implements DownloadEngine {
       start: PlaylistPaging.empty.nextStart,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess,
+      cancelled: cancelled,
     );
     if (playlist.isEmpty) {
       throw const YtdlpException(
@@ -475,11 +457,15 @@ class YtdlpService implements DownloadEngine {
   ///
   /// This is the public entry point the picker uses; [fetch] reuses the same
   /// slice logic for its first page, so both paths cap identically.
+  ///
+  /// [cancelled] abandons the listing, killing the child rather than letting a
+  /// superseded request keep running.
   Future<PlaylistInfo> fetchPlaylistSlice({
     required String url,
     required int start,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     final r = await _binary.ensureRunner();
     return _fetchPlaylistSliceWith(
@@ -488,6 +474,7 @@ class YtdlpService implements DownloadEngine {
       start: start,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess,
+      cancelled: cancelled,
     );
   }
 
@@ -531,11 +518,13 @@ class YtdlpService implements DownloadEngine {
     required int start,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     final run = await _runCaptured(
       r,
       buildPlaylistListArgs(url: url, start: start),
       timeout: _metadataTimeout,
+      cancelled: cancelled,
     );
     if (run.timedOut) {
       throw const YtdlpException(
@@ -647,10 +636,16 @@ class YtdlpService implements DownloadEngine {
   /// playlist from a genuinely huge response), while stderr is a diagnostic
   /// stream whose *tail* is kept. Overflowing stderr never fails an otherwise
   /// successful command — chatty warnings are not a download error.
+  ///
+  /// [cancelled] abandons the run and kills the child. A cancelled run is not a
+  /// failed one: the caller has moved on and discards whatever comes back, so
+  /// this returns the usual (non-zero, truncated) capture and lets the caller
+  /// decide.
   Future<_CapturedRun> _runCaptured(
     ProcessRunner runner,
     List<String> args, {
     required Duration timeout,
+    Future<void>? cancelled,
   }) async {
     final Process process;
     try {
@@ -672,15 +667,12 @@ class YtdlpService implements DownloadEngine {
       windowChars: 16 * 1024,
     );
 
-    void kill() {
-      try {
-        process.kill(ProcessSignal.sigterm);
-      } catch (_) {
-        try {
-          process.kill();
-        } catch (_) {}
-      }
-    }
+    // Every stop goes through `killProcess`, which escalates to SIGKILL after a
+    // grace period. It used to send a bare SIGTERM and leave `process.exitCode`
+    // below to wait for a child that had declined to die — a fetch that could
+    // hang past its own timeout, and a pause that could hold its queue slot
+    // forever.
+    void kill() => killProcess(process);
 
     // A payload that blows the budget is never useful to us — stop reading and
     // stop the process rather than letting it write into the void.
@@ -718,6 +710,16 @@ class YtdlpService implements DownloadEngine {
         );
 
     var timedOut = false;
+    // Set once the child is reaped, so a cancellation that arrives a moment
+    // later does not signal a process that is already gone.
+    var exited = false;
+    if (cancelled != null) {
+      unawaited(
+        cancelled.then((_) {
+          if (!exited) kill();
+        }, onError: (Object _, StackTrace _) {}),
+      );
+    }
     final timer = Timer(timeout, () {
       timedOut = true;
       kill();
@@ -736,6 +738,7 @@ class YtdlpService implements DownloadEngine {
     late final int code;
     try {
       code = await process.exitCode;
+      exited = true;
     } finally {
       timer.cancel();
       // Exit status and pipe output arrive on separate channels, so bytes can

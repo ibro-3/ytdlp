@@ -74,7 +74,7 @@ class _FakeYtdlpService extends YtdlpService {
   PlaylistInfo playlistOverride = _playlist();
 
   @override
-  Future<FetchResult> fetch(String url) async {
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     fetched.add(url);
     return resolveAsPlaylist
         ? PlaylistResult(playlistOverride)

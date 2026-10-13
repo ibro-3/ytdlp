@@ -181,6 +181,16 @@ class DownloadManager extends ChangeNotifier {
   /// second is a failure.
   final Set<String> _pausing = {};
 
+  /// Task ids in the order their downloads were started.
+  ///
+  /// The foreground service is started per task, so the notification has to
+  /// describe the task it was actually started for — the oldest one still
+  /// running. [_tasks] cannot answer that: it is newest-first (see [enqueue]),
+  /// so walking it finds the most recently *started* task instead, which with
+  /// concurrency above one is a different video than the one the service was
+  /// started for.
+  final List<String> _runningOrder = [];
+
   /// Set by [dispose], so a run loop that wakes up afterwards (because
   /// disposing killed its process) stays silent.
   bool _disposed = false;
@@ -554,6 +564,7 @@ class DownloadManager extends ChangeNotifier {
       if (task.prefs.downloadArchive && _archiveBusy) continue;
       task.status = DownloadStatus.downloading;
       if (task.prefs.downloadArchive) _archiveBusy = true;
+      _runningOrder.add(task.id);
       // Start the foreground service so the OS doesn't kill us. The throttle is
       // reset so the very first progress update is never swallowed by a
       // percentage recorded for a previous task.
@@ -753,6 +764,7 @@ class DownloadManager extends ChangeNotifier {
       }
     } finally {
       _processes.remove(id);
+      _runningOrder.remove(id);
       _progressNotification.remove(id);
       // An interrupted task keeps its staging directory (and yt-dlp's .part
       // file) so Retry can continue instead of re-downloading from the start:
@@ -1190,11 +1202,13 @@ class DownloadManager extends ChangeNotifier {
   void _updateForegroundNotification() {
     final fg = foregroundService;
     if (fg == null) return;
-    // The oldest downloading task is the one the service was started for.
+    // The service was started for the oldest task still running, which is not
+    // the same as the first entry of [_tasks] — that list is newest-first.
     DownloadTask? task;
-    for (final t in _tasks) {
-      if (t.status == DownloadStatus.downloading) {
-        task = t;
+    for (final id in _runningOrder) {
+      final candidate = _tasks.where((t) => t.id == id).firstOrNull;
+      if (candidate != null && candidate.status == DownloadStatus.downloading) {
+        task = candidate;
         break;
       }
     }

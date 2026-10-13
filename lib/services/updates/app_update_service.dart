@@ -64,14 +64,35 @@ class AppUpdater {
     }
   }
 
+  /// Ceiling on a response body.
+  ///
+  /// A release payload is a few kilobytes; a captive portal's HTML or a
+  /// redirect into something unbounded is not, and the cap keeps that from
+  /// becoming a download of its own.
+  static const int _maxBodyBytes = 1024 * 1024;
+
   Future<String?> _defaultGet(String url) async {
     HttpClient? client;
     try {
-      client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
+      client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 15)
+        // The connect is not the only thing that can stall: a socket that is
+        // open but never sends would otherwise hold the request open for ever.
+        ..idleTimeout = const Duration(seconds: 60);
       final req = await client.getUrl(Uri.parse(url));
+      // The release endpoint is a stable, non-redirecting API URL; pinning
+      // this avoids being silently sent anywhere else.
+      req.followRedirects = false;
       final res = await req.close();
       if (res.statusCode != 200) return null;
-      return await utf8.decodeStream(res);
+      final body = StringBuffer();
+      var received = 0;
+      await for (final chunk in res) {
+        received += chunk.length;
+        if (received > _maxBodyBytes) return null;
+        body.write(utf8.decode(chunk, allowMalformed: true));
+      }
+      return body.toString();
     } catch (_) {
       return null;
     } finally {

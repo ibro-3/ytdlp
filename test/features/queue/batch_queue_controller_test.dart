@@ -30,7 +30,7 @@ class _FakeService extends YtdlpService {
   Duration delay = Duration.zero;
 
   @override
-  Future<FetchResult> fetch(String url) async {
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     requested.add(url);
     if (delay > Duration.zero) await Future<void>.delayed(delay);
     final outcome = results[url];
@@ -65,7 +65,7 @@ class _RetryingService extends YtdlpService {
   final Duration delay;
 
   @override
-  Future<FetchResult> fetch(String url) async {
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     await Future<void>.delayed(delay);
     if (url == flakyUrl && !_failedOnce) {
       _failedOnce = true;
@@ -83,7 +83,7 @@ class _FlakyService extends YtdlpService {
   int calls = 0;
 
   @override
-  Future<FetchResult> fetch(String url) async {
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     calls++;
     if (!succeed) throw const YtdlpException('Video unavailable.');
     return VideoResult(_video('a1'));

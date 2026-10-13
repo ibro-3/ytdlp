@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
@@ -7,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import 'asset_downloader.dart';
+import 'redirect_policy.dart';
 import 'ytdlp_service.dart';
 
 /// How to spawn yt-dlp: either a single self-contained binary (desktop,
@@ -539,7 +542,11 @@ class BinaryManager {
     final url =
         _managedUrl ??
         'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
-    final replaced = await _downloadFromUrl(url, force: true);
+    final replaced = await _downloadFromUrl(
+      url,
+      force: true,
+      expectedSha256: await _publishedSha256For(_officialFileName),
+    );
     if (replaced == null) {
       // The reason the download actually failed, not a generic one: it was
       // either an HTTP status or a body too small to be a build.
@@ -567,8 +574,13 @@ class BinaryManager {
       );
     }
     final tmp = File('${runtime.script}.new');
-    if (!await _downloadToFile(_ytDlpScriptUrl, tmp)) {
-      final why = takeDownloadError();
+    final downloader = AssetDownloader();
+    if (!await downloader.download(
+      _ytDlpScriptUrl,
+      tmp,
+      expectedSha256: await _publishedSha256For('yt-dlp'),
+    )) {
+      final why = downloader.lastError;
       throw YtdlpException(why ?? 'Download failed — check the connection.');
     }
     try {
@@ -584,7 +596,7 @@ class BinaryManager {
           '${detail.isEmpty ? 'exit ${probe.exitCode}' : detail}',
         );
       }
-      await _replaceWith(tmp, File(runtime.script));
+      await AssetDownloader().replaceWith(tmp, File(runtime.script));
     } catch (_) {
       try {
         if (await tmp.exists()) await tmp.delete();
@@ -703,7 +715,7 @@ class BinaryManager {
             await _chmodX(tmp.path);
           } catch (_) {}
         }
-        await _replaceWith(tmp, target);
+        await AssetDownloader().replaceWith(tmp, target);
         return target.path;
       } catch (_) {
         // Asset missing or corrupt — try the next candidate.
@@ -743,6 +755,9 @@ class BinaryManager {
   /// Desktop-only convenience: grab the official single-file build from
   /// GitHub releases into the app support dir (used only when neither a
   /// system install nor a bundled asset exists).
+  ///
+  /// The bytes are checked against the digest GitHub publishes for the same
+  /// release before anything is made executable; see [_publishedSha256For].
   Future<String?> _downloadFromGithub() async {
     if (kIsWeb) return null;
     if (!(Platform.isLinux || Platform.isMacOS || Platform.isWindows)) {
@@ -750,7 +765,10 @@ class BinaryManager {
     }
     final url =
         'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_officialFileName';
-    final path = await _downloadFromUrl(url);
+    final path = await _downloadFromUrl(
+      url,
+      expectedSha256: await _publishedSha256For(_officialFileName),
+    );
     if (path != null) {
       _isSystem = false;
       _managedUrl = url;
@@ -761,75 +779,109 @@ class BinaryManager {
   /// Downloads [url] into the app support `bin/` dir. With [force],
   /// replaces any existing copy (used by updates).
   ///
-  /// The download lands in a temp file first and is only renamed into place
-  /// after it finished and passed validation, so a failed or interrupted
-  /// download never destroys the currently working binary.
-  Future<String?> _downloadFromUrl(String url, {bool force = false}) async {
+  /// [expectedSha256] is the digest the bytes must hash to, when the caller
+  /// knows one. A mismatch fails the download rather than installing a file
+  /// that happens to be non-empty; see [AssetDownloader].
+  Future<String?> _downloadFromUrl(
+    String url, {
+    bool force = false,
+    String? expectedSha256,
+  }) async {
     if (kIsWeb) return null;
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$_ytdlpName');
     if (!force && await target.exists()) return target.path;
-    final ok = await _downloadToFile(url, target);
+    // The transfer itself — byte cap, stall bound, checksum, atomic rename —
+    // lives in [AssetDownloader], which is testable without a support
+    // directory or a platform channel.
+    final downloader = AssetDownloader();
+    final ok = await downloader.download(
+      url,
+      target,
+      expectedSha256: expectedSha256,
+      // Only the app-managed builds are held to the size floor, and only when
+      // no digest was available to check them against.
+      minBytes: _ytdlpName == 'yt-dlp' || _ytdlpName == 'yt-dlp.exe'
+          ? _minPlausibleBinaryBytes
+          : 0,
+    );
+    if (!ok) {
+      // Surfaced rather than swallowed: every caller turns a `false` here into
+      // "yt-dlp was not found", so a 503 or an empty body has to be
+      // distinguishable from a missing install.
+      _lastDownloadError = downloader.lastError;
+    }
     return ok ? target.path : null;
   }
 
-  /// Downloads [url] to [target] atomically: bytes land in a temp file first
-  /// and are only renamed into place once the transfer finished and produced a
-  /// non-empty file. Returns false — leaving [target] untouched — on any
-  /// failure.
-  Future<bool> _downloadToFile(String url, File target) async {
-    if (kIsWeb) return false;
-    final tmp = File('${target.path}.tmp');
+  /// Fetches the SHA-256 GitHub publishes for [asset] in the official release.
+  ///
+  /// The checksum file lives beside the assets in the same release
+  /// (`SHA2-256SUMS`), so it costs one small request and every release ships
+  /// one — verified against the current release, whose index lists every build
+  /// the app can download. When it cannot be read the caller falls back to the
+  /// size sanity bound rather than refusing to install an engine at all: an
+  /// unavailable *index* is a different failure from a bad *file*, and a CDN
+  /// hiccup should not break a first run that would otherwise have worked.
+  Future<String?> _publishedSha256For(String asset) async {
+    final text = await _getText(_sumsUrl);
+    if (text == null) return null;
+    return AssetDownloader.digestFromSums(text, asset);
+  }
+
+  /// The `SHA2-256SUMS` asset, in the same release as the builds.
+  String get _sumsUrl =>
+      'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_sumsAsset';
+
+  /// Reads [url] as text, capped at [_maxSumsBytes].
+  ///
+  /// A checksum index is a few kilobytes; a redirect into a page that is not
+  /// one is not, and the cap keeps that from becoming a download of its own.
+  Future<String?> _getText(String url) async {
     HttpClient? client;
     try {
-      client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
-      final req = await client.getUrl(Uri.parse(url));
-      final res = await req.close();
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        throw YtdlpException('HTTP ${res.statusCode} from $url');
-      }
-      await target.parent.create(recursive: true);
-      if (await tmp.exists()) await tmp.delete();
-      final sink = tmp.openWrite();
-      await res.pipe(sink);
-      await sink.close();
-      final size = await tmp.length();
-      if (size == 0) {
-        throw const YtdlpException('Downloaded file is empty.');
-      }
-      // A real yt-dlp build is megabytes. A few bytes means an error page, a
-      // captive portal, or a truncated transfer that reported success — and the
-      // next step is to chmod it and execute it.
-      if (_ytdlpName == 'yt-dlp' || _ytdlpName == 'yt-dlp.exe') {
-        if (size < _minPlausibleBinaryBytes) {
-          throw YtdlpException(
-            'Downloaded yt-dlp is only $size bytes, which cannot be a build.',
-          );
+      client = HttpClient()
+        ..connectionTimeout = const Duration(seconds: 30)
+        // The connect is not the only thing that can stall: a socket that is
+        // open but never sends would otherwise hold the whole request open.
+        ..idleTimeout = const Duration(seconds: 60);
+      var current = Uri.parse(url);
+      for (var hop = 0; hop <= githubReleaseRedirects.maxRedirects; hop++) {
+        final req = await client.getUrl(current);
+        // Walked by hand so every hop is host-checked; see
+        // `githubReleaseRedirects`.
+        req.followRedirects = false;
+        final res = await req.close();
+        if (isRedirectStatus(res.statusCode)) {
+          final location = res.headers.value(HttpHeaders.locationHeader);
+          if (location == null) return null;
+          await res.drain<void>();
+          current = githubReleaseRedirects.resolve(current, location);
+          continue;
         }
+        if (res.statusCode != 200) return null;
+        final body = StringBuffer();
+        var received = 0;
+        await for (final chunk in res) {
+          received += chunk.length;
+          if (received > _maxSumsBytes) return null;
+          body.write(utf8.decode(chunk, allowMalformed: true));
+        }
+        return body.toString();
       }
-      if (!Platform.isWindows) {
-        try {
-          await Process.run('chmod', ['755', tmp.path]);
-        } catch (_) {}
-      }
-      await _replaceWith(tmp, target);
-      return true;
-    } catch (e) {
-      try {
-        await tmp.delete();
-      } catch (_) {}
-      // Surfaced rather than swallowed. Every caller turns a `false` here into
-      // "yt-dlp was not found", so a 503 or an empty body was reported to the
-      // user as a missing install — pointing them at a system package that was
-      // never the problem.
-      _lastDownloadError = e is YtdlpException ? e.message : e.toString();
-      return false;
+      return null;
+    } catch (_) {
+      return null;
     } finally {
       client?.close(force: true);
     }
   }
 
   /// Why the last download attempt failed, or null if it has not failed.
+  ///
+  /// Set by [AssetDownloader] when a download returns false: the caller turns
+  /// that into "yt-dlp was not found", so a 503, an empty body or a checksum
+  /// mismatch has to be distinguishable from a missing install.
   String? _lastDownloadError;
 
   /// Message from the most recent failed download, cleared by a success.
@@ -839,38 +891,17 @@ class BinaryManager {
     return message;
   }
 
-  /// Floor for a plausible yt-dlp build, used only to catch an error page.
-  ///
-  /// Not an integrity check — see [takeDownloadError] and the module note about
-  /// verification — just a sanity bound so a 2-byte "200 OK" is not executed.
-  static const int _minPlausibleBinaryBytes = 64 * 1024;
+  /// The release's `SHA2-256SUMS` asset, which lists the digest of every build
+  /// the release ships.
+  static const _sumsAsset = 'SHA2-256SUMS';
 
-  /// Renames [src] over [dst]. On failure the previous file (if any) is
-  /// preserved via a backup rename.
-  Future<void> _replaceWith(File src, File dst) async {
-    final existed = await dst.exists();
-    if (!existed) {
-      await src.rename(dst.path);
-      return;
-    }
-    final backup = File('${dst.path}.bak');
-    if (await backup.exists()) await backup.delete();
-    try {
-      await dst.rename(backup.path);
-    } catch (_) {
-      // Destination may be open/locked — keep going with the backup dance.
-    }
-    try {
-      await src.rename(dst.path);
-      try {
-        if (await backup.exists()) await backup.delete();
-      } catch (_) {}
-    } catch (_) {
-      // Revert: put the previous binary back.
-      try {
-        if (await backup.exists()) await backup.rename(dst.path);
-      } catch (_) {}
-      rethrow;
-    }
-  }
+  /// Ceiling on a checksum-index response, which is a few kilobytes.
+  static const int _maxSumsBytes = 64 * 1024;
+
+  /// Floor for a plausible yt-dlp build, used only when no checksum was
+  /// available to check the bytes against — an error page, a captive portal or
+  /// a truncated transfer that reported success, and the next step is to make
+  /// the file executable. With a digest the bytes are verified outright and
+  /// this never runs.
+  static const int _minPlausibleBinaryBytes = 64 * 1024;
 }

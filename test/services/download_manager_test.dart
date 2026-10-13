@@ -16,6 +16,7 @@ import 'package:ytdlp/services/downloads/history_service.dart';
 import 'package:ytdlp/services/downloads/download_layout.dart';
 import 'package:ytdlp/services/downloads/network_probe.dart';
 import 'package:ytdlp/services/downloads/queue_store.dart';
+import 'package:ytdlp/services/foreground/foreground_service.dart';
 import 'package:ytdlp/services/settings/settings_service.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
@@ -422,6 +423,36 @@ VideoInfo _video(String id) => VideoInfo(
   ],
 );
 
+/// Records what the manager asked the foreground service to show, so a test can
+/// assert *which* task the notification describes.
+class _RecordingForegroundDriver implements ForegroundTaskDriver {
+  bool running = false;
+  final List<String> updates = [];
+
+  @override
+  bool get isSupportedHost => true;
+
+  @override
+  Future<bool> isRunning() async => running;
+
+  @override
+  Future<void> start({required String title, required String headline}) async {
+    running = true;
+  }
+
+  @override
+  Future<void> update({required String title, required String headline}) async {
+    updates.add(title);
+  }
+
+  @override
+  Future<void> stop() async {
+    running = false;
+  }
+
+  String? get lastUpdateTitle => updates.isEmpty ? null : updates.last;
+}
+
 /// A [NetworkProbe] whose answer the test controls, so the gate can
 /// be exercised without the platform channel.
 class _FakeProbe implements NetworkProbe {
@@ -475,12 +506,17 @@ void main() {
     }
   }
 
-  DownloadManager manager(DownloadEngine engine, {int maxConcurrency = 1}) {
+  DownloadManager manager(
+    DownloadEngine engine, {
+    int maxConcurrency = 1,
+    ForegroundService? foregroundService,
+  }) {
     return DownloadManager(
       ytdlp: engine,
       history: history,
       downloadsDir: () async => tempRoot,
       maxConcurrency: maxConcurrency,
+      foregroundService: foregroundService,
     );
   }
 
@@ -1641,6 +1677,62 @@ void main() {
         reason: 'a malformed field must not break the download',
       );
     });
+  });
+
+  group('DownloadManager foreground notification', () {
+    test(
+      'describes the oldest task still running, not the newest started',
+      () async {
+        final driver = _RecordingForegroundDriver();
+        final fg = ForegroundService.forTesting(driver);
+        // Progress lines all the way through the run, so the notification is
+        // refreshed while both tasks are in flight.
+        final engine = _PacedProgressEngine()
+          ..duration = const Duration(seconds: 4);
+        final m = manager(engine, maxConcurrency: 1, foregroundService: fg);
+        addTearDown(m.dispose);
+
+        // Distinct titles: `_video` gives every video the same one, which would
+        // make this assertion unable to tell the two tasks apart.
+        VideoInfo titled(String id) => VideoInfo(
+          id: id,
+          title: 'Video $id',
+          webUrl: 'https://example.com/video?id=$id',
+          videoFormats: const [
+            Format(kind: FormatKind.video, label: 'Best', selector: 'b'),
+          ],
+        );
+
+        final first = m.enqueue(
+          video: titled('a'),
+          format: titled('a').videoFormats.first,
+        );
+        await waitUntil(() => driver.updates.isNotEmpty);
+
+        // The second one starts while the first is still running. Starting it
+        // refreshes the notification to its own title — that is the service
+        // answering a new start, not the progress-driven refresh.
+        m.maxConcurrency = 2;
+        final second = m.enqueue(
+          video: titled('b'),
+          format: titled('b').videoFormats.first,
+        );
+        await waitUntil(() => second.status == DownloadStatus.downloading);
+        // The next *progress-driven* refresh is the one that has to keep
+        // describing the oldest running task, not the one that just started.
+        await waitUntil(() => driver.updates.length > 2);
+
+        expect(first.status, DownloadStatus.downloading);
+        expect(second.status, DownloadStatus.downloading);
+        // `_tasks` is newest-first, so walking it would find `second`.
+        expect(
+          driver.lastUpdateTitle,
+          first.video.title,
+          reason: 'the notification must follow the oldest running task',
+        );
+        expect(driver.lastUpdateTitle, isNot(second.video.title));
+      },
+    );
   });
 
   group('DownloadManager playlists', () {
