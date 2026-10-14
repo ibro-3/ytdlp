@@ -6,20 +6,14 @@ YouTube serves different format lists to different "player clients", and increas
 
 Installs `yt-dlp-ejs` into the bundled CPython runtime's `site-packages`.
 
-The install is **verified before it commits, twice over**:
+The install is **verified before it commits, twice over**: the downloaded bytes are compared against the SHA-256 PyPI published for that wheel before anything is unpacked (a manifest carrying no digest is refused), and the staged package is then imported by the bundled interpreter.
 
-1. The downloaded bytes are compared against the SHA-256 PyPI published for that wheel, before anything is unpacked. A manifest that carries no digest is refused rather than installed unverified.
-2. The staged package is imported by the bundled interpreter.
+- Requests may only reach `pypi.org` and `files.pythonhosted.org` over HTTPS, and are never auto-redirected — `HttpClient` follows redirects on its own, and a redirect of the *manifest* request would hand whoever controlled it the download URL and the expected checksum together.
+- What this does **not** detect is a compromised PyPI account publishing a new wheel under the same version.
+- The package is unpacked to a staging directory, rejected if it contains a link or a path escaping it, and **imported from staging before the installed copy is touched**, so the engine is never left without its runtime. Anything that does not import is removed and the previous copy restored; the backup is kept until verification has passed. Installs and uninstalls are serialised, since they share one staging directory.
+- The section reports the real state (`installed` / `not installed` / `installed but not working`) rather than claiming a capability it cannot check.
 
-Requests may only reach `pypi.org` and `files.pythonhosted.org` over HTTPS, and are never auto-redirected: `HttpClient` follows redirects on its own, and a redirect of the *manifest* request would hand whoever controlled it the download URL and the expected checksum together.
-
-What this does **not** detect is a compromised PyPI account publishing a new wheel under the same version — the checksum catches a file that differs from what PyPI published, not a publication PyPI should not have made.
-
-The package is unpacked to a staging directory, rejected if it contains a link or a path escaping that directory, and then **imported from staging before the installed copy is touched**, so the engine is never left without its JavaScript runtime. Anything that does not import is removed and the previous copy restored; the backup is kept until verification has passed. Installs and uninstalls are serialised, since they share one staging directory.
-
-The section reports the real state (`installed` / `not installed` / `installed but not working`) rather than claiming a capability it cannot check.
-
-The `yt-dlp-ejs` version is **pinned** alongside the bundled yt-dlp version rather than tracking "latest", so an install is reproducible and a bad upstream release cannot break every user's downloads. The wheel's checksum comes from PyPI rather than being hard-coded here, and is checked against the manifest over an HTTPS connection to a pinned host.
+The `yt-dlp-ejs` version is **pinned** alongside the bundled yt-dlp version rather than tracking "latest", so an install is reproducible and a bad upstream release cannot break every user's downloads. The wheel's checksum comes from PyPI rather than being hard-coded here.
 
 On desktop installs the runtime is not managed, because a system yt-dlp picks up a system-installed `yt-dlp-ejs` on its own; the section reports that rather than pretending to install something.
 

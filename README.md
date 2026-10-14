@@ -9,21 +9,19 @@ A Flutter app that downloads videos with a **bundled `yt-dlp` binary** and `ffmp
 - **Download** — paste, share or scan a URL, fetch metadata with `yt-dlp -J`, then pick format, quality and subtitles in a bottom sheet. Playlists and channels open a picker instead.
 - **Queue** — live progress with pause, resume, retry, cancel and reordering; concurrent downloads; the queue survives an app restart and resumes from partial files.
 - **Batch** — paste several URLs at once; each resolves and fails on its own.
-- **Library** — searchable, sortable history with file-existence checks, open/share/delete and a folder scan to adopt files the app does not know about.
+- **Library** — searchable, sortable history with file-existence checks, open/share/delete and a folder scan to adopt unknown files.
 - **Settings** — theme, download folder, quality and subtitle defaults, network options, cookies, extra yt-dlp flags, a file-name template, backups and diagnostics.
 
 ## Documentation
 
-The detail lives in `docs/`:
-
 | Document | Contents |
 | -------- | -------- |
-| [docs/features.md](docs/features.md) | What each tab does, queue behaviour, playlists and channels, paging |
-| [docs/architecture.md](docs/architecture.md) | Stack, project structure, storage, engine resolution, notifications, release identity |
-| [docs/advanced-settings.md](docs/advanced-settings.md) | Extra yt-dlp flags, output template, saved templates, backups, diagnostics, capability controls |
-| [docs/youtube-support.md](docs/youtube-support.md) | The `yt-dlp-ejs` JavaScript runtime and player-client selection |
+| [docs/features.md](docs/features.md) | What each tab does, queue behaviour, playlists and channels |
+| [docs/architecture.md](docs/architecture.md) | Stack, storage, engine resolution, release identity |
+| [docs/android.md](docs/android.md) | Bundled runtime and ffmpeg, builds, signing |
+| [docs/advanced-settings.md](docs/advanced-settings.md) | Extra flags, output template, backups, diagnostics |
+| [docs/youtube-support.md](docs/youtube-support.md) | The `yt-dlp-ejs` JavaScript runtime and player clients |
 | [docs/cookies.md](docs/cookies.md) | `cookies.txt` import, per-site control, `--cookies-from-browser` |
-| [docs/android.md](docs/android.md) | Bundled runtime and ffmpeg, per-ABI builds, signing, `targetSdk`, metadata limits |
 
 ## Getting started
 
@@ -34,26 +32,21 @@ flutter test
 flutter run -d linux   # or android
 ```
 
-On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled binary is needed for development; if neither exists the app downloads the official single-file `yt-dlp` build on first run. On Android the CPython runtime, `ffmpeg` and `ffprobe` are bundled as assets — see [docs/android.md](docs/android.md) to rebuild them.
-
-```bash
-./tool/fetch_binaries.sh            # desktop yt-dlp builds (gitignored, dev convenience)
-flutter build apk --release --split-per-abi
-```
+On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled binary is needed for development; if neither exists the app downloads the official single-file `yt-dlp` build on first run. On Android the CPython runtime, `ffmpeg` and `ffprobe` are bundled as assets — see [docs/android.md](docs/android.md).
 
 ## Platform support
 
 | Platform | Status |
 | -------- | ------ |
-| **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, `dataSync` foreground service, share-sheet intake. **Material 3** UI. |
-| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. **Material 3** UI — there is no Cupertino or Fluent equivalent for GTK. |
-| **Windows** | Supported. System or bundled `yt-dlp.exe`. **Fluent UI** UI via [`fluent_ui`](https://pub.dev/packages/fluent_ui). |
-| **macOS** | Supported. Sandboxed (entitlements matter — see [docs/architecture.md](docs/architecture.md)), with notifications. **Cupertino** UI. |
-| **iOS** / **Web** | Dropped. `dart:io` is used throughout and no engine was ever implemented for either. |
+| **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, foreground service, share-sheet intake. **Material 3** UI. |
+| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. **Material 3** UI. |
+| **Windows** | Supported. System or bundled `yt-dlp.exe`. **Fluent UI** via [`fluent_ui`](https://pub.dev/packages/fluent_ui). |
+| **macOS** | Supported. Sandboxed (entitlements matter — see [docs/architecture.md](docs/architecture.md)). **Cupertino** UI. |
+| **iOS** / **Web** | Dropped. `dart:io` is used throughout; no engine was ever implemented for either. |
 
 ## Reporting a bug
 
-Paste the output of **Settings → Copy diagnostics** into the issue. It reports versions, paths, the relevant settings and whether ffmpeg/ffprobe and the JavaScript runtime were found — and never includes cookies or any credential. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Paste the output of **Settings → Copy diagnostics** into the issue. It reports versions, paths, settings and whether ffmpeg/ffprobe and the JavaScript runtime were found — never cookies or any credential. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Contributing
 
@@ -61,4 +54,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). In short: `dart format`, `flutter analyz
 
 ## Licence
 
-GPL-3.0-or-later; see [LICENSE](LICENSE). The bundled binaries carry their own licences, which apply to those binaries rather than to this source code — yt-dlp is GPL-3.0-or-later, the static `ffmpeg` build is LGPL-2.1-or-later, and the CPython runtime is assembled from official Termux packages under the PSF licence.
+GPL-3.0-or-later; see [LICENSE](LICENSE). The bundled binaries carry their own licences: yt-dlp is GPL-3.0-or-later, the static `ffmpeg` build is LGPL-2.1-or-later, and the CPython runtime is assembled from official Termux packages under the PSF licence.
