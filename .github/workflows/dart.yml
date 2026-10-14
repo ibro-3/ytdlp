@@ -102,6 +102,47 @@ jobs:
           path: build/linux/x64/release/bundle
           if-no-files-found: error
 
+  # GTK4 is wired up but the stable SDK ships no GTK4 embedder, so this job
+  # asserts that `FLUTTER_TOOLKIT=gtk4` reaches the configure step and fails
+  # with that preflight rather than silently producing a GTK3 build. It becomes
+  # a real build the day the engine ships `libflutter_linux_gtk4.so` and the
+  # Linux plugin set is GTK3-free.
+  configure-linux-gtk4:
+    name: Configure Linux (GTK4)
+    runs-on: ubuntu-latest
+    needs: analyze-and-test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-4-dev liblzma-dev
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Configure with FLUTTER_TOOLKIT=gtk4
+        run: |
+          FLUTTER_TOOLKIT=gtk4 flutter build linux --release > gtk4.log 2>&1 || true
+          cat gtk4.log
+          # Succeed once the embedder exists, so this job does not need editing.
+          if grep -q 'Configuring done\|Built build/linux' gtk4.log; then
+            echo "A GTK4 embedder is available; this job should now build it."
+            exit 0
+          fi
+          grep -q 'needs the GTK4 embedder' gtk4.log || {
+            echo "::error::FLUTTER_TOOLKIT=gtk4 failed for an unexpected reason"
+            exit 1
+          }
+          echo "No GTK4 embedder in this SDK, as expected; the preflight reported it."
+
   build-windows:
     name: Build Windows (release)
     runs-on: windows-latest

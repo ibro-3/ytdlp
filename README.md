@@ -39,7 +39,7 @@ On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled bina
 | Platform | Status |
 | -------- | ------ |
 | **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, foreground service, share-sheet intake. **Material 3** UI. |
-| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. **Material 3** UI. |
+| **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. **Material 3** UI. GTK3 by default; the shell also builds against GTK4 — see [docs/architecture.md](docs/architecture.md). |
 | **Windows** | Supported. System or bundled `yt-dlp.exe`. **Fluent UI** via [`fluent_ui`](https://pub.dev/packages/fluent_ui). |
 | **macOS** | Supported. Sandboxed (entitlements matter — see [docs/architecture.md](docs/architecture.md)). **Cupertino** UI. |
 | **iOS** / **Web** | Dropped. `dart:io` is used throughout; no engine was ever implemented for either. |

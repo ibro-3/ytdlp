@@ -33,6 +33,49 @@ Downloads are checked against the SHA-256 in the release's `SHA2-256SUMS` before
 
 `ffmpeg` is preferred from `PATH`; without it the app requests combined formats only (`b[ext=mp4][acodec!=none]/b[acodec!=none]`).
 
+## Linux toolkit (GTK3 / GTK4)
+
+The Linux shell is written against one toolkit at a time, chosen at configure
+time by `FLUTTER_TOOLKIT` (`linux/CMakeLists.txt`):
+
+| | `gtk3` (default) | `gtk4` |
+| --- | --- | --- |
+| pkg-config | `gtk+-3.0` | `gtk4` |
+| embedder | `libflutter_linux_gtk.so` | `libflutter_linux_gtk4.so` |
+| window | `gtk_container_add` + explicit realize | `gtk_window_set_child` + present |
+| title bar | header bar on GNOME/Wayland, server title bar elsewhere | header bar always |
+
+```bash
+flutter build linux --release                  # GTK3
+FLUTTER_TOOLKIT=gtk4 flutter build linux       # GTK4
+FLUTTER_EMBEDDER=/path/to/libflutter_linux_gtk4.so flutter build linux
+```
+
+The environment variable exists because `flutter build` forwards a fixed set of
+CMake arguments and no way to add more. A `-DFLUTTER_TOOLKIT=` on a manual
+CMake invocation wins over it, and the cached value is reused in between.
+
+Two preflights stop a GTK4 build rather than producing a broken bundle:
+
+- **The embedder.** `unpack_linux` copies one embedder into `linux/flutter/ephemeral/`,
+  hard-coded to the GTK3 one, so a GTK4 build stages `libflutter_linux_gtk4.so`
+  itself — from `FLUTTER_EMBEDDER` when one is given (a custom engine build, with
+  its `flutter_linux/` headers picked up from beside it), otherwise from the
+  engine's artifact cache. Stable has no such file, and the configure step says
+  so by name rather than failing to link later.
+- **The plugins.** Plugins carry their own CMakeLists, and `url_launcher_linux`
+  still builds against GTK3. It would be handed a GTK4 `FlView` and call GTK3
+  functions on that — and it inherits GTK4's include path through the `flutter`
+  interface target, so it cannot even compile. The plugin list is therefore
+  scanned and the build stops, with no override: the list is derived from the
+  plugin symlinks rather than hard-coded, so the check stops firing by itself
+  once those plugins port.
+
+Nothing in Dart depends on the toolkit: the embedder API is identical from
+Dart's side, and the plugins that matter on Linux are toolkit-free
+(`file_picker_linux` goes through XDG portals). CI's **Configure Linux (GTK4)**
+job holds the line on the preflights.
+
 ## Project structure
 
 ```

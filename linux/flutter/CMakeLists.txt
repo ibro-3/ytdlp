@@ -22,11 +22,82 @@ endfunction()
 # === Flutter Library ===
 # System-level dependencies.
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
+pkg_check_modules(${FLUTTER_GTK_PKG_CONFIG_TARGET} REQUIRED IMPORTED_TARGET ${FLUTTER_GTK_PKG_CONFIG_MODULE})
 pkg_check_modules(GLIB REQUIRED IMPORTED_TARGET glib-2.0)
 pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-2.0)
 
-set(FLUTTER_LIBRARY "${EPHEMERAL_DIR}/libflutter_linux_gtk.so")
+# Set by the parent scope from FLUTTER_TOOLKIT; see linux/CMakeLists.txt.
+set(FLUTTER_LIBRARY "${EPHEMERAL_DIR}/${FLUTTER_EMBEDDER_LIBRARY_NAME}")
+
+# Stages an embedder library into ephemeral/ under the name the toolkit expects,
+# together with the headers a custom engine build ships beside it. The Flutter
+# tool's `unpack_linux` target only ever copies the stable artifact, so anything
+# else has to be staged here.
+function(stage_embedder library)
+  get_filename_component(_library_dir "${library}" DIRECTORY)
+  configure_file("${library}" "${FLUTTER_LIBRARY}" COPYONLY)
+  message(STATUS "Staged embedder: ${library}")
+
+  # A custom engine build keeps its headers in `flutter_linux/` next to the
+  # library; when they are there they are the ones this build has to compile
+  # against, so they overwrite whatever the tool unpacked.
+  if(EXISTS "${_library_dir}/flutter_linux")
+    file(GLOB _embedder_headers "${_library_dir}/flutter_linux/*.h")
+    foreach(_embedder_header IN LISTS _embedder_headers)
+      configure_file("${_embedder_header}" "${EPHEMERAL_DIR}/flutter_linux/"
+        COPYONLY)
+    endforeach()
+    list(LENGTH _embedder_headers _header_count)
+    message(STATUS "Staged ${_header_count} embedder headers from ${_library_dir}")
+  endif()
+endfunction()
+
+if(FLUTTER_EMBEDDER)
+  if(NOT EXISTS "${FLUTTER_EMBEDDER}")
+    message(FATAL_ERROR
+      "FLUTTER_EMBEDDER points at a file that does not exist: ${FLUTTER_EMBEDDER}")
+  endif()
+  get_filename_component(_embedder_name "${FLUTTER_EMBEDDER}" NAME)
+  if(NOT _embedder_name STREQUAL "${FLUTTER_EMBEDDER_LIBRARY_NAME}")
+    message(STATUS "Staging ${_embedder_name} as ${FLUTTER_EMBEDDER_LIBRARY_NAME}")
+  endif()
+  stage_embedder("${FLUTTER_EMBEDDER}")
+elseif(FLUTTER_TOOLKIT STREQUAL "gtk4" AND NOT EXISTS "${FLUTTER_LIBRARY}")
+  # No embedder was named, so look for the toolkit's in the engine's artifact
+  # cache, which is keyed by build mode exactly as the tool's unpack step is.
+  string(TOLOWER "${CMAKE_BUILD_TYPE}" _build_mode)
+  # FLUTTER_TARGET_PLATFORM is already `linux-x64`; the engine's artifact cache
+  # names its directories after it, suffixed with the build mode when the build
+  # is not a debug one.
+  set(_engine_artifact_dirs
+    "${FLUTTER_ROOT}/bin/cache/artifacts/engine/${FLUTTER_TARGET_PLATFORM}")
+  if(NOT _build_mode STREQUAL "debug")
+    list(APPEND _engine_artifact_dirs
+      "${FLUTTER_ROOT}/bin/cache/artifacts/engine/${FLUTTER_TARGET_PLATFORM}-${_build_mode}")
+  endif()
+
+  foreach(_engine_artifact_dir IN LISTS _engine_artifact_dirs)
+    if(EXISTS "${_engine_artifact_dir}/${FLUTTER_EMBEDDER_LIBRARY_NAME}")
+      set(_embedder_source
+        "${_engine_artifact_dir}/${FLUTTER_EMBEDDER_LIBRARY_NAME}")
+      break()
+    endif()
+  endforeach()
+
+  if(_embedder_source)
+    stage_embedder("${_embedder_source}")
+  else()
+    list(JOIN _engine_artifact_dirs ", " _searched_dirs)
+    message(FATAL_ERROR
+      "A GTK4 Linux build needs the GTK4 embedder (${FLUTTER_EMBEDDER_LIBRARY_NAME}), "
+      "which this Flutter SDK does not ship: stable builds "
+      "libflutter_linux_gtk.so against GTK3 and has no GTK4 embedder at all.\n"
+      "Searched: ${_searched_dirs}\n"
+      "Build the default toolkit instead (FLUTTER_TOOLKIT=gtk3, or unset it), or "
+      "point FLUTTER_EMBEDDER at a libflutter_linux_gtk4.so from an engine that "
+      "ships one.")
+  endif()
+endif()
 
 # Published to parent scope for install step.
 set(FLUTTER_LIBRARY ${FLUTTER_LIBRARY} PARENT_SCOPE)
@@ -63,7 +134,7 @@ target_include_directories(flutter INTERFACE
 )
 target_link_libraries(flutter INTERFACE "${FLUTTER_LIBRARY}")
 target_link_libraries(flutter INTERFACE
-  PkgConfig::GTK
+  PkgConfig::${FLUTTER_GTK_PKG_CONFIG_TARGET}
   PkgConfig::GLIB
   PkgConfig::GIO
 )

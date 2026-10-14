@@ -31,6 +31,10 @@ On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled
 binary is needed for development. On Android the runtime and ffmpeg/ffprobe are
 bundled — see `docs/android.md` if you need to rebuild them.
 
+A Linux build needs `libgtk-3-dev`; `FLUTTER_TOOLKIT=gtk4` switches the shell to
+GTK4 and needs `libgtk-4-dev` instead. Both toolkits are described in
+`docs/architecture.md`.
+
 ## Running the checks
 
 CI runs exactly these, so they are the definition of "green":
