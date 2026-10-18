@@ -280,14 +280,19 @@ class DownloadManager extends ChangeNotifier {
       final restored = store.load();
       for (final task in restored) {
         if (task.status == DownloadStatus.queued ||
-            task.status == DownloadStatus.downloading ||
-            // A hold was a decision about the session that just ended, the same
-            // as the global pause, so it is not silently restored either.
-            task.status == DownloadStatus.paused) {
+            task.status == DownloadStatus.downloading) {
           task.status = DownloadStatus.failed;
           task.error =
               'Interrupted when the app closed — tap Retry to continue.';
         }
+        // A paused task keeps its pause across the restart. Pausing is the
+        // user's own deliberate hold — `pauseTask` stopped the process and
+        // froze that exact state — so restoring it as `failed` used to turn a
+        // held download into an XS crash-looking failure with "Interrupted"
+        // claiming a cause it did not have. The hold survives, staging and
+        // `.part` with it, and Resume releases it as before. (`_paused`, the
+        // queue-wide switch, is deliberately *not* restored: it is documented
+        // as a decision about this session.)
         _tasks.add(task);
       }
       _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -313,7 +318,7 @@ class DownloadManager extends ChangeNotifier {
     try {
       final root = await _downloadRoot();
       final stagingRoot = Directory(p.join(root, '.ytdlp-staging'));
-      if (!await stagingRoot.exists()) return;
+      if (!stagingRoot.existsSync()) return;
       final live = keep.whereType<String>().map(p.normalize).toSet();
       await for (final entity in stagingRoot.list()) {
         if (entity is! Directory) continue;
@@ -901,7 +906,7 @@ class DownloadManager extends ChangeNotifier {
     if (path == null) return null;
     if (!p.isWithin(stagingRoot, path)) return null;
     final dir = Directory(path);
-    return await dir.exists() ? dir : null;
+    return dir.existsSync() ? dir : null;
   }
 
   /// Template used inside the staging directory.
@@ -1059,7 +1064,7 @@ class DownloadManager extends ChangeNotifier {
         // there is nothing to match on and every candidate is considered.
         if (fragment != null && !entity.path.contains(fragment)) continue;
         if (_isSidecar(entity.path, _nonMediaExtensions)) continue;
-        final stat = await entity.stat();
+        final stat = entity.statSync();
         if (stat.type != FileSystemEntityType.file || stat.size <= 0) continue;
         if (newest == null || stat.modified.isAfter(newest.modified)) {
           newest = stat;
@@ -1083,7 +1088,7 @@ class DownloadManager extends ChangeNotifier {
 
   Future<bool> _isValidFile(String path) async {
     try {
-      final stat = await File(path).stat();
+      final stat = File(path).statSync();
       return stat.type == FileSystemEntityType.file && stat.size > 0;
     } catch (_) {
       return false;
@@ -1118,7 +1123,7 @@ class DownloadManager extends ChangeNotifier {
           }
         }
       } catch (_) {}
-      final stat = await File(media).stat();
+      final stat = File(media).statSync();
       return (path: media, size: stat.size);
     } catch (_) {
       return null;
@@ -1152,7 +1157,7 @@ class DownloadManager extends ChangeNotifier {
       // mover is done with the candidate either way.
       _reservedNames.add(candidate);
       try {
-        if (await File(candidate).exists()) continue;
+        if (File(candidate).existsSync()) continue;
         await _renameIntoPlace(source, candidate);
         return candidate;
       } finally {
@@ -1192,7 +1197,7 @@ class DownloadManager extends ChangeNotifier {
   Future<void> _deleteRecursive(String path) async {
     try {
       final dir = Directory(path);
-      if (await dir.exists()) await dir.delete(recursive: true);
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
     } catch (_) {}
   }
 
@@ -1304,7 +1309,13 @@ class DownloadManager extends ChangeNotifier {
       _foregroundNotification = null;
       try {
         await fg.stopService();
-      } catch (_) {}
+      } catch (_) {
+        // Swallowed on purpose. This is housekeeping fired off state changes;
+        // a plugin failure on an odd device must not surface as an unhandled
+        // async error in the very caller that was trying to tidy the
+        // notification shade. The next idle check retries, so the worst case
+        // is a lingering notification — nothing the user loses work over.
+      }
     }
   }
 
@@ -1520,18 +1531,51 @@ class DownloadManager extends ChangeNotifier {
     return true;
   }
 
+  /// Whether [path] is a file this app's download flow could have produced.
+  ///
+  /// Used before any file gets *deleted* or handed to the platform (open /
+  /// share). `filePath` round-trips through the queue snapshot, so it is
+  /// corruption- or hand-edit-controlled data exactly like `stagingPath`, whose
+  /// destructive consumers already refuse paths outside the staging root
+  /// ([_deleteTaskStaging]) — this closes the same hole for `filePath`: without
+  /// it, a tampered snapshot turned "delete this download" into the removal of
+  /// an arbitrary file, and "open" into handing out one.
+  ///
+  /// Two roots are accepted: the one currently configured, and the platform
+  /// default. A finished file always lands under whichever root was active at
+  /// download time ([resolveDownloadLayout]), so a `filePath` written before
+  /// the user moved their download folder is still recognized, while a path
+  /// outside anything this app ever used as a root is refused.
+  ///
+  /// Normalized first, because `isWithin` compares components rather than
+  /// resolving them, and a snapshot-supplied `..` segment must not survive the
+  /// check.
+  Future<bool> _isOwnedFinalFile(String path) async {
+    final normalized = p.normalize(path);
+    final root = p.normalize(await _downloadRoot());
+    if (p.isWithin(root, normalized)) return true;
+    final fallback = p.normalize((await downloadsDir()).path);
+    return p.isWithin(fallback, normalized);
+  }
+
   /// Deletes the downloaded file (when present) and its history record.
   /// Returns false when the file existed but could not be deleted — in that
   /// case the history record is kept.
   Future<bool> deleteTask(DownloadTask task) async {
     final path = task.filePath;
-    if (path != null && await File(path).exists()) {
+    var fileDeleted = true;
+    if (path != null &&
+        await _isOwnedFinalFile(path) &&
+        File(path).existsSync()) {
       try {
         await File(path).delete();
       } catch (_) {
-        return false;
+        fileDeleted = false;
       }
     }
+    // A path outside the download root is not touched at all — the queue card
+    // still goes away, since whatever the snapshot pointed at is not ours.
+    if (!fileDeleted) return false;
     try {
       await history.remove(task.id);
     } catch (_) {
@@ -1548,7 +1592,8 @@ class DownloadManager extends ChangeNotifier {
   /// the platform could not open it.
   Future<bool> openTask(DownloadTask task) async {
     final path = task.filePath;
-    if (path == null || !await File(path).exists()) return false;
+    if (path == null || !await _isOwnedFinalFile(path)) return false;
+    if (!File(path).existsSync()) return false;
     try {
       await OpenFilex.open(path);
       return true;
@@ -1560,7 +1605,8 @@ class DownloadManager extends ChangeNotifier {
   /// Shares the downloaded file. Returns false when it is missing.
   Future<bool> shareTask(DownloadTask task) async {
     final path = task.filePath;
-    if (path == null || !await File(path).exists()) return false;
+    if (path == null || !await _isOwnedFinalFile(path)) return false;
+    if (!File(path).existsSync()) return false;
     try {
       await SharePlus.instance.share(
         ShareParams(title: task.video.title, files: [XFile(path)]),

@@ -300,6 +300,80 @@ void main() {
     );
   });
 
+  test(
+    'removeAt does not strand the row that was resolving in parallel',
+    () async {
+      // The regression this guards: removing one item used to bump a shared
+      // token every in-flight fetch checked, so the item *being* resolved at
+      // that moment had its result discarded and stayed `loading` forever —
+      // with `isResolving` stuck true, because it is derived from remaining
+      // loading rows. Here 'a' is the one in flight when 'b' is removed; 'a'
+      // must still land, and the only change must be that 'b' is gone.
+      service = _FakeService({
+        'https://a.example.com/1': 'a1',
+        'https://b.example.com/2': 'b1',
+        'https://c.example.com/3': 'c1',
+      });
+      service.delay = const Duration(milliseconds: 40);
+      final c = await container();
+      final notifier = controller(c);
+
+      final run = notifier.resolveAll([
+        'https://a.example.com/1',
+        'https://b.example.com/2',
+        'https://c.example.com/3',
+      ]);
+      // 'a' is mid-fetch now; 'b' has not started.
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      notifier.removeAt(1);
+      await run;
+
+      final state = c.read(batchQueueControllerProvider);
+      expect(state.items.map((i) => i.url), [
+        'https://a.example.com/1',
+        'https://c.example.com/3',
+      ], reason: 'the removed row is the only one that changed');
+      expect(
+        state.items.every((i) => i.status == BatchItemStatus.ready),
+        isTrue,
+        reason: 'no row is stranded at loading',
+      );
+      expect(state.isResolving, isFalse);
+    },
+  );
+
+  test('removeAt does not write a later result into the wrong row', () async {
+    // Removing the first row shifts every later row down one index. Results
+    // are applied by row identity, not by index, so each URL still lands on
+    // its own row.
+    service = _FakeService({
+      'https://a.example.com/1': 'a1',
+      'https://b.example.com/2': 'b2',
+      'https://c.example.com/3': 'c3',
+    });
+    service.delay = const Duration(milliseconds: 20);
+    final c = await container();
+    final notifier = controller(c);
+
+    final run = notifier.resolveAll([
+      'https://a.example.com/1',
+      'https://b.example.com/2',
+      'https://c.example.com/3',
+    ]);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    notifier.removeAt(0);
+    await run;
+
+    final state = c.read(batchQueueControllerProvider);
+    final byUrl = {for (final i in state.items) i.url: i};
+    expect(byUrl['https://b.example.com/2']?.video?.id, 'b2');
+    expect(byUrl['https://c.example.com/3']?.video?.id, 'c3');
+    expect(state.items.map((i) => i.video?.id), [
+      'b2',
+      'c3',
+    ], reason: 'the list, shifted, still shows the URL its row resolved');
+  });
+
   test('removeAt drops one item', () async {
     service = _FakeService({
       'https://a.example.com/1': 'a1',
@@ -323,6 +397,21 @@ void main() {
     controller(c).removeAt(3);
     controller(c).removeAt(-1);
     expect(c.read(batchQueueControllerProvider).total, 0);
+  });
+
+  test('retryOne ignores an out-of-range index', () async {
+    // Indexes go stale after removeAt/clearFinished; reading
+    // `state.items[index]` before the guard used to throw RangeError.
+    service = _FakeService({'https://a.example.com/1': 'a1'});
+    final c = await container();
+    await controller(c).resolveAll(['https://a.example.com/1']);
+    final before = service.requested.length;
+
+    await controller(c).retryOne(5);
+    await controller(c).retryOne(-1);
+
+    expect(service.requested.length, before, reason: 'no fetch was started');
+    expect(c.read(batchQueueControllerProvider).total, 1);
   });
 
   test('clearFinished keeps only the still-loading items', () async {

@@ -155,6 +155,99 @@ void main() {
         ),
       );
     });
+
+    test(
+      'the fetch returns even when a surviving child holds the pipes open',
+      () async {
+        // The regression this guards: the kill timer stops the process the app
+        // holds a handle on (`/bin/sh`), but a child of *its* own — `sleep`,
+        // which outlives the shell — inherits stdout and keeps the pipe open
+        // long after the exit status has come back. The drain wait after exit
+        // had no deadline, so `fetch` hung for as long as that survivor did,
+        // past the very timeout meant to bound it.
+        //
+        // The script spawns exactly that: a shell that never exits, so the
+        // kill timer fires, plus a `sleep` that lives on holding the pipe.
+        final script = File('${tempRoot.path}/orphan.sh')
+          ..writeAsStringSync('sleep 30 &\nwhile true; do sleep 1; done\n');
+
+        final service = YtdlpService(
+          _ScriptBinaryManager(script.path),
+          metadataTimeout: const Duration(seconds: 2),
+        );
+        final grace = YtdlpService.drainGrace;
+        YtdlpService.drainGrace = const Duration(milliseconds: 400);
+        try {
+          final watch = Stopwatch()..start();
+          await expectLater(
+            service.fetch('https://example.com/watch?v=v1'),
+            throwsA(
+              isA<YtdlpException>().having(
+                (e) => e.message,
+                'message',
+                contains('timed out'),
+              ),
+            ),
+          );
+          watch.stop();
+          // The kill (2s, and at most 5s of escalation before SIGKILL) plus one
+          // drain grace (0.4s) is far short of the surviving `sleep` (30s),
+          // which is what an unbounded drain used to wait out.
+          expect(
+            watch.elapsed,
+            lessThan(const Duration(seconds: 10)),
+            reason:
+                'an orphaned pipe must not extend the fetch past its '
+                'timeout by more than the drain grace',
+          );
+        } finally {
+          YtdlpService.drainGrace = grace;
+        }
+      },
+    );
+  });
+
+  group('the download line stream follows the direct child, not the pipes', () {
+    test(
+      'lines ends even when a surviving grandchild holds stderr open',
+      () async {
+        // The regression this guards: `await for (final line in lines)` is what
+        // drives a running download, and the stream ends only when *both* pipes
+        // do. yt-dlp hands its stderr fd down to the tools it spawns (ffmpeg
+        // during a merge inherits it), so a child that dies on its own — a
+        // SIGKILL from memory pressure is the usual suspect — can leave stderr
+        // open forever, pinning the task in `downloading` with its queue slot.
+        // Past the child's exit the remaining output is a tail at best, so it
+        // is bounded the same way the captured drain is.
+        //
+        // The script spawns exactly that: a shell that exits right away, plus a
+        // `sleep` living on with an inherited stderr.
+        final process = YtdlpProcess(
+          await Process.start('/bin/sh', ['-c', 'sleep 30 &\necho started\n']),
+        );
+        final grace = YtdlpService.drainGrace;
+        YtdlpService.drainGrace = const Duration(milliseconds: 400);
+        try {
+          final watch = Stopwatch()..start();
+          final lines = await process.lines.toList().timeout(
+            const Duration(seconds: 10),
+          );
+          watch.stop();
+          expect(lines, contains(equals('started')));
+          // The direct child exits almost immediately; the surviving `sleep` is
+          // what an unbounded stream used to be waited out by.
+          expect(
+            watch.elapsed,
+            lessThan(const Duration(seconds: 5)),
+            reason:
+                'the pipe tail after the child exits must be bounded by the '
+                'drain grace, not by the grandchild',
+          );
+        } finally {
+          YtdlpService.drainGrace = grace;
+        }
+      },
+    );
   });
 }
 

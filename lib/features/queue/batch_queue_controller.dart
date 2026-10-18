@@ -12,6 +12,7 @@ enum BatchItemStatus { pending, loading, ready, failed }
 class BatchItem {
   const BatchItem({
     required this.url,
+    this.id = 0,
     this.status = BatchItemStatus.pending,
     this.video,
     this.playlist,
@@ -19,6 +20,17 @@ class BatchItem {
   });
 
   final String url;
+
+  /// Identity of this row within a batch, assigned by the controller when the
+  /// row is created (`0` only for rows built outside the controller, e.g. by
+  /// tests seeding a state).
+  ///
+  /// A fetch is tied to the id it was started for, and its result is applied
+  /// by looking that id up again rather than by a fixed index. That is what
+  /// makes removing one row safe while others are in flight: a shared epoch
+  /// bumped by [BatchQueueController.removeAt] used to discard the awaited
+  /// result of *every* in-flight row, stranding them at `loading` forever.
+  final int id;
   final BatchItemStatus status;
   final VideoInfo? video;
   final PlaylistInfo? playlist;
@@ -36,6 +48,8 @@ class BatchItem {
   }) {
     return BatchItem(
       url: url,
+      // Identity is preserved, never changed through a copy.
+      id: id,
       status: status ?? this.status,
       video: video ?? this.video,
       playlist: playlist ?? this.playlist,
@@ -86,11 +100,9 @@ class BatchQueueController extends Notifier<BatchState> {
   /// spinners never resolved.
   int _batchRun = 0;
 
-  /// Bumped when individual items disappear.
-  ///
-  /// Discards a late result for an item that is no longer in the list, without
-  /// disturbing the loop resolving the rest of the batch.
-  int _itemEpoch = 0;
+  /// Source of the ids handed out to new rows. Never reused, so an id still
+  /// found in the state always means "this exact row".
+  int _nextId = 0;
 
   @override
   BatchState build() => const BatchState();
@@ -99,26 +111,27 @@ class BatchQueueController extends Notifier<BatchState> {
   Future<void> resolveAll(List<String> urls) async {
     if (urls.isEmpty) {
       _batchRun++;
-      _itemEpoch++;
       state = const BatchState();
       return;
     }
     final run = ++_batchRun;
-    _itemEpoch++;
-    _write(
-      items: [
-        for (final u in urls)
-          BatchItem(url: u, status: BatchItemStatus.loading),
-      ],
-    );
+    final items = [
+      for (final u in urls)
+        BatchItem(url: u, id: ++_nextId, status: BatchItemStatus.loading),
+    ];
+    _write(items: items);
 
     // Sequential rather than concurrent: yt-dlp is a subprocess per URL, and a
     // large paste fired all at once would spawn dozens of them and thrash the
     // device. Results are written back per item, so the list fills in
     // progressively.
-    for (var i = 0; i < urls.length; i++) {
+    //
+    // The plan is walked by id rather than by index: an item removed mid-run
+    // shifts every later index, so writing by index would resolve URL 3 into
+    // the row that now belongs to URL 4. Residents with an id never shift.
+    for (final planned in items) {
       if (run != _batchRun) return; // The batch was replaced or cleared.
-      await _resolveOne(i, urls[i], run);
+      await _resolveOne(planned.id, planned.url, run);
       if (run != _batchRun) return;
     }
     // Nothing is loading any more, unless a per-item retry is still in flight —
@@ -126,32 +139,39 @@ class BatchQueueController extends Notifier<BatchState> {
     _write();
   }
 
-  /// Fetches one URL into [index].
+  /// Fetches one URL into the row carrying [id].
   ///
   /// Takes the batch token explicitly rather than reading it, so a per-item
   /// retry can join the run already in progress instead of superseding it.
-  Future<void> _resolveOne(int index, String url, int run) async {
-    // Captured before the await so a later edit can be detected after it.
-    final epoch = _itemEpoch;
+  Future<void> _resolveOne(int id, String url, int run) async {
     // Marked loading up front so the row shows a spinner; the result below
-    // replaces it.
+    // replaces it. The row is written where it lives *now*, and the id travels
+    // with it so the result can find it again however the list shifts.
+    final index = _indexOf(id, url);
+    if (index == -1) return; // Removed before its turn came up.
     _write(
       items: _replace(
         index,
-        BatchItem(url: url, status: BatchItemStatus.loading),
+        BatchItem(id: id, url: url, status: BatchItemStatus.loading),
       ),
     );
     try {
       final result = await ref.read(ytdlpServiceProvider).fetch(url);
-      if (epoch != _itemEpoch || run != _batchRun) return;
+      final at = _indexOf(id, url);
+      // Discarded when the row is gone (removed, batch replaced) — a late
+      // result must not resurrect a row the user took away, least of all on
+      // top of whichever row now occupies its old index.
+      if (at == -1 || run != _batchRun) return;
       _write(
-        items: _replace(index, switch (result) {
+        items: _replace(at, switch (result) {
           VideoResult(:final video) => BatchItem(
+            id: id,
             url: url,
             status: BatchItemStatus.ready,
             video: video,
           ),
           PlaylistResult(:final playlist) => BatchItem(
+            id: id,
             url: url,
             status: BatchItemStatus.ready,
             playlist: playlist,
@@ -159,12 +179,18 @@ class BatchQueueController extends Notifier<BatchState> {
         }),
       );
     } catch (e) {
-      if (epoch != _itemEpoch || run != _batchRun) return;
+      final at = _indexOf(id, url);
+      if (at == -1 || run != _batchRun) return;
       final message = e is YtdlpException ? e.message : e.toString();
       _write(
         items: _replace(
-          index,
-          BatchItem(url: url, status: BatchItemStatus.failed, error: message),
+          at,
+          BatchItem(
+            id: id,
+            url: url,
+            status: BatchItemStatus.failed,
+            error: message,
+          ),
         ),
       );
     }
@@ -173,44 +199,49 @@ class BatchQueueController extends Notifier<BatchState> {
   /// Retries one failed item, leaving the rest of the batch alone.
   ///
   /// Joins the run already in progress instead of superseding it, so a batch
-  /// that is still resolving its remaining items keeps going. Only this item's
-  /// result is guarded, by the shared `_itemEpoch` check inside [_resolveOne].
+  /// that is still resolving its remaining items keeps going. Only this
+  /// item's result is guarded, by its id surviving in the state.
   Future<void> retryOne(int index) async {
+    // Bounds-checked: an index goes stale the moment a row is removed or the
+    // finished rows are cleared, and `state.items[index]` would throw
+    // RangeError on a tap that raced that removal.
+    if (index < 0 || index >= state.items.length) return;
     final item = state.items[index];
     if (item.status != BatchItemStatus.failed) return;
-    await _resolveOne(index, item.url, _batchRun);
+    await _resolveOne(item.id, item.url, _batchRun);
   }
 
   /// Removes one item from the batch.
   void removeAt(int index) {
     if (index < 0 || index >= state.items.length) return;
-    // Invalidate any in-flight fetch so a late result cannot resurrect the
-    // removed item — but not the batch run, which is still resolving the rest.
-    _itemEpoch++;
+    // No shared token is bumped here. Each fetch is invalidated by its own id:
+    // a row that disappears simply stops being found for write-back, so its
+    // late result is discarded without touching any other row's in-flight
+    // fetch. Bumping one counter used to do exactly that — every other
+    // pending result was dropped, its row stayed `loading` forever, and the
+    // derived `isResolving` never cleared.
     final next = [...state.items]..removeAt(index);
     _write(items: next);
   }
 
   /// Discards resolved and failed items, keeping the ones still loading.
   void clearFinished() {
-    // A run in progress walks the list by index, so the list changing under it
-    // stops it outright — hence the batch bump. The items it was going to
-    // resolve are kept, but demoted from `loading` to `pending`: nothing is
-    // fetching them any more, and leaving them `loading` would show a spinner
-    // that nothing will ever resolve.
+    // A run in progress is stopped outright (the batch token is bumped), and
+    // the items it had not reached yet are kept but demoted from `loading` to
+    // `pending`: nothing is fetching them any more, and leaving them `loading`
+    // would show a spinner that nothing will ever resolve.
     _batchRun++;
-    _itemEpoch++;
     _write(
       items: [
         for (final i in state.items)
-          if (i.status == BatchItemStatus.loading) BatchItem(url: i.url),
+          if (i.status == BatchItemStatus.loading)
+            BatchItem(id: i.id, url: i.url),
       ],
     );
   }
 
   void clear() {
     _batchRun++;
-    _itemEpoch++;
     state = const BatchState();
   }
 
@@ -233,6 +264,12 @@ class BatchQueueController extends Notifier<BatchState> {
     next[index] = item;
     return next;
   }
+
+  /// Where the row carrying [id] (and [url], because seeded rows can share the
+  /// placeholder id `0`) currently lives, or -1 when it is gone — which is
+  /// itself the answer: a fetch whose row vanished has nowhere to write.
+  int _indexOf(int id, String url) =>
+      state.items.indexWhere((i) => i.id == id && i.url == url);
 }
 
 final batchQueueControllerProvider =

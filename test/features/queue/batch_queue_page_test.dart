@@ -32,11 +32,12 @@ class _SeededBatchController extends BatchQueueController {
   BatchState build() => _initial;
 }
 
-VideoInfo _video(String id) => VideoInfo(
+VideoInfo _video(String id, {bool hasFfmpeg = true}) => VideoInfo(
   id: id,
   title: 'Video $id',
   webUrl: 'https://example.com/watch?v=$id',
   duration: 60,
+  hasFfmpeg: hasFfmpeg,
   videoFormats: const [
     Format(kind: FormatKind.video, label: 'Best', selector: 'b'),
   ],
@@ -480,6 +481,74 @@ void main() {
       expect(manager.enqueued, hasLength(2));
       // The same format object for both — that is the point of a batch choice.
       expect(manager.enqueued[0].$2, same(manager.enqueued[1].$2));
+    });
+
+    testWidgets('a video tier without ffmpeg never produces merge selectors', (
+      tester,
+    ) async {
+      // The regression this guards: the sheet used to hardcode hasFfmpeg true,
+      // so a device without ffmpeg got merge-format download arguments
+      // (`bv*+ba/…`) that fail at download time. The gate has to follow what
+      // the batch's videos reported (see the single-video sheet).
+      await pump(
+        tester,
+        BatchState(
+          items: [
+            BatchItem(
+              url: 'https://example.com/watch?v=a',
+              status: BatchItemStatus.ready,
+              video: _video('a', hasFfmpeg: false),
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Download 1'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Use this for all'));
+      await tester.pumpAndSettle();
+
+      expect(manager.enqueued, hasLength(1));
+      final format = manager.enqueued.single.$2;
+      expect(format.kind, FormatKind.video);
+      expect(
+        format.selector,
+        isNot(contains('+ba')),
+        reason: 'a merge selector needs ffmpeg; this device has none',
+      );
+    });
+
+    testWidgets('with ffmpeg a video tier merges the streams', (tester) async {
+      // The other half of the gate, so the fallback above is not reached by
+      // accident and crisper downloads than necessary.
+      await pump(
+        tester,
+        BatchState(
+          items: [
+            BatchItem(
+              url: 'https://example.com/watch?v=a',
+              status: BatchItemStatus.ready,
+              video: _video('a'),
+            ),
+          ],
+        ),
+      );
+
+      await tester.tap(find.byType(Checkbox).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Download 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use this for all'));
+      await tester.pumpAndSettle();
+
+      expect(
+        manager.enqueued.single.$2.selector,
+        contains('+ba'),
+        reason: 'with ffmpeg the DASH streams are merged, as before',
+      );
     });
 
     testWidgets('cancelling the sheet queues nothing', (tester) async {

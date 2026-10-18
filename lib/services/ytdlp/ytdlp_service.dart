@@ -202,8 +202,23 @@ List<String> _prefsArgs(
 }
 
 class YtdlpException implements Exception {
-  const YtdlpException(this.message);
+  const YtdlpException(this.message, {this.code});
   final String message;
+
+  /// Machine-readable classification, for callers that branch on the *kind*
+  /// of failure.
+  ///
+  /// The UI used to recognise this case by substring-matching English prose —
+  /// the kind of coupling that turns every rewording into a silent regression
+  /// and that i18n would make permanent. Classify at the throw site where the
+  /// cause is known; render [message] to the user.
+  final String? code;
+
+  /// yt-dlp itself could not be located or installed: not on PATH, no bundled
+  /// asset, and the auto-download failed or is unavailable. The UI offers the
+  /// Settings → Update yt-dlp path for this kind specifically.
+  static const missingBinary = 'missing-binary';
+
   @override
   String toString() => message;
 }
@@ -259,7 +274,9 @@ class YtdlpProcess implements DownloadProcess {
     var doneOut = false;
     var doneErr = false;
     void checkDone() {
-      if (doneOut && doneErr && !controller.isClosed) controller.close();
+      if (doneOut && doneErr && !controller.isClosed) {
+        unawaited(controller.close());
+      }
     }
 
     outSub = _lines(_process.stdout).listen(
@@ -291,6 +308,30 @@ class YtdlpProcess implements DownloadProcess {
       doneErr = true;
       checkDone();
     };
+    // The pipes we are reading do not necessarily close when the direct child
+    // does. yt-dlp hands its pipes down to the tools it spawns (an inherited
+    // stderr fd in ffmpeg survives the merge), so a child killed by the OS —
+    // a SIGKILL from memory pressure, not one we ran through `killProcess` —
+    // can leave a grandchild holding the pipe open indefinitely. The
+    // subscriptions above would then stall forever, so the download manager's
+    // `await for (final line in lines)` never finishes and the task is stuck
+    // `downloading` with its slot pinned. Once the child is gone, whatever is
+    // still streaming is a tail at best, so after [YtdlpService.drainGrace]
+    // the remaining subscriptions are dropped and the stream forced closed.
+    // A healthy exit closes its own pipes within milliseconds and the timed
+    // check then no-ops, which is why the grace costs nothing normally.
+    unawaited(
+      _process.exitCode.then((_) {
+        return Future<void>.delayed(YtdlpService.drainGrace).then((_) {
+          if (controller.isClosed) return;
+          unawaited(outSub?.cancel());
+          unawaited(errSub?.cancel());
+          doneOut = true;
+          doneErr = true;
+          checkDone();
+        });
+      }),
+    );
     return controller.stream;
   }
 
@@ -357,9 +398,16 @@ class YtdlpService implements DownloadEngine {
   /// a failure for something that succeeded at being ignored.
   Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     final r = await _binary.ensureRunner();
+    // Both probes are independent, and the *first* call after a cold start is
+    // the moment they cost real time (PATH lookups on desktop, asset
+    // extraction on Android) — after which `BinaryManager` memoizes each
+    // answer, so every other fetch/download pays nothing. Fanning them out
+    // saves half of that one-time wait; there is no ordering requirement to
+    // violate.
+    final canPostprocessFuture = _binary.hasFfprobe();
     final hasFfmpeg = await _binary.hasFfmpeg();
     // Embedding/conversion also needs ffprobe, which is not implied by ffmpeg.
-    final canPostprocess = await _binary.hasFfprobe();
+    final canPostprocess = await canPostprocessFuture;
 
     final run = await _runCaptured(
       r,
@@ -601,17 +649,6 @@ class YtdlpService implements DownloadEngine {
     return err.contains('is a playlist') || err.contains('use --yes-playlist');
   }
 
-  /// Backwards-compatible single-video fetch. Callers that cannot show a
-  /// playlist picker get a clear error instead of a wrong-shaped result.
-  Future<VideoInfo> fetchVideoInfo(String url) async {
-    final result = await fetch(url);
-    if (result is VideoResult) return result.video;
-    throw const YtdlpException(
-      'That link is a playlist, not a single video.\n'
-      'Use the Download tab to pick which videos to get.',
-    );
-  }
-
   /// Explains an oversized metadata response.
   ///
   /// Says whether the app stopped the process itself, because those are two
@@ -736,8 +773,14 @@ class YtdlpService implements DownloadEngine {
     Future<void> drain() async {
       if (drained) return;
       drained = true;
-      await _drain(outSub, outDone.future);
-      await _drain(errSub, errDone.future);
+      try {
+        await drainWithDeadline(outSub, outDone.future);
+        await drainWithDeadline(errSub, errDone.future);
+      } catch (_) {
+        // The drain itself reports nothing: a decode failure was already
+        // swallowed for the reason [_drain] documents, and this catch keeps
+        // the cancellation path from throwing over the payload that was read.
+      }
     }
 
     late final int code;
@@ -801,6 +844,32 @@ class YtdlpService implements DownloadEngine {
       // Intentionally ignored; see above.
     }
     await sub.cancel();
+  }
+
+  /// Deadline for waiting out the pipes after the child is reaped. Generous
+  /// enough that a normal exit — whose pipes close almost immediately — never
+  /// reaches it; short enough that a fetch does not outlive a hung pipe by a
+  /// visible amount. Tests drive real pipes, so they shorten it.
+  @visibleForTesting
+  static Duration drainGrace = const Duration(seconds: 10);
+
+  /// A deadline-bounded pipe drain, for after the child has exited.
+  ///
+  /// The kill timer stops the child this handle knows about, but a grandchild
+  /// that inherited the pipes does not — so `exitCode` completing is not proof
+  /// that the pipes will ever close. Past [drainGrace] the subscription is
+  /// cancelled and the interest is over: losing the last few bytes is the exact
+  /// failure the unbounded wait used to trade for a fetch that never returned.
+  ///
+  /// This is an implementation of "read until quiet" and the caller treats
+  /// what it gets back as best-effort, so a deadline miss is not an error —
+  /// the payload read so far stands.
+  @visibleForTesting
+  static Future<void> drainWithDeadline(
+    StreamSubscription<String> sub,
+    Future<void> done,
+  ) {
+    return _drain(sub, done).timeout(drainGrace, onTimeout: () => sub.cancel());
   }
 
   @override

@@ -1161,41 +1161,39 @@ void main() {
       },
     );
 
-    test(
-      'a hold taken while the process is still spawning still stops the '
-      'download',
-      () async {
-        // The window this covers: `_pump` marks a task `downloading` before
-        // `_run` can register it in `_processes`, and the gap spans
-        // `startDownload`, which resolves the engine and probes for ffmpeg. A
-        // hold arriving there found nothing to signal, so the download ran on
-        // to completion and then reported itself as held work — with a finished
-        // file stranded in staging, never moved into place.
-        final engine = _SlowStartEngine();
-        final m = manager(engine);
-        addTearDown(m.dispose);
+    test('a hold taken while the process is still spawning still stops the '
+        'download', () async {
+      // The window this covers: `_pump` marks a task `downloading` before
+      // `_run` can register it in `_processes`, and the gap spans
+      // `startDownload`, which resolves the engine and probes for ffmpeg. A
+      // hold arriving there found nothing to signal, so the download ran on
+      // to completion and then reported itself as held work — with a finished
+      // file stranded in staging, never moved into place.
+      final engine = _SlowStartEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
 
-        m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
-        await waitUntil(() => engine.spawnStarted);
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(() => engine.spawnStarted);
 
-        final task = m.tasks.single;
-        expect(task.status, DownloadStatus.downloading);
-        expect(m.pauseTask(task.id), isTrue);
+      final task = m.tasks.single;
+      expect(task.status, DownloadStatus.downloading);
+      expect(m.pauseTask(task.id), isTrue);
 
-        engine.releaseSpawn();
-        await waitUntil(() => task.status != DownloadStatus.downloading);
+      engine.releaseSpawn();
+      await waitUntil(() => task.status != DownloadStatus.downloading);
 
-        expect(task.status, DownloadStatus.paused);
-        expect(task.filePath, isNull, reason: 'nothing was moved into place');
-        expect(
-          engine.process!.cancelCount,
-          greaterThan(0),
-          reason: 'the spawned process must actually be stopped',
-        );
-      },
-    );
+      expect(task.status, DownloadStatus.paused);
+      expect(task.filePath, isNull, reason: 'nothing was moved into place');
+      expect(
+        engine.process!.cancelCount,
+        greaterThan(0),
+        reason: 'the spawned process must actually be stopped',
+      );
+    });
 
-    test('a held task goes back to waiting on release, at the back', () async {      final engine = _FakeEngine(
+    test('a held task goes back to waiting on release, at the back', () async {
+      final engine = _FakeEngine(
         exitCode: Completer<int>().future,
         exitOnCancel: true,
       );
@@ -2172,6 +2170,90 @@ void main() {
       expect(history.records, isEmpty);
     });
 
+    test('deleteTask refuses a filePath outside the download root', () async {
+      // The path rides in through the Hive queue snapshot, so it is controlled
+      // data like `stagingPath` — deleting from it unchecked turned "delete
+      // this card" into a delete of an arbitrary file. The card still goes
+      // away; the out-of-root file itself must survive.
+      final engine = _FakeEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
+      final victim = Directory.systemTemp.createTempSync('ytdlp-victim-');
+      addTearDown(() {
+        try {
+          victim.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final foreign = File(p.join(victim.path, 'keep-me.txt'))
+        ..writeAsStringSync('not ours');
+      final t = m.enqueue(
+        video: _video('del'),
+        format: _video('del').videoFormats.first,
+      );
+      t.filePath = foreign.path;
+
+      expect(await m.deleteTask(t), isTrue);
+      expect(foreign.existsSync(), isTrue, reason: 'not ours to delete');
+      expect(m.tasks.where((x) => x.id == t.id), isEmpty);
+      expect(history.records, isEmpty);
+    });
+
+    test(
+      'deleteTask refuses a filePath that escapes the root with .. segments',
+      () async {
+        final engine = _FakeEngine();
+        final m = manager(engine);
+        addTearDown(m.dispose);
+        final victim = Directory.systemTemp.createTempSync('ytdlp-victim-');
+        addTearDown(() {
+          try {
+            victim.deleteSync(recursive: true);
+          } catch (_) {}
+        });
+        final foreign = File(p.join(victim.path, 'keep-me.txt'))
+          ..writeAsStringSync('not ours');
+        final t = m.enqueue(
+          video: _video('del'),
+          format: _video('del').videoFormats.first,
+        );
+        // A snapshot-supplied `..` must not survive the containment check,
+        // which is why the path is normalized before `isWithin`.
+        t.filePath = p.join(
+          tempRoot.path,
+          'Video',
+          '..',
+          '..',
+          p.basename(victim.path),
+          p.basename(foreign.path),
+        );
+        expect(await m.deleteTask(t), isTrue);
+        expect(foreign.existsSync(), isTrue);
+      },
+    );
+
+    test('openTask and shareTask refuse a filePath outside the root', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
+      final victim = Directory.systemTemp.createTempSync('ytdlp-victim-');
+      addTearDown(() {
+        try {
+          victim.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final foreign = File(p.join(victim.path, 'keep-me.txt'))
+        ..writeAsStringSync('not ours');
+      final t = m.enqueue(
+        video: _video('del'),
+        format: _video('del').videoFormats.first,
+      );
+      t.filePath = foreign.path;
+
+      expect(await m.openTask(t), isFalse);
+      expect(await m.shareTask(t), isFalse);
+      expect(foreign.existsSync(), isTrue);
+    });
+
     test('retry starts a fresh task', () async {
       final engine = _NoFileEngine();
       final m = manager(engine);
@@ -2281,15 +2363,17 @@ void main() {
         await waitUntil(() => t.status == DownloadStatus.completed);
 
         expect(t.filePath, endsWith('Title [abc123].mp4'));
+        // Sync probes in a test: one syscall each, and the assert order
+        // stays deterministic.
         expect(
-          await File(p.join(tempRoot.path, 'Video', 'Title [abc123].mp4'))
-              .exists(),
+          File(p.join(tempRoot.path, 'Video', 'Title [abc123].mp4'))
+              .existsSync(),
           isTrue,
         );
         // The sidecar was moved too (destinationIsSidecar wrote one).
         expect(
-          await File(p.join(tempRoot.path, 'Video', 'Title [abc123].en.srt'))
-              .exists(),
+          File(p.join(tempRoot.path, 'Video', 'Title [abc123].en.srt'))
+              .existsSync(),
           isTrue,
         );
       },
@@ -2375,6 +2459,37 @@ void main() {
         expect(engine.started, 0, reason: 'restored tasks do not auto-start');
       },
     );
+
+    test('a user-paused task stays paused across a restart', () async {
+      // The regression this pins: the restore used to force paused tasks to
+      // `failed` alongside the interrupted ones, which read as a crash the
+      // user never had — the pause was their own deliberate hold, taken with
+      // `pauseTask`, and it has to survive the restart with its staging
+      // directory (and therefore Resume) intact.
+      final store = QueueStore(historyBox);
+      final video = _video('abc123');
+      await store.save([
+        DownloadTask(
+          id: 'held',
+          video: video,
+          format: video.videoFormats.first,
+          createdAt: DateTime(2026, 1, 1),
+        )..status = DownloadStatus.paused,
+      ]);
+
+      final m = DownloadManager(
+        ytdlp: _FakeEngine(),
+        history: history,
+        downloadsDir: () async => tempRoot,
+        queueStore: store,
+      );
+      addTearDown(m.dispose);
+      await m.restored;
+
+      final held = m.tasks.single;
+      expect(held.status, DownloadStatus.paused);
+      expect(held.error, isNull, reason: 'nothing failed here');
+    });
 
     test('a snapshot written before queueSeq existed still restores in order', () async {
       // Snapshots from an older build carry no queueSeq, so `fromMap` falls back

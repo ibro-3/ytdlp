@@ -39,6 +39,15 @@ class PluginNetworkProbe implements NetworkProbe {
 
   @override
   Future<void> refresh() async {
-    _last = await Connectivity().checkConnectivity();
+    try {
+      _last = await Connectivity().checkConnectivity();
+    } catch (_) {
+      // Every other plugin call in the app is wrapped, and rightly so: the
+      // platform channel can throw (early teardown, desktop tests) and an
+      // unhandled async error here would go nowhere useful — refresh is
+      // called from a change listener. The last reading keeps standing, so
+      // [mayStart] answers the previous connectivity for one more refresh;
+      // "unknown, assume metered" is its fallback answer, not this path.
+    }
   }
 }
