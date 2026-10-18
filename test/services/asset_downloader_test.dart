@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -35,10 +36,31 @@ class _Server {
     return _Server._(server, body);
   }
 
+  /// A server that sends one byte and then never finishes, closing nothing.
+  ///
+  /// This is the captive-portal shape the bounds exist for — and
+  /// importantly, it is one `HttpClient.idleTimeout` does *not* rescue: the
+  /// pooled-connection idle timeout only closes connections sitting in its
+  /// pool, not a transfer whose last bytes are ages old.
+  static Future<_Server> startStalled() async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    server.listen((req) async {
+      req.response.add([0x41]);
+      await req.response.flush();
+      // Never closed. The server dies with the test.
+      await Completer<void>().future;
+    });
+    return _Server._(server, const []);
+  }
+
   Future<void> close() => _server.close(force: true);
 }
 
 const _payload = 'not a real yt-dlp, but a deterministic body';
+
+/// Idle bound short enough that the stall test yields quickly; the real
+/// default is a minute.
+const _shortIdle = Duration(milliseconds: 400);
 final _payloadBytes = utf8.encode(_payload);
 final _payloadSha = sha256.convert(_payloadBytes).toString();
 
@@ -85,6 +107,30 @@ void main() {
   });
 
   group('download', () {
+    test('a stalled transfer is abandoned by the idle bound', () async {
+      // The regression this guards: the connect timeout only covers the
+      // connect, and `HttpClient.idleTimeout` closes pooled connections but
+      // not a transfer that has stopped moving — so a socket that was open
+      // but never finished held the whole install open for ever.
+      final server = await _Server.startStalled();
+      addTearDown(server.close);
+      final dir = await Directory.systemTemp.createTemp('asset_downloader');
+      addTearDown(() => dir.delete(recursive: true));
+      final target = File('${dir.path}/yt-dlp');
+
+      final downloader = AssetDownloader(idleTimeout: _shortIdle);
+      final watch = Stopwatch()..start();
+      final ok = await downloader.download(server.url, target);
+      watch.stop();
+
+      expect(ok, isFalse, reason: 'the stalled transfer reports its failure');
+      expect(downloader.lastError, isNotNull);
+      expect(target.existsSync(), isFalse);
+      // The bounds, not the test's own patience, ended this: the idle window
+      // plus some slack rather than the forever it used to take.
+      expect(watch.elapsed, lessThan(const Duration(seconds: 10)));
+    });
+
     test('installs a body that hashes to the expected digest', () async {
       final server = await _Server.start(_payloadBytes);
       addTearDown(server.close);

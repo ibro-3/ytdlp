@@ -47,10 +47,21 @@ class AssetDownloader {
 
   /// Bound on a stalled transfer.
   ///
-  /// `connectionTimeout` only covers the connect; a socket that is open but
-  /// never sends (a captive portal, a half-dead link) would otherwise hold the
-  /// request open for ever.
+  /// `connectionTimeout` only covers the connect. A socket that is open but
+  /// stops sending (a captive portal, a half-dead link) would otherwise hold
+  /// the transfer open for ever — and despite the name, `HttpClient`'s own
+  /// `idleTimeout` does *not* do that: it closes pooled connections, not one
+  /// mid-transfer. So the gap between chunks is timed here, and a response
+  /// that goes quiet for more than this is abandoned.
   final Duration idleTimeout;
+
+  /// Bound on the whole transfer.
+  ///
+  /// A slow-but-alive source could keep the idle bound fed forever with a
+  /// drip every 59 seconds; a deadline on the whole body is the second half
+  /// of the same guarantee. `maxBytes` at dial speed is still minutes, which
+  /// is why this is generous rather than tight.
+  final Duration totalTimeout = const Duration(minutes: 10);
 
   /// Which hosts a redirect may point at.
   ///
@@ -86,15 +97,36 @@ class AssetDownloader {
         throw YtdlpException('HTTP ${res.statusCode} from $url');
       }
       await target.parent.create(recursive: true);
-      if (await tmp.exists()) await tmp.delete();
+      if (tmp.existsSync()) tmp.deleteSync();
       final sink = tmp.openWrite();
       // Hashed and counted as the bytes arrive, so a transfer that is going to
       // be thrown away never finishes writing.
       final digest = _DigestCollector();
       final hasher = sha256.startChunkedConversion(digest);
       var received = 0;
+      // Total bound, checked between chunks rather than by wrapping the loop
+      // in a timeout: a completion-side timeout would strand the loop still
+      // running with no listener, pouring further bytes into a closed sink as
+      // unhandled async errors. Between-chunks bounded by the idle bound, the
+      // worst case overhead here is one more idle window.
+      final watch = Stopwatch()..start();
       try {
-        await for (final chunk in res) {
+        await for (final chunk in res.timeout(
+          idleTimeout,
+          onTimeout: (sink) => sink.addError(
+            YtdlpException(
+              'The download stalled: the server stopped sending after '
+              '$received bytes and the transfer was stopped. '
+              'Try again, or check the connection.',
+            ),
+          ),
+        )) {
+          if (watch.elapsed > totalTimeout) {
+            throw YtdlpException(
+              'The download took longer than '
+              '${totalTimeout.inMinutes} minutes and was stopped.',
+            );
+          }
           received += chunk.length;
           if (received > maxBytes) {
             throw YtdlpException(
@@ -157,7 +189,24 @@ class AssetDownloader {
       final req = await client.getUrl(current);
       // Resolved by `_open` so every hop can be checked.
       req.followRedirects = false;
-      final res = await req.close();
+      final res = await req
+          // Listened via catchError rather than a bare await: the socket can
+          // be torn down behind this wait (the caller closes the client in a
+          // `finally`), and an unlistened future would then complete with an
+          // error nothing handled.
+          .close()
+          .catchError(
+            (Object _, StackTrace _) =>
+                throw YtdlpException('Could not reach $current.'),
+          )
+          // The wait for response headers is bounded too: a server that
+          // accepts the connection but never answers would otherwise hang
+          // past every timeout dart:io has for it.
+          .timeout(
+            idleTimeout,
+            onTimeout: () =>
+                throw YtdlpException('The server did not reply in time.'),
+          );
       if (!isRedirectStatus(res.statusCode)) return res;
       final location = res.headers.value(HttpHeaders.locationHeader);
       if (location == null) {
@@ -166,8 +215,11 @@ class AssetDownloader {
           '(HTTP ${res.statusCode}).',
         );
       }
-      // Release the socket before opening the next hop.
-      await res.drain<void>();
+      // Release the socket before opening the next hop. Staged: an unbounded
+      // redirect body would hang an undrained read for ever, and abandoning
+      // the hop is all that matters here — the finally force-closes the
+      // client regardless.
+      await res.drain<void>().timeout(idleTimeout, onTimeout: () {});
       current = redirectPolicy.resolve(current, location);
     }
     throw const RedirectException('Too many redirects while downloading.');
@@ -214,7 +266,7 @@ class AssetDownloader {
       return;
     }
     final backup = File('${dst.path}.bak');
-    if (await backup.exists()) await backup.delete();
+    if (backup.existsSync()) backup.deleteSync();
     try {
       await dst.rename(backup.path);
     } catch (_) {
@@ -223,12 +275,12 @@ class AssetDownloader {
     try {
       await src.rename(dst.path);
       try {
-        if (await backup.exists()) await backup.delete();
+        if (backup.existsSync()) backup.deleteSync();
       } catch (_) {}
     } catch (_) {
       // Revert: put the previous binary back.
       try {
-        if (await backup.exists()) await backup.rename(dst.path);
+        if (backup.existsSync()) await backup.rename(dst.path);
       } catch (_) {}
       rethrow;
     }

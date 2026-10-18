@@ -170,6 +170,28 @@ void main() {
     expect(File(service.generatedPath).readAsStringSync(), before);
   });
 
+  test('writes stage to a temp file and leave no stale copy behind', () async {
+    await service.importSource(_twoSites);
+
+    // A rewrite that goes over the *existing* jar shows the rename-at-once
+    // path, and either way works like a plain write from the outside.
+    await service.buildGenerated(disabled: {'example.test'});
+    await service.buildGenerated(disabled: const {});
+
+    for (final path in [service.sourcePath, service.generatedPath]) {
+      expect(
+        File('$path.tmp').existsSync(),
+        isFalse,
+        reason: 'the staged copy is gone once the rename lands',
+      );
+      expect(
+        _domainsIn(path),
+        hasLength(3),
+        reason: 'the final jar holds the last write, whole',
+      );
+    }
+  });
+
   test('blames an empty source rather than the switches', () async {
     // The two refusals are different problems with different fixes, so the
     // message must not send the user off to re-export a jar that is perfectly

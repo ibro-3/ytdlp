@@ -11,6 +11,7 @@ library;
 /// to silently change behaviour.
 enum ManagedFlag {
   output('output', 'where files are written'),
+  paths('paths', 'which directory files land in'),
   format('format', 'which stream is downloaded'),
   playlist('playlist', 'whether a whole playlist is expanded'),
   ffmpegLocation('ffmpeg-location', 'where ffmpeg is found');
@@ -195,6 +196,12 @@ List<ManagedFlag> findManagedFlags(List<String> tokens) => [
 
 bool _matches(ManagedFlag flag, List<String> tokens) => switch (flag) {
   ManagedFlag.output => hasFlag(tokens, 'output', shortFlag: 'o'),
+  // `-P` is the capitalised short spelling yt-dlp actually uses (lowercase
+  // `-p` means something else), and [hasFlag] compares short names verbatim,
+  // so the capital gets its own check — `-P`, `-P/tmp/here` both count.
+  ManagedFlag.paths =>
+    hasFlag(tokens, 'paths') ||
+        tokens.any((t) => t.startsWith('-P') && !t.startsWith('--')),
   ManagedFlag.format => hasFlag(tokens, 'format', shortFlag: 'f'),
   ManagedFlag.playlist =>
     hasFlag(tokens, 'no-playlist') || hasFlag(tokens, 'yes-playlist'),
@@ -207,6 +214,17 @@ bool _matches(ManagedFlag flag, List<String> tokens) => switch (flag) {
 /// and the app's own value wins, so refusing to save would be hostile to
 /// someone who pasted a full command line. A syntax error is blocking, because
 /// there is no safe reading of the text.
+///
+/// Two families are handled outside [ManagedFlag]:
+///
+/// - Cookie sources (`--cookies`, `--cookies-from-browser`, `--netrc`). The
+///   app emits one of these only when a cookie source is configured, so a
+///   blanket "ignored" would be false — but adding a second source is still
+///   enough of a trap to deserve an issue in either case.
+/// - Anything that executes code. `--exec` is *blocking*: it runs an arbitrary
+///   command on this device the moment a download lands (and `--exec` with no
+///   argument, `-e`, counts too). `--config-location` only loads flags from
+///   another file and stays a warning.
 List<ArgIssue> validateExtraArgs(String raw) {
   final List<String> tokens;
   try {
@@ -226,13 +244,36 @@ List<ArgIssue> validateExtraArgs(String raw) {
       ),
     );
   }
-  if (hasFlag(tokens, 'exec', shortFlag: 'e') ||
-      hasFlag(tokens, 'config-location')) {
+  if (hasFlag(tokens, 'cookies') ||
+      hasFlag(tokens, 'cookies-from-browser') ||
+      hasFlag(tokens, 'netrc')) {
     issues.add(
       const ArgIssue(
         message:
-            'This runs another command or loads a config file. Only add flags '
-            'you trust.',
+            'This sets a cookie source for yt-dlp (--cookies, '
+            '--cookies-from-browser or --netrc). When the app already has a '
+            'cookie file or browser configured, that one is used and this one '
+            'does not apply; with none configured it applies as written — '
+            'only point it at a file you trust.',
+      ),
+    );
+  }
+  if (hasFlag(tokens, 'exec', shortFlag: 'e')) {
+    issues.add(
+      const ArgIssue(
+        isBlocking: true,
+        message:
+            '--exec runs another command on this device as soon as a download '
+            'lands. Configure that command in a terminal instead, or put the '
+            'command itself in a script — this field can neither be trusted '
+            'nor reviewed the way a download flag can.',
+      ),
+    );
+  }
+  if (hasFlag(tokens, 'config-location')) {
+    issues.add(
+      const ArgIssue(
+        message: 'This loads a config file. Only add flags you trust.',
       ),
     );
   }

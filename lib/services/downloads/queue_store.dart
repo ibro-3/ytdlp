@@ -50,14 +50,59 @@ class QueueStore {
   ///
   /// A caller-supplied limit is clamped to [_maxTasks] so a corrupt settings
   /// value cannot make the box grow without bound. The tasks are already
-  /// newest-first (the manager keeps them that way), so `take` keeps the newest.
+  /// newest-first (the manager keeps them that way), and the newest are the
+  /// ones kept first.
+  ///
+  /// When the queue is longer than the limit, the *finished* tasks are the
+  /// first candidates for dropping — oldest first — and only after every
+  /// settled one is gone does truncation start costing unfinished work.
+  /// Dropping straight from the front of the newest-first list meets the
+  /// limit just the same, but meets it *the wrong way round*: the oldest
+  /// entries are usually downloads that the library already holds, while a
+  /// long queue keeps its oldest **queued** downloads at the bottom — where a
+  /// 60-task queue past the limit used to lose exactly those ten links, and
+  /// no card ever said so.
   Future<void> save(
     List<DownloadTask> tasks, {
     int maxTasks = defaultMaxTasks,
   }) {
     final limit = maxTasks.clamp(1, _maxTasks);
-    final snapshot = [for (final t in tasks.take(limit)) t.toMap()];
+    final snapshot = <Map<String, dynamic>>[
+      for (final t in _trim(tasks, limit)) t.toMap(),
+    ];
     return _box.put(_key, snapshot);
+  }
+
+  /// The subset of [tasks] to persist when it exceeds [limit].
+  ///
+  /// [tasks] arrives newest-first; the oldest are the candidates for dropping,
+  /// taken finished-first so finished downloads cost nothing to lose and
+  /// queued ones cost everything ([DownloadStatus.failed] counts as
+  /// unfinished: its staging directory is the part kept for a retry).
+  static List<DownloadTask> _trim(List<DownloadTask> tasks, int limit) {
+    if (tasks.length <= limit) return tasks;
+    var toDrop = tasks.length - limit;
+    final drop = <String>{};
+    // Pass 1: the oldest finished tasks first.
+    const settled = {DownloadStatus.completed, DownloadStatus.canceled};
+    for (final t in tasks.reversed) {
+      if (toDrop <= 0) break;
+      if (!settled.contains(t.status)) continue;
+      drop.add(t.id);
+      toDrop--;
+    }
+    // Pass 2: still over the limit? The oldest of whatever is left goes, at
+    // which point work is being lost — but no less than the limit demands.
+    for (final t in tasks.reversed) {
+      if (toDrop <= 0) break;
+      if (drop.contains(t.id)) continue;
+      drop.add(t.id);
+      toDrop--;
+    }
+    return [
+      for (final t in tasks)
+        if (!drop.contains(t.id)) t,
+    ];
   }
 
   Future<void> clear() => _box.delete(_key);
