@@ -65,3 +65,8 @@ app.*.map.json
 /assets/bin/linux/
 /assets/bin/macos/
 /assets/bin/windows/
+
+# A working document, deliberately not part of history: it is regenerated
+# whenever plans change, and publishes it would freeze aspirational dates into
+# the public record. The committed docs/ pages carry the permanent facts.
+/ROADMAP.md
