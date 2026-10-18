@@ -37,12 +37,18 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
   Future<void> _downloadAll(List<VideoInfo> videos) async {
     if (videos.isEmpty) return;
     final settings = ref.read(settingsControllerProvider);
+    // Whether ffmpeg existed when these videos resolved. Every video carries
+    // the capability its own fetch probed for, so the batch's weakest honest
+    // answer is the safe gate: a device without ffmpeg must get combined-only
+    // selectors even for the video tiers, because merge-format download
+    // arguments would fail at download time for every entry.
+    final hasFfmpeg = videos.every((v) => v.hasFfmpeg);
     final quality = await showAppBottomSheet<_BatchQuality>(
       context: context,
       builder: (context) => Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 640),
-          child: _BatchQualitySheet(settings: settings),
+          child: _BatchQualitySheet(settings: settings, hasFfmpeg: hasFfmpeg),
         ),
       ),
     );
@@ -205,8 +211,14 @@ class _BatchQuality {
 }
 
 class _BatchQualitySheet extends StatefulWidget {
-  const _BatchQualitySheet({required this.settings});
+  const _BatchQualitySheet({required this.settings, required this.hasFfmpeg});
   final AppSettings settings;
+
+  /// Whether ffmpeg was reachable when the batch resolved — merged DASH video
+  /// tiers need it to happen at download time, merged selectors do not, so a
+  /// device without ffmpeg gets combined-only selectors like the single-video
+  /// sheet ([showFormatPickerSheet]).
+  final bool hasFfmpeg;
 
   @override
   State<_BatchQualitySheet> createState() => _BatchQualitySheetState();
@@ -241,7 +253,7 @@ class _BatchQualitySheetState extends State<_BatchQualitySheet> {
         : AppSettings.videoTierOptions;
     final format = _kind == FormatKind.audio
         ? audioFormatForTier(_tier)
-        : videoFormatForTier(_tier, hasFfmpeg: true);
+        : videoFormatForTier(_tier, hasFfmpeg: widget.hasFfmpeg);
 
     return SafeArea(
       child: Padding(
@@ -357,7 +369,7 @@ class _BatchRow extends StatelessWidget {
       leading: item.video == null
           ? Tooltip(
               message: 'Resolve this link first',
-              child: AppCheckbox(value: selected, onChanged: (_) {}),
+              child: AppCheckbox.disabled(value: selected),
             )
           : AppCheckbox(value: selected, onChanged: (_) => onToggle()),
       title: Text(

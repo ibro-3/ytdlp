@@ -16,6 +16,7 @@ import 'package:ytdlp/services/downloads/history_service.dart';
 import 'package:ytdlp/services/downloads/download_layout.dart';
 import 'package:ytdlp/services/downloads/network_probe.dart';
 import 'package:ytdlp/services/downloads/queue_store.dart';
+import 'package:ytdlp/services/foreground/foreground_service.dart';
 import 'package:ytdlp/services/settings/settings_service.dart';
 import 'package:ytdlp/services/ytdlp/ytdlp_service.dart';
 
@@ -186,6 +187,56 @@ class _EndlessProcess implements DownloadProcess {
   void cancel() {
     cancelCount++;
     if (!_killed.isCompleted) _killed.complete(143);
+  }
+}
+
+/// Holds [startDownload] open, so a test can act while the manager has already
+/// marked a task `downloading` but has no process registered to signal yet.
+///
+/// That window is real: the manager sets the status in `_pump`, then awaits
+/// `startDownload`, which resolves the engine and probes for ffmpeg — both
+/// process spawns — before `_run` puts the handle in `_processes`.
+class _SlowStartEngine implements DownloadEngine {
+  final Completer<void> _gate = Completer<void>();
+  _FakeProcess? process;
+
+  /// True once the manager is inside `startDownload` and blocked on the gate.
+  bool get spawnStarted => _gate.isCompleted || _entered;
+  bool _entered = false;
+
+  /// Lets the spawn finish. After this the process exists and the run loop
+  /// begins reading its output.
+  void releaseSpawn() {
+    if (!_gate.isCompleted) _gate.complete();
+  }
+
+  @override
+  Future<DownloadProcess> startDownload({
+    required String url,
+    required Format format,
+    required DownloadOptions options,
+    required String outputDir,
+    required String template,
+    String? cookiesPath,
+    String? cookieBrowser,
+    String cookieBrowserProfile = '',
+    List<String> extraArgs = const [],
+    YtPrefs prefs = const YtPrefs(),
+    String? archivePath,
+    YoutubePrefs youtube = const YoutubePrefs(),
+  }) async {
+    _entered = true;
+    await _gate.future;
+    // A real file, so the only thing that can stop this download being reported
+    // as complete is the manager actually stopping it.
+    final file = File(p.join(outputDir, 'Title [abc123].mp4'));
+    await file.parent.create(recursive: true);
+    await file.writeAsString('video-bytes');
+    return process = _FakeProcess(
+      lines: ['[download] Destination: ${file.path}'],
+      exitCode: Completer<int>().future,
+      exitOnCancel: true,
+    );
   }
 }
 
@@ -422,6 +473,36 @@ VideoInfo _video(String id) => VideoInfo(
   ],
 );
 
+/// Records what the manager asked the foreground service to show, so a test can
+/// assert *which* task the notification describes.
+class _RecordingForegroundDriver implements ForegroundTaskDriver {
+  bool running = false;
+  final List<String> updates = [];
+
+  @override
+  bool get isSupportedHost => true;
+
+  @override
+  Future<bool> isRunning() async => running;
+
+  @override
+  Future<void> start({required String title, required String headline}) async {
+    running = true;
+  }
+
+  @override
+  Future<void> update({required String title, required String headline}) async {
+    updates.add(title);
+  }
+
+  @override
+  Future<void> stop() async {
+    running = false;
+  }
+
+  String? get lastUpdateTitle => updates.isEmpty ? null : updates.last;
+}
+
 /// A [NetworkProbe] whose answer the test controls, so the gate can
 /// be exercised without the platform channel.
 class _FakeProbe implements NetworkProbe {
@@ -475,12 +556,17 @@ void main() {
     }
   }
 
-  DownloadManager manager(DownloadEngine engine, {int maxConcurrency = 1}) {
+  DownloadManager manager(
+    DownloadEngine engine, {
+    int maxConcurrency = 1,
+    ForegroundService? foregroundService,
+  }) {
     return DownloadManager(
       ytdlp: engine,
       history: history,
       downloadsDir: () async => tempRoot,
       maxConcurrency: maxConcurrency,
+      foregroundService: foregroundService,
     );
   }
 
@@ -1075,6 +1161,37 @@ void main() {
       },
     );
 
+    test('a hold taken while the process is still spawning still stops the '
+        'download', () async {
+      // The window this covers: `_pump` marks a task `downloading` before
+      // `_run` can register it in `_processes`, and the gap spans
+      // `startDownload`, which resolves the engine and probes for ffmpeg. A
+      // hold arriving there found nothing to signal, so the download ran on
+      // to completion and then reported itself as held work — with a finished
+      // file stranded in staging, never moved into place.
+      final engine = _SlowStartEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
+
+      m.enqueue(video: _video('a'), format: _video('a').videoFormats.first);
+      await waitUntil(() => engine.spawnStarted);
+
+      final task = m.tasks.single;
+      expect(task.status, DownloadStatus.downloading);
+      expect(m.pauseTask(task.id), isTrue);
+
+      engine.releaseSpawn();
+      await waitUntil(() => task.status != DownloadStatus.downloading);
+
+      expect(task.status, DownloadStatus.paused);
+      expect(task.filePath, isNull, reason: 'nothing was moved into place');
+      expect(
+        engine.process!.cancelCount,
+        greaterThan(0),
+        reason: 'the spawned process must actually be stopped',
+      );
+    });
+
     test('a held task goes back to waiting on release, at the back', () async {
       final engine = _FakeEngine(
         exitCode: Completer<int>().future,
@@ -1643,6 +1760,62 @@ void main() {
     });
   });
 
+  group('DownloadManager foreground notification', () {
+    test(
+      'describes the oldest task still running, not the newest started',
+      () async {
+        final driver = _RecordingForegroundDriver();
+        final fg = ForegroundService.forTesting(driver);
+        // Progress lines all the way through the run, so the notification is
+        // refreshed while both tasks are in flight.
+        final engine = _PacedProgressEngine()
+          ..duration = const Duration(seconds: 4);
+        final m = manager(engine, maxConcurrency: 1, foregroundService: fg);
+        addTearDown(m.dispose);
+
+        // Distinct titles: `_video` gives every video the same one, which would
+        // make this assertion unable to tell the two tasks apart.
+        VideoInfo titled(String id) => VideoInfo(
+          id: id,
+          title: 'Video $id',
+          webUrl: 'https://example.com/video?id=$id',
+          videoFormats: const [
+            Format(kind: FormatKind.video, label: 'Best', selector: 'b'),
+          ],
+        );
+
+        final first = m.enqueue(
+          video: titled('a'),
+          format: titled('a').videoFormats.first,
+        );
+        await waitUntil(() => driver.updates.isNotEmpty);
+
+        // The second one starts while the first is still running. Starting it
+        // refreshes the notification to its own title — that is the service
+        // answering a new start, not the progress-driven refresh.
+        m.maxConcurrency = 2;
+        final second = m.enqueue(
+          video: titled('b'),
+          format: titled('b').videoFormats.first,
+        );
+        await waitUntil(() => second.status == DownloadStatus.downloading);
+        // The next *progress-driven* refresh is the one that has to keep
+        // describing the oldest running task, not the one that just started.
+        await waitUntil(() => driver.updates.length > 2);
+
+        expect(first.status, DownloadStatus.downloading);
+        expect(second.status, DownloadStatus.downloading);
+        // `_tasks` is newest-first, so walking it would find `second`.
+        expect(
+          driver.lastUpdateTitle,
+          first.video.title,
+          reason: 'the notification must follow the oldest running task',
+        );
+        expect(driver.lastUpdateTitle, isNot(second.video.title));
+      },
+    );
+  });
+
   group('DownloadManager playlists', () {
     PlaylistInfo playlist(
       List<VideoInfo> entries, {
@@ -1927,6 +2100,57 @@ void main() {
   });
 
   group('DownloadManager cleanup and ops', () {
+    test('a completed download leaves nothing behind in staging', () async {
+      // The copy-then-delete fallback in `_renameIntoPlace` deletes the source
+      // after a cross-filesystem copy. It used to call the directory-only
+      // delete, whose `Directory(path).exists()` is false for a regular file, so
+      // the delete silently did nothing and the finished file stayed in staging
+      // alongside the copy. Asserted on the end state rather than the fallback,
+      // because the fallback itself needs two filesystems to trigger.
+      final engine = _FakeEngine(sidecars: true);
+      final m = manager(engine);
+      addTearDown(m.dispose);
+
+      final t = m.enqueue(
+        video: _video('clean'),
+        format: _video('clean').videoFormats.first,
+      );
+      await waitUntil(() => t.status == DownloadStatus.completed);
+
+      final staging = Directory(
+        p.join(tempRoot.path, '.ytdlp-staging', t.stagingPath ?? 'gone'),
+      );
+      expect(
+        staging.existsSync(),
+        isFalse,
+        reason: 'a completed download must not keep its staging directory',
+      );
+    });
+
+    test('deleteEntity removes a file, not just a directory', () async {
+      // `_deleteRecursive` — directory-only — silently did nothing here, which
+      // is what left the source behind on the cross-filesystem move.
+      final m = manager(_FakeEngine());
+      addTearDown(m.dispose);
+
+      final file = File(p.join(tempRoot.path, 'a-file.txt'))
+        ..writeAsStringSync('bytes');
+      await m.deleteEntity(file.path);
+      expect(file.existsSync(), isFalse);
+
+      final dir = Directory(p.join(tempRoot.path, 'a-dir'))
+        ..createSync(recursive: true);
+      File(p.join(dir.path, 'inside.txt')).writeAsStringSync('bytes');
+      await m.deleteEntity(dir.path);
+      expect(dir.existsSync(), isFalse);
+    });
+
+    test('deleteEntity tolerates a path that is not there', () async {
+      final m = manager(_FakeEngine());
+      addTearDown(m.dispose);
+      await m.deleteEntity(p.join(tempRoot.path, 'never-existed'));
+    });
+
     test('deleteTask removes the file and history entry', () async {
       final engine = _FakeEngine();
       final m = manager(engine);
@@ -1944,6 +2168,90 @@ void main() {
         isFalse,
       );
       expect(history.records, isEmpty);
+    });
+
+    test('deleteTask refuses a filePath outside the download root', () async {
+      // The path rides in through the Hive queue snapshot, so it is controlled
+      // data like `stagingPath` — deleting from it unchecked turned "delete
+      // this card" into a delete of an arbitrary file. The card still goes
+      // away; the out-of-root file itself must survive.
+      final engine = _FakeEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
+      final victim = Directory.systemTemp.createTempSync('ytdlp-victim-');
+      addTearDown(() {
+        try {
+          victim.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final foreign = File(p.join(victim.path, 'keep-me.txt'))
+        ..writeAsStringSync('not ours');
+      final t = m.enqueue(
+        video: _video('del'),
+        format: _video('del').videoFormats.first,
+      );
+      t.filePath = foreign.path;
+
+      expect(await m.deleteTask(t), isTrue);
+      expect(foreign.existsSync(), isTrue, reason: 'not ours to delete');
+      expect(m.tasks.where((x) => x.id == t.id), isEmpty);
+      expect(history.records, isEmpty);
+    });
+
+    test(
+      'deleteTask refuses a filePath that escapes the root with .. segments',
+      () async {
+        final engine = _FakeEngine();
+        final m = manager(engine);
+        addTearDown(m.dispose);
+        final victim = Directory.systemTemp.createTempSync('ytdlp-victim-');
+        addTearDown(() {
+          try {
+            victim.deleteSync(recursive: true);
+          } catch (_) {}
+        });
+        final foreign = File(p.join(victim.path, 'keep-me.txt'))
+          ..writeAsStringSync('not ours');
+        final t = m.enqueue(
+          video: _video('del'),
+          format: _video('del').videoFormats.first,
+        );
+        // A snapshot-supplied `..` must not survive the containment check,
+        // which is why the path is normalized before `isWithin`.
+        t.filePath = p.join(
+          tempRoot.path,
+          'Video',
+          '..',
+          '..',
+          p.basename(victim.path),
+          p.basename(foreign.path),
+        );
+        expect(await m.deleteTask(t), isTrue);
+        expect(foreign.existsSync(), isTrue);
+      },
+    );
+
+    test('openTask and shareTask refuse a filePath outside the root', () async {
+      final engine = _FakeEngine();
+      final m = manager(engine);
+      addTearDown(m.dispose);
+      final victim = Directory.systemTemp.createTempSync('ytdlp-victim-');
+      addTearDown(() {
+        try {
+          victim.deleteSync(recursive: true);
+        } catch (_) {}
+      });
+      final foreign = File(p.join(victim.path, 'keep-me.txt'))
+        ..writeAsStringSync('not ours');
+      final t = m.enqueue(
+        video: _video('del'),
+        format: _video('del').videoFormats.first,
+      );
+      t.filePath = foreign.path;
+
+      expect(await m.openTask(t), isFalse);
+      expect(await m.shareTask(t), isFalse);
+      expect(foreign.existsSync(), isTrue);
     });
 
     test('retry starts a fresh task', () async {
@@ -2055,15 +2363,17 @@ void main() {
         await waitUntil(() => t.status == DownloadStatus.completed);
 
         expect(t.filePath, endsWith('Title [abc123].mp4'));
+        // Sync probes in a test: one syscall each, and the assert order
+        // stays deterministic.
         expect(
-          await File(p.join(tempRoot.path, 'Video', 'Title [abc123].mp4'))
-              .exists(),
+          File(p.join(tempRoot.path, 'Video', 'Title [abc123].mp4'))
+              .existsSync(),
           isTrue,
         );
         // The sidecar was moved too (destinationIsSidecar wrote one).
         expect(
-          await File(p.join(tempRoot.path, 'Video', 'Title [abc123].en.srt'))
-              .exists(),
+          File(p.join(tempRoot.path, 'Video', 'Title [abc123].en.srt'))
+              .existsSync(),
           isTrue,
         );
       },
@@ -2149,6 +2459,37 @@ void main() {
         expect(engine.started, 0, reason: 'restored tasks do not auto-start');
       },
     );
+
+    test('a user-paused task stays paused across a restart', () async {
+      // The regression this pins: the restore used to force paused tasks to
+      // `failed` alongside the interrupted ones, which read as a crash the
+      // user never had — the pause was their own deliberate hold, taken with
+      // `pauseTask`, and it has to survive the restart with its staging
+      // directory (and therefore Resume) intact.
+      final store = QueueStore(historyBox);
+      final video = _video('abc123');
+      await store.save([
+        DownloadTask(
+          id: 'held',
+          video: video,
+          format: video.videoFormats.first,
+          createdAt: DateTime(2026, 1, 1),
+        )..status = DownloadStatus.paused,
+      ]);
+
+      final m = DownloadManager(
+        ytdlp: _FakeEngine(),
+        history: history,
+        downloadsDir: () async => tempRoot,
+        queueStore: store,
+      );
+      addTearDown(m.dispose);
+      await m.restored;
+
+      final held = m.tasks.single;
+      expect(held.status, DownloadStatus.paused);
+      expect(held.error, isNull, reason: 'nothing failed here');
+    });
 
     test('a snapshot written before queueSeq existed still restores in order', () async {
       // Snapshots from an older build carry no queueSeq, so `fromMap` falls back

@@ -14,6 +14,7 @@ import '../../core/models/youtube_prefs.dart';
 import 'binary_manager.dart';
 import 'bounded_capture.dart';
 import 'json_payload.dart';
+import 'process_kill.dart';
 
 /// Builds the yt-dlp command line for one download.
 ///
@@ -201,8 +202,23 @@ List<String> _prefsArgs(
 }
 
 class YtdlpException implements Exception {
-  const YtdlpException(this.message);
+  const YtdlpException(this.message, {this.code});
   final String message;
+
+  /// Machine-readable classification, for callers that branch on the *kind*
+  /// of failure.
+  ///
+  /// The UI used to recognise this case by substring-matching English prose —
+  /// the kind of coupling that turns every rewording into a silent regression
+  /// and that i18n would make permanent. Classify at the throw site where the
+  /// cause is known; render [message] to the user.
+  final String? code;
+
+  /// yt-dlp itself could not be located or installed: not on PATH, no bundled
+  /// asset, and the auto-download failed or is unavailable. The UI offers the
+  /// Settings → Update yt-dlp path for this kind specifically.
+  static const missingBinary = 'missing-binary';
+
   @override
   String toString() => message;
 }
@@ -238,7 +254,6 @@ class YtdlpProcess implements DownloadProcess {
   YtdlpProcess(this._process);
   final Process _process;
 
-  Timer? _escalate;
   bool _canceled = false;
 
   /// Decodes one of the child's pipes into lines.
@@ -259,7 +274,9 @@ class YtdlpProcess implements DownloadProcess {
     var doneOut = false;
     var doneErr = false;
     void checkDone() {
-      if (doneOut && doneErr && !controller.isClosed) controller.close();
+      if (doneOut && doneErr && !controller.isClosed) {
+        unawaited(controller.close());
+      }
     }
 
     outSub = _lines(_process.stdout).listen(
@@ -291,46 +308,43 @@ class YtdlpProcess implements DownloadProcess {
       doneErr = true;
       checkDone();
     };
+    // The pipes we are reading do not necessarily close when the direct child
+    // does. yt-dlp hands its pipes down to the tools it spawns (an inherited
+    // stderr fd in ffmpeg survives the merge), so a child killed by the OS —
+    // a SIGKILL from memory pressure, not one we ran through `killProcess` —
+    // can leave a grandchild holding the pipe open indefinitely. The
+    // subscriptions above would then stall forever, so the download manager's
+    // `await for (final line in lines)` never finishes and the task is stuck
+    // `downloading` with its slot pinned. Once the child is gone, whatever is
+    // still streaming is a tail at best, so after [YtdlpService.drainGrace]
+    // the remaining subscriptions are dropped and the stream forced closed.
+    // A healthy exit closes its own pipes within milliseconds and the timed
+    // check then no-ops, which is why the grace costs nothing normally.
+    unawaited(
+      _process.exitCode.then((_) {
+        return Future<void>.delayed(YtdlpService.drainGrace).then((_) {
+          if (controller.isClosed) return;
+          unawaited(outSub?.cancel());
+          unawaited(errSub?.cancel());
+          doneOut = true;
+          doneErr = true;
+          checkDone();
+        });
+      }),
+    );
     return controller.stream;
   }
 
   @override
-  Future<int> get exitCode async {
-    final code = await _process.exitCode;
-    _escalate?.cancel();
-    _escalate = null;
-    return code;
-  }
-
-  /// How long a canceled process is given to shut down cleanly before being
-  /// killed outright.
-  static const Duration _killGrace = Duration(seconds: 5);
+  Future<int> get exitCode => _process.exitCode;
 
   @override
   void cancel() {
     if (_canceled) return;
     _canceled = true;
-    bool sent = false;
-    try {
-      _process.kill(ProcessSignal.sigterm);
-      sent = true;
-    } catch (_) {
-      try {
-        _process.kill();
-        sent = true;
-      } catch (_) {}
-    }
-    if (!sent) return;
-    // yt-dlp installs a SIGTERM handler and finishes the fragment it is on, so a
-    // wedged child can outlive the cancel indefinitely — and the Android runtime
-    // is a Python parent whose ffmpeg children never see the signal at all.
-    // Escalating means a pause can always complete, rather than leaving the task
-    // stuck in `downloading` with no slot ever freed again.
-    _escalate = Timer(_killGrace, () {
-      try {
-        _process.kill(ProcessSignal.sigkill);
-      } catch (_) {}
-    });
+    // The escalation lives in `killProcess`, which drops its timer as soon as
+    // the child is reaped; `exitCode` no longer has to know about it.
+    killProcess(_process);
   }
 }
 
@@ -376,18 +390,31 @@ class YtdlpService implements DownloadEngine {
   /// be a playlist is a second, cheaper request made with `--flat-playlist` to
   /// enumerate the entries — flat entries carry no stream data, which keeps
   /// even a large collection inside the metadata byte budget.
-  Future<FetchResult> fetch(String url) async {
+  ///
+  /// [cancelled] abandons the fetch: the child is killed and whatever it had
+  /// produced is dropped, so a superseded request stops costing a yt-dlp
+  /// process and the rest of its 90-second budget. The result is *not* an
+  /// error — the caller has already moved on, and throwing here would surface
+  /// a failure for something that succeeded at being ignored.
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) async {
     final r = await _binary.ensureRunner();
+    // Both probes are independent, and the *first* call after a cold start is
+    // the moment they cost real time (PATH lookups on desktop, asset
+    // extraction on Android) — after which `BinaryManager` memoizes each
+    // answer, so every other fetch/download pays nothing. Fanning them out
+    // saves half of that one-time wait; there is no ordering requirement to
+    // violate.
+    final canPostprocessFuture = _binary.hasFfprobe();
     final hasFfmpeg = await _binary.hasFfmpeg();
     // Embedding/conversion also needs ffprobe, which is not implied by ffmpeg.
-    final canPostprocess = await _binary.hasFfprobe();
+    final canPostprocess = await canPostprocessFuture;
 
-    final run = await _runCaptured(r, [
-      '-J',
-      '--no-warnings',
-      '--no-playlist',
-      url,
-    ], timeout: _metadataTimeout);
+    final run = await _runCaptured(
+      r,
+      ['-J', '--no-warnings', '--no-playlist', url],
+      timeout: _metadataTimeout,
+      cancelled: cancelled,
+    );
     if (run.timedOut) {
       throw const YtdlpException(
         'Getting video info timed out. The site may be slow — try again.',
@@ -403,6 +430,7 @@ class YtdlpService implements DownloadEngine {
         url: url,
         hasFfmpeg: hasFfmpeg,
         canPostprocess: canPostprocess,
+        cancelled: cancelled,
       );
     }
 
@@ -454,6 +482,7 @@ class YtdlpService implements DownloadEngine {
     required String url,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     final playlist = await _fetchPlaylistSliceWith(
       r,
@@ -461,6 +490,7 @@ class YtdlpService implements DownloadEngine {
       start: PlaylistPaging.empty.nextStart,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess,
+      cancelled: cancelled,
     );
     if (playlist.isEmpty) {
       throw const YtdlpException(
@@ -475,11 +505,15 @@ class YtdlpService implements DownloadEngine {
   ///
   /// This is the public entry point the picker uses; [fetch] reuses the same
   /// slice logic for its first page, so both paths cap identically.
+  ///
+  /// [cancelled] abandons the listing, killing the child rather than letting a
+  /// superseded request keep running.
   Future<PlaylistInfo> fetchPlaylistSlice({
     required String url,
     required int start,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     final r = await _binary.ensureRunner();
     return _fetchPlaylistSliceWith(
@@ -488,6 +522,7 @@ class YtdlpService implements DownloadEngine {
       start: start,
       hasFfmpeg: hasFfmpeg,
       canPostprocess: canPostprocess,
+      cancelled: cancelled,
     );
   }
 
@@ -531,11 +566,13 @@ class YtdlpService implements DownloadEngine {
     required int start,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     final run = await _runCaptured(
       r,
       buildPlaylistListArgs(url: url, start: start),
       timeout: _metadataTimeout,
+      cancelled: cancelled,
     );
     if (run.timedOut) {
       throw const YtdlpException(
@@ -612,17 +649,6 @@ class YtdlpService implements DownloadEngine {
     return err.contains('is a playlist') || err.contains('use --yes-playlist');
   }
 
-  /// Backwards-compatible single-video fetch. Callers that cannot show a
-  /// playlist picker get a clear error instead of a wrong-shaped result.
-  Future<VideoInfo> fetchVideoInfo(String url) async {
-    final result = await fetch(url);
-    if (result is VideoResult) return result.video;
-    throw const YtdlpException(
-      'That link is a playlist, not a single video.\n'
-      'Use the Download tab to pick which videos to get.',
-    );
-  }
-
   /// Explains an oversized metadata response.
   ///
   /// Says whether the app stopped the process itself, because those are two
@@ -647,10 +673,16 @@ class YtdlpService implements DownloadEngine {
   /// playlist from a genuinely huge response), while stderr is a diagnostic
   /// stream whose *tail* is kept. Overflowing stderr never fails an otherwise
   /// successful command — chatty warnings are not a download error.
+  ///
+  /// [cancelled] abandons the run and kills the child. A cancelled run is not a
+  /// failed one: the caller has moved on and discards whatever comes back, so
+  /// this returns the usual (non-zero, truncated) capture and lets the caller
+  /// decide.
   Future<_CapturedRun> _runCaptured(
     ProcessRunner runner,
     List<String> args, {
     required Duration timeout,
+    Future<void>? cancelled,
   }) async {
     final Process process;
     try {
@@ -672,15 +704,12 @@ class YtdlpService implements DownloadEngine {
       windowChars: 16 * 1024,
     );
 
-    void kill() {
-      try {
-        process.kill(ProcessSignal.sigterm);
-      } catch (_) {
-        try {
-          process.kill();
-        } catch (_) {}
-      }
-    }
+    // Every stop goes through `killProcess`, which escalates to SIGKILL after a
+    // grace period. It used to send a bare SIGTERM and leave `process.exitCode`
+    // below to wait for a child that had declined to die — a fetch that could
+    // hang past its own timeout, and a pause that could hold its queue slot
+    // forever.
+    void kill() => killProcess(process);
 
     // A payload that blows the budget is never useful to us — stop reading and
     // stop the process rather than letting it write into the void.
@@ -704,20 +733,35 @@ class YtdlpService implements DownloadEngine {
           // An error ends this pipe as surely as a close does, so it completes the
           // same future rather than leaving `_drain` waiting on a stream that is
           // never going to deliver another event.
-          onError: (Object _, StackTrace _) => outDone.complete(),
-          onDone: outDone.complete,
+          //
+          // Guarded because `cancelOnError: false` means an error is *followed*
+          // by `onDone` — completing twice throws `StateError` from inside the
+          // listener, where nothing can catch it, so an otherwise ordinary socket
+          // reset became an unhandled async error.
+          onError: (Object _, StackTrace _) => _completeOnce(outDone),
+          onDone: () => _completeOnce(outDone),
           cancelOnError: false,
         );
     final errSub = process.stderr
         .transform(lenientDecoder)
         .listen(
           (chunk) => err.add(chunk),
-          onError: (Object _, StackTrace _) => errDone.complete(),
-          onDone: errDone.complete,
+          onError: (Object _, StackTrace _) => _completeOnce(errDone),
+          onDone: () => _completeOnce(errDone),
           cancelOnError: false,
         );
 
     var timedOut = false;
+    // Set once the child is reaped, so a cancellation that arrives a moment
+    // later does not signal a process that is already gone.
+    var exited = false;
+    if (cancelled != null) {
+      unawaited(
+        cancelled.then((_) {
+          if (!exited) kill();
+        }, onError: (Object _, StackTrace _) {}),
+      );
+    }
     final timer = Timer(timeout, () {
       timedOut = true;
       kill();
@@ -729,13 +773,20 @@ class YtdlpService implements DownloadEngine {
     Future<void> drain() async {
       if (drained) return;
       drained = true;
-      await _drain(outSub, outDone.future);
-      await _drain(errSub, errDone.future);
+      try {
+        await drainWithDeadline(outSub, outDone.future);
+        await drainWithDeadline(errSub, errDone.future);
+      } catch (_) {
+        // The drain itself reports nothing: a decode failure was already
+        // swallowed for the reason [_drain] documents, and this catch keeps
+        // the cancellation path from throwing over the payload that was read.
+      }
     }
 
     late final int code;
     try {
       code = await process.exitCode;
+      exited = true;
     } finally {
       timer.cancel();
       // Exit status and pipe output arrive on separate channels, so bytes can
@@ -761,6 +812,17 @@ class YtdlpService implements DownloadEngine {
     );
   }
 
+  /// Completes [done] at most once.
+  ///
+  /// A pipe subscription is wired to both `onError` and `onDone`, and with
+  /// `cancelOnError: false` an error is delivered *and then* the stream closes,
+  /// so the second `complete()` would throw `StateError` — from inside a stream
+  /// callback, where it surfaces as an unhandled async error rather than as
+  /// something the fetch could report.
+  static void _completeOnce(Completer<void> done) {
+    if (!done.isCompleted) done.complete();
+  }
+
   /// Waits for the pipe to finish, then cancels it.
   ///
   /// Awaits [done] — the future completed when the pipe closed — rather than
@@ -782,6 +844,32 @@ class YtdlpService implements DownloadEngine {
       // Intentionally ignored; see above.
     }
     await sub.cancel();
+  }
+
+  /// Deadline for waiting out the pipes after the child is reaped. Generous
+  /// enough that a normal exit — whose pipes close almost immediately — never
+  /// reaches it; short enough that a fetch does not outlive a hung pipe by a
+  /// visible amount. Tests drive real pipes, so they shorten it.
+  @visibleForTesting
+  static Duration drainGrace = const Duration(seconds: 10);
+
+  /// A deadline-bounded pipe drain, for after the child has exited.
+  ///
+  /// The kill timer stops the child this handle knows about, but a grandchild
+  /// that inherited the pipes does not — so `exitCode` completing is not proof
+  /// that the pipes will ever close. Past [drainGrace] the subscription is
+  /// cancelled and the interest is over: losing the last few bytes is the exact
+  /// failure the unbounded wait used to trade for a fetch that never returned.
+  ///
+  /// This is an implementation of "read until quiet" and the caller treats
+  /// what it gets back as best-effort, so a deadline miss is not an error —
+  /// the payload read so far stands.
+  @visibleForTesting
+  static Future<void> drainWithDeadline(
+    StreamSubscription<String> sub,
+    Future<void> done,
+  ) {
+    return _drain(sub, done).timeout(drainGrace, onTimeout: () => sub.cancel());
   }
 
   @override

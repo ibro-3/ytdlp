@@ -10,6 +10,7 @@ import '../../core/models/download_options.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
 import '../../core/providers.dart';
+import '../../services/ytdlp/ytdlp_service.dart';
 import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/url_validator.dart';
 import '../../services/sharing/share_intent_service.dart';
@@ -36,7 +37,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final url = _lastUrl;
     if (url == null) return;
     if (_urlController.text != url) _urlController.text = url;
-    ref.read(homeControllerProvider.notifier).fetch(url: url);
+    unawaited(ref.read(homeControllerProvider.notifier).fetch(url: url));
   }
 
   @override
@@ -48,9 +49,8 @@ class _HomePageState extends ConsumerState<HomePage> {
   }
 
   @override
-  @override
   void dispose() {
-    _shareSub?.cancel();
+    unawaited(_shareSub?.cancel());
     _urlController.dispose();
     super.dispose();
   }
@@ -68,7 +68,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final urls = extractUrls(text);
     if (urls.isEmpty) return;
     if (urls.length > 1) {
-      _openBatch(urls);
+      unawaited(_openBatch(urls));
       return;
     }
     final url = urls.first;
@@ -118,7 +118,7 @@ class _HomePageState extends ConsumerState<HomePage> {
     final controller = ref.read(batchQueueControllerProvider.notifier);
     // Navigate first so the list is visible while it fills in, rather than
     // blocking on a dialog.
-    context.push('/queue/batch');
+    unawaited(context.push('/queue/batch'));
     await controller.resolveAll(urls);
   }
 
@@ -132,12 +132,12 @@ class _HomePageState extends ConsumerState<HomePage> {
     }
     if (urls.length > 1) {
       _urlController.clear();
-      _openBatch(urls);
+      unawaited(_openBatch(urls));
       return;
     }
     final url = urls.first;
     _lastUrl = url;
-    ref.read(homeControllerProvider.notifier).fetch(url: url);
+    unawaited(ref.read(homeControllerProvider.notifier).fetch(url: url));
   }
 
   /// Opens the format picker, then enqueues whatever the user chose.
@@ -199,6 +199,7 @@ class _HomePageState extends ConsumerState<HomePage> {
               else if (state.error != null)
                 _ErrorCard(
                   message: state.error!,
+                  code: state.errorCode,
                   onRetry: _lastUrl == null ? null : _retry,
                 )
               else if (playlist != null)
@@ -423,8 +424,14 @@ class _FetchingCard extends StatelessWidget {
 }
 
 class _ErrorCard extends StatelessWidget {
-  const _ErrorCard({required this.message, this.onRetry});
+  const _ErrorCard({required this.message, this.code, this.onRetry});
   final String message;
+
+  /// Machine-readable failure kind ([YtdlpException.code]), when the error
+  /// came from the engine. Branching on this rather than substring-matching
+  /// the message keeps the affordance working when the wording changes — or
+  /// gets translated.
+  final String? code;
   final VoidCallback? onRetry;
 
   @override
@@ -433,7 +440,7 @@ class _ErrorCard extends StatelessWidget {
     final textStyle = context.textStyles.bodySmall?.copyWith(
       color: scheme.onErrorContainer,
     );
-    final isMissingBinary = message.contains('yt-dlp binary not found');
+    final isMissingBinary = code == YtdlpException.missingBinary;
     return AppCard(
       color: scheme.errorContainer,
       child: Padding(
@@ -456,7 +463,7 @@ class _ErrorCard extends StatelessWidget {
                 AppIconButton(
                   icon: Icons.copy,
                   onPressed: () {
-                    Clipboard.setData(ClipboardData(text: message));
+                    unawaited(Clipboard.setData(ClipboardData(text: message)));
                     context.showToast('Error copied to clipboard');
                   },
                 ),

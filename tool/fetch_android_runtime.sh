@@ -40,7 +40,7 @@ for ARCH in "${ARCHES[@]}"; do
   DEBDIR="$WORK/debs-$TERMUX_ARCH"
   mkdir -p "$DEBDIR"
   python3 - "$PKGFILE" "$DEBDIR" "$BASE_URL" <<'EOF'
-import re, sys, os, urllib.request
+import re, sys, os, urllib.request, hashlib
 pkgfile, debdir, base = sys.argv[1], sys.argv[2], sys.argv[3]
 txt = open(pkgfile).read()
 pkgs = {}
@@ -60,13 +60,34 @@ while need:
         d = re.sub(r'\(.*?\)', '', d).strip()
         if d and d not in skip: need.append(d)
 print('closure:', ' '.join(sorted(seen)))
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
 for n in sorted(seen):
     fn = field(pkgs[n], 'Filename')
+    # The Packages index publishes the sha256 of every deb it lists. These
+    # debs are the whole security story of the runtime — the CPython that runs
+    # yt-dlp and every module it imports inside the app's sandbox — so a
+    # tampered or corrupted mirror must abort the assembly, not just print a
+    # warning nobody is scrolling to see.
+    expected = field(pkgs[n], 'SHA256')
+    if not expected:
+        raise SystemExit(f'no SHA256 published for {n}; refusing to fetch it')
     dest = os.path.join(debdir, os.path.basename(fn).replace('%3a', ':'))
     if os.path.exists(dest):
-        print('have', os.path.basename(dest)); continue
+        if sha256_file(dest) != expected:
+            raise SystemExit(f'{os.path.basename(dest)} is cached but its hash '
+                             f'does not match the Packages index; delete '
+                             f'{debdir} and re-run')
+        print('have (verified)', os.path.basename(dest)); continue
     print('get', os.path.basename(fn))
     urllib.request.urlretrieve(base + '/' + fn, dest)
+    if sha256_file(dest) != expected:
+        raise SystemExit(f'{os.path.basename(dest)} hash mismatch against the '
+                         f'Packages index (expected {expected})')
 EOF
 
   SYSROOT="$WORK/sysroot-$TERMUX_ARCH"

@@ -67,6 +67,8 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
 
+      # Releases are GTK3 builds: the stable engine ships no GTK4 embedder. See
+      # the "Configure Linux (GTK4)" job in dart.yml.
       - name: Build Linux
         run: flutter build linux --release
 

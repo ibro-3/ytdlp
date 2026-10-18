@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
@@ -14,11 +16,17 @@ class _FakeYtdlp extends YtdlpService {
   _FakeYtdlp(this.behavior) : super(FakeBinaryManager());
 
   int calls = 0;
+
+  /// The cancellation handle the controller handed the most recent fetch, so a
+  /// test can assert the wiring rather than just the resulting state.
+  Future<void>? lastCancelled;
+
   final Future<FetchResult> Function(String) behavior;
 
   @override
-  Future<FetchResult> fetch(String url) {
+  Future<FetchResult> fetch(String url, {Future<void>? cancelled}) {
     calls++;
+    lastCancelled = cancelled;
     return behavior(url);
   }
 }
@@ -147,11 +155,64 @@ void main() {
     final controller = container.read(homeControllerProvider.notifier);
     final pending = controller.fetch(url: _videoUrl);
     controller.reset();
+    // The engine is told to stop, rather than only the answer being ignored:
+    // otherwise the child runs on for the rest of its timeout.
+    await expectLater(ytdlp.lastCancelled, completes);
     expect(container.read(homeControllerProvider).content, isNull);
     expect(container.read(homeControllerProvider).error, isNull);
     expect(container.read(homeControllerProvider).isLoading, isFalse);
     await pending;
     // The late result from the cancelled request must not resurrect the state.
     expect(container.read(homeControllerProvider).content, isNull);
+  });
+
+  test(
+    'a fetch started while another is in flight cancels the first',
+    () async {
+      final ytdlp = _FakeYtdlp((url) async {
+        if (url == 'slow') {
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          return VideoResult(_video());
+        }
+        return PlaylistResult(_playlist());
+      });
+      final container = ProviderContainer(
+        overrides: [ytdlpServiceProvider.overrideWithValue(ytdlp)],
+      );
+      addTearDown(container.dispose);
+
+      final controller = container.read(homeControllerProvider.notifier);
+      final first = controller.fetch(url: 'slow');
+      final firstCancelled = ytdlp.lastCancelled;
+      expect(firstCancelled, isNotNull, reason: 'the first fetch got a handle');
+
+      final second = controller.fetch(url: 'fast');
+      // Superseding the first request is what stops its process.
+      await expectLater(firstCancelled, completes);
+      await first;
+      await second;
+
+      expect(container.read(homeControllerProvider).playlist, isNotNull);
+      expect(container.read(homeControllerProvider).video, isNull);
+    },
+  );
+
+  test('disposing the controller cancels an in-flight fetch', () async {
+    final ytdlp = _FakeYtdlp((url) async {
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      return VideoResult(_video());
+    });
+    final container = ProviderContainer(
+      overrides: [ytdlpServiceProvider.overrideWithValue(ytdlp)],
+    );
+
+    final controller = container.read(homeControllerProvider.notifier);
+    unawaited(controller.fetch(url: _videoUrl));
+    final cancelled = ytdlp.lastCancelled;
+    expect(cancelled, isNotNull);
+
+    container.dispose();
+    // Leaving the screen must not leave a yt-dlp child behind.
+    await expectLater(cancelled, completes);
   });
 }

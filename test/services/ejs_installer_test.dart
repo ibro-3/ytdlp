@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ytdlp/services/ytdlp/binary_manager.dart';
 import 'package:ytdlp/services/ytdlp/ejs_installer.dart';
 
 /// A run of [n] hex characters, for building digest-shaped strings.
@@ -353,6 +355,72 @@ void main() {
       const e = EjsInstallException('the thing failed');
       expect(e.message, 'the thing failed');
       expect(e.toString(), 'the thing failed');
+    });
+  });
+
+  group('install queue', () {
+    late EjsInstaller installer;
+
+    setUp(() => installer = EjsInstaller(BinaryManager()));
+
+    test('completes the future it returned when the action succeeds', () async {
+      // The regression this pins: the success handler was a tear-off of
+      // `Completer.complete` rather than a call, so the completer was never
+      // completed. The failure path worked, which is why it went unnoticed —
+      // every *successful* JS-runtime install left the Settings button stuck on
+      // "Installing…" with no result and no error.
+      final result = await installer
+          .serialised(() async => 'installed')
+          .timeout(const Duration(seconds: 5));
+      expect(result, 'installed');
+    });
+
+    test('reports a failure to the caller', () async {
+      await expectLater(
+        installer.serialised(() async {
+          throw const EjsInstallException('no runtime');
+        }),
+        throwsA(isA<EjsInstallException>()),
+      );
+    });
+
+    test('does not run two actions at once', () async {
+      // The queue shares one staging directory between installs, so a second
+      // action starting before the first finished is the race the queue exists
+      // to prevent. A `.then` whose callback returned immediately — rather than
+      // awaiting the action — completed the chain as soon as it had *started*
+      // the work, which is what let that happen.
+      final events = <String>[];
+      final firstGate = Completer<void>();
+
+      final first = installer.serialised(() async {
+        events.add('first:start');
+        await firstGate.future;
+        events.add('first:end');
+      });
+      final second = installer.serialised(() async {
+        events.add('second:start');
+      });
+
+      // Give the queue every chance to run the second action early.
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      expect(events, ['first:start'], reason: 'second ran before first ended');
+
+      firstGate.complete();
+      await Future.wait([first, second]);
+      expect(events, ['first:start', 'first:end', 'second:start']);
+    });
+
+    test('a failed action does not break the wait for the next', () async {
+      final afterFailure = await installer.serialised(() async => 1);
+      expect(afterFailure, 1);
+
+      await expectLater(
+        installer.serialised(() async => throw StateError('boom')),
+        throwsStateError,
+      );
+
+      expect(await installer.serialised(() async => 2), 2);
     });
   });
 }

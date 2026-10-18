@@ -1,8 +1,14 @@
 #include "my_application.h"
 
 #include <flutter_linux/flutter_linux.h>
+
+// GTK4 keeps its X11 introspection behind `gdk/x11/gdkx.h` and the GTK3 build
+// needs it to decide whether a header bar is welcome. The GTK4 build has no use
+// for either, so the include is left out of it entirely.
+#ifndef FLUTTER_TOOLKIT_GTK4
 #ifdef GDK_WINDOWING_X11
 #include <gdk/gdkx.h>
+#endif
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
@@ -16,7 +22,14 @@ G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
 // Called when first Flutter frame received.
 static void first_frame_cb(MyApplication* self, FlView* view) {
+#ifdef FLUTTER_TOOLKIT_GTK4
+  // GTK4 presents the window as soon as the view is attached, so the only thing
+  // left to do here is move the keyboard onto content that now exists.
+  (void)self;
+  gtk_widget_grab_focus(GTK_WIDGET(view));
+#else
   gtk_widget_show(gtk_widget_get_toplevel(GTK_WIDGET(view)));
+#endif
 }
 
 // Implements GApplication::activate.
@@ -25,6 +38,21 @@ static void my_application_activate(GApplication* application) {
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
+#ifdef FLUTTER_TOOLKIT_GTK4
+  // GTK4 draws its own decorations, and GTK4 removed both `GdkScreen` and the
+  // window-manager introspection the GTK3 branch uses below to spot a tiling
+  // window manager. A header bar is therefore always used here, which is also
+  // what every other GTK4 application does.
+  GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
+  // The title lives in the Flutter header bar now, so the native one is left
+  // titleless — but GTK4's bar displays the window title when it has no title
+  // widget, so an empty label is set to keep it carrying only the window
+  // controls. The window title is still set, because that is what the taskbar,
+  // the WM and Alt-Tab read.
+  gtk_header_bar_set_title_widget(header_bar, gtk_label_new(""));
+  gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
+  gtk_window_set_title(window, "YTDL");
+#else
   // Use a header bar when running in GNOME as this is the common style used
   // by applications and is the setup most users will be using (e.g. Ubuntu
   // desktop).
@@ -56,6 +84,7 @@ static void my_application_activate(GApplication* application) {
   } else {
     gtk_window_set_title(window, "YTDL");
   }
+#endif
 
   gtk_window_set_default_size(window, 1280, 720);
 
@@ -69,18 +98,28 @@ static void my_application_activate(GApplication* application) {
   // for transparent.
   gdk_rgba_parse(&background_color, "#000000");
   fl_view_set_background_color(view, &background_color);
-  gtk_widget_show(GTK_WIDGET(view));
-  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
 
   // Show the window when Flutter renders.
   // Requires the view to be realized so we can start rendering.
   g_signal_connect_swapped(view, "first-frame", G_CALLBACK(first_frame_cb),
                            self);
+
+#ifdef FLUTTER_TOOLKIT_GTK4
+  // GTK4 has no `gtk_widget_realize()`: the window is realized and mapped by
+  // `gtk_window_present()`, which is also what starts the engine rendering.
+  gtk_window_set_child(window, GTK_WIDGET(view));
+  fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  gtk_window_present(window);
+  g_object_unref(window);
+#else
+  gtk_widget_show(GTK_WIDGET(view));
+  gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(view));
   gtk_widget_realize(GTK_WIDGET(view));
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
+#endif
 }
 
 // Implements GApplication::local_command_line.

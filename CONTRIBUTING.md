@@ -29,7 +29,11 @@ flutter test
 
 On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled
 binary is needed for development. On Android the runtime and ffmpeg/ffprobe are
-bundled — see *Bundling binaries* in the README if you need to rebuild them.
+bundled — see `docs/android.md` if you need to rebuild them.
+
+A Linux build needs `libgtk-3-dev`; `FLUTTER_TOOLKIT=gtk4` switches the shell to
+GTK4 and needs `libgtk-4-dev` instead. Both toolkits are described in
+`docs/architecture.md`.
 
 ## Running the checks
 
@@ -71,9 +75,9 @@ right, say why in the code.
   hard to review.
 - Say what you tested and how — which platforms, and whether a real download was
   run end to end.
-- If you change anything user-visible, update the README. It documents behaviour
-  in detail and **is** the spec; a feature that is not described there is not
-  finished.
+- If you change anything user-visible, update the docs. The README and `docs/`
+  describe behaviour in detail and **are** the spec; a feature that is not
+  described there is not finished.
 - Add a `CHANGELOG.md` entry under `[Unreleased]`. Match the existing wording:
   what the user now gets, and why it is honest rather than merely convenient.
 - If the change touches the engine contract — arguments passed to yt-dlp, the

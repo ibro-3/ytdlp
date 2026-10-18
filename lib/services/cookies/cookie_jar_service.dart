@@ -72,12 +72,17 @@ class CookieJarService {
   /// ("re-import your cookies"), not a crash.
   Future<CookieJarParseResult> readSource([String? sourcePath]) async {
     final path = sourcePath ?? this.sourcePath;
+    final String text;
     try {
-      final text = await File(path).readAsString();
-      return CookieJar.parse(text);
+      text = await File(path).readAsString();
     } catch (_) {
       return const CookieJarParseResult(entries: [], skipped: 0);
     }
+    // Parse sits outside the try on purpose: `CookieJar.parse` reports
+    // per-line failures in its result instead of throwing, and keeping it out
+    // of the catch means a *parse* problem can never be misread as "the file
+    // is gone" — the one distinction the empty-result fallback makes quietly.
+    return CookieJar.parse(text);
   }
 
   /// Stores [text] as the new source and regenerates the jar yt-dlp reads.
@@ -144,13 +149,23 @@ class CookieJarService {
     }
   }
 
-  /// Writes a jar with owner-only permissions.
+  /// Writes a jar with owner-only permissions, atomically.
   ///
   /// Both files here are session credentials. `writeAsString` defaults to 0644, so
   /// on a desktop install any other process able to read the support directory
-  /// could read the login. On Android the app sandbox already prevents that, and
-  /// `chmod` there can fail outright — hence the best-effort guard rather than
-  /// letting it take the write down.
+  /// could read the login; the mode is fixed on the staged copy *before* the
+  /// rename, so the jar at its final path is private from its first byte on
+  /// disk. On Android the app sandbox already prevents that, and `chmod` there
+  /// can fail outright — hence the best-effort guard rather than letting it
+  /// take the write down.
+  ///
+  /// The write lands in a sibling `.tmp` file and `rename`s over the target.
+  /// yt-dlp both reads *and rewrites* the jar it is handed (a cookie refresh
+  /// mid-session does `--cookies file` in both directions), so a plain
+  /// overwrite races it: a reader arriving mid-write got a truncated jar, and
+  /// an interrupted write could leave the real jar gone entirely.
+  /// `rename(2)` switches the whole file at once, so the reader sees either
+  /// the old jar or the new one — never a half-written one.
   ///
   /// `flush: true` because yt-dlp is handed this path moments later and writes
   /// cookies back to it; a buffered jar that is not on disk yet is a jar yt-dlp
@@ -158,7 +173,19 @@ class CookieJarService {
   Future<void> _write(String path, String contents) async {
     final file = File(path);
     await file.parent.create(recursive: true);
-    await file.writeAsString(contents, flush: true);
+    final tmp = File('$path.tmp');
+    await tmp.writeAsString(contents, flush: true);
+    try {
+      await tmp.rename(path);
+    } catch (_) {
+      // A failed rename leaves the previous jar intact, which is exactly what
+      // staging the write is for — remove the staged copy and let the
+      // failure surface as it always did.
+      try {
+        await tmp.delete();
+      } catch (_) {}
+      rethrow;
+    }
     try {
       // `Process.run` rather than dart:io, which has no chmod.
       await Process.run('chmod', ['600', path]);

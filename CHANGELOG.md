@@ -10,6 +10,14 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ### Added
 
+- **GTK4 Linux builds** — the Linux shell now selects its toolkit at
+  configure time (`FLUTTER_TOOLKIT=gtk4 flutter build linux`) instead of
+  being pinned to GTK3, covering the pkg-config module, the embedder
+  library, the window setup and the title bar. GTK3 stays the default and
+  released Linux bundles are unchanged, because the stable Flutter SDK
+  ships no GTK4 embedder yet; a GTK4 build says so by name at configure
+  time rather than producing a bundle that cannot start.
+
 - **App update check** — Settings now reports whether a newer YTDL
   release is on GitHub, with a link to it. A check that cannot reach
   the server, or a build whose own version is unknown, says so rather

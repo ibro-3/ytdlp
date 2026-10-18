@@ -56,6 +56,7 @@ class _SlicedService extends YtdlpService {
     required int start,
     required bool hasFfmpeg,
     required bool canPostprocess,
+    Future<void>? cancelled,
   }) async {
     sliceStarts.add(start);
     if (slices.isEmpty) throw StateError('no slice queued for start $start');

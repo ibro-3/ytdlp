@@ -64,14 +64,58 @@ class AppUpdater {
     }
   }
 
+  /// Ceiling on a response body.
+  ///
+  /// A release payload is a few kilobytes; a captive portal's HTML or a
+  /// redirect into something unbounded is not, and the cap keeps that from
+  /// becoming a download of its own.
+  static const int _maxBodyBytes = 1024 * 1024;
+
+  /// How long the release endpoint may go silent — never answering, or
+  /// stopping mid-body — before the request is abandoned.
+  ///
+  /// Neither the connect timeout nor `HttpClient`'s pooled-connection idle
+  /// timeout covers a socket left open mid-transfer, so both waits here
+  /// (headers, then each chunk gap) are bounded explicitly.
+  static const Duration _idle = Duration(seconds: 60);
+
+  /// How long the whole response may keep dribbling before it is abandoned:
+  /// a source alive enough to feed the idle bound forever is caught here.
+  static const Duration _total = Duration(minutes: 10);
+
   Future<String?> _defaultGet(String url) async {
     HttpClient? client;
     try {
       client = HttpClient()..connectionTimeout = const Duration(seconds: 15);
       final req = await client.getUrl(Uri.parse(url));
-      final res = await req.close();
+      // The release endpoint is a stable, non-redirecting API URL; pinning
+      // this avoids being silently sent anywhere else.
+      req.followRedirects = false;
+      // `catchError` keeps the header future listened-to so an abandoned one
+      // cannot complete later with an unhandled error. Any of these failures
+      // is swallowed by the caller's catch and reported as `unreachable`.
+      final res = await req
+          .close()
+          .catchError(
+            (Object _, StackTrace _) => throw HttpException('no response'),
+          )
+          .timeout(_idle, onTimeout: () => throw HttpException('no response'));
       if (res.statusCode != 200) return null;
-      return await utf8.decodeStream(res);
+      final body = StringBuffer();
+      var received = 0;
+      // Total bound, checked between chunks: wrapping the loop in a timeout
+      // would strand the still-running subscription with no listener.
+      final watch = Stopwatch()..start();
+      await for (final chunk in res.timeout(
+        _idle,
+        onTimeout: (sink) => sink.addError(HttpException('no response')),
+      )) {
+        if (watch.elapsed > _total) return null;
+        received += chunk.length;
+        if (received > _maxBodyBytes) return null;
+        body.write(utf8.decode(chunk, allowMalformed: true));
+      }
+      return body.toString();
     } catch (_) {
       return null;
     } finally {

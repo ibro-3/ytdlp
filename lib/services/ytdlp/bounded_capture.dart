@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:collection';
 
 /// Which end of a stream to retain once it exceeds its budget.
 enum CaptureKeep { head, tail }
@@ -35,7 +36,13 @@ class BoundedCapture {
 
   int _seen = 0;
   bool _overflowed = false;
-  String _buf = '';
+  // Retained text as chunks rather than one grown-by-concatenation string.
+  // Strings are immutable in Dart, so `_buf += chunk` copies the whole buffer
+  // every time; a large metadata payload arriving in thousands of line-sized
+  // chunks made head retention quadratic in the payload size — the exact
+  // case the flood guard exists to survive. Joining happens once, on read.
+  final Queue<String> _parts = Queue<String>();
+  int _len = 0;
 
   /// Units seen on the stream, including those dropped after the budget.
   ///
@@ -47,7 +54,7 @@ class BoundedCapture {
 
   /// The retained text: the full payload in head mode (up to [maxBytes]), or
   /// the last [windowChars] characters in tail mode.
-  String get text => _buf;
+  String get text => _parts.join();
 
   /// Feeds a chunk. Returns false once the budget is exhausted, so a caller
   /// can stop a process that is flooding it.
@@ -71,7 +78,8 @@ class BoundedCapture {
       return false;
     }
     if (keep == CaptureKeep.head) {
-      _buf += chunk;
+      _parts.addLast(chunk);
+      _len += chunk.length;
     } else {
       _slide(chunk);
     }
@@ -79,9 +87,22 @@ class BoundedCapture {
   }
 
   void _slide(String chunk) {
-    _buf += chunk;
-    if (_buf.length > windowChars) {
-      _buf = _buf.substring(_buf.length - windowChars);
+    _parts.addLast(chunk);
+    _len += chunk.length;
+    if (_len <= windowChars) return;
+    // Drop whole chunks from the front while the window can afford to lose
+    // them; when the cutoff lands inside a chunk, that chunk — and only that
+    // one — is split. Every retained byte is visited at most once this way,
+    // versus the old per-chunk copy of the whole window.
+    while (_parts.isNotEmpty && _len - _parts.first.length >= windowChars) {
+      _len -= _parts.removeFirst().length;
+    }
+    if (_len > windowChars) {
+      final first = _parts.removeFirst();
+      // The cutoff lands inside this chunk: drop everything in front of it so
+      // exactly the last [windowChars] characters survive.
+      _parts.addFirst(first.substring(_len - windowChars));
+      _len = windowChars;
     }
   }
 

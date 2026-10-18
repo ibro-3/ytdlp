@@ -15,19 +15,22 @@ import 'dart:io';
 /// Ordered with the browser's own default first, then alphabetically, so the
 /// list matches what the user sees in their browser's profile switcher.
 ///
-/// Asynchronous throughout: this runs on the UI isolate, where a synchronous
-/// walk of a browser profile directory blocks a frame — and a profile root can
-/// hold hundreds of entries, each probed for a cookie store.
+/// Asynchronous walk: this runs on the UI isolate, and free-walking a browser
+/// profile directory blocks a frame — a profile root can hold hundreds of
+/// entries. The per-file probes use the *synchronous* `exists()` variants on
+/// purpose: those calls are one syscall either way (the awaited shape adds
+/// microtask hops, not parallelism), so keeping them inline removes
+/// interleaving points rather than saving any blocking.
 Future<List<String>> profileNamesIn(String root) async {
   final Directory dir = Directory(root);
-  if (!await dir.exists()) return const [];
+  if (!dir.existsSync()) return const [];
   final found = <String>[];
   try {
     await for (final entity in dir.list(followLinks: false)) {
       if (entity is! Directory) continue;
       final name = entity.path.split(Platform.pathSeparator).last;
       if (name.isEmpty || name.startsWith('.')) continue;
-      if (await _looksLikeProfile(entity.path)) found.add(name);
+      if (_looksLikeProfile(entity.path)) found.add(name);
     }
   } on FileSystemException {
     // An unreadable or half-removed folder is a state the picker explains, not
@@ -45,12 +48,12 @@ Future<List<String>> profileNamesIn(String root) async {
   return List.unmodifiable(found);
 }
 
-Future<bool> _looksLikeProfile(String path) async {
+bool _looksLikeProfile(String path) {
   // Chromium: a bare `Cookies` file, or the Windows/macOS `Network` subfolder.
-  if (await File('$path/Cookies').exists()) return true;
-  if (await File('$path/Network/Cookies').exists()) return true;
+  if (File('$path/Cookies').existsSync()) return true;
+  if (File('$path/Network/Cookies').existsSync()) return true;
   // Firefox.
-  if (await File('$path/cookies.sqlite').exists()) return true;
+  if (File('$path/cookies.sqlite').existsSync()) return true;
   return false;
 }
 

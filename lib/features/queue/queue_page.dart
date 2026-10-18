@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path/path.dart' as p;
@@ -157,7 +159,7 @@ class _QueueMenu extends StatelessWidget {
         manager.clearFinished();
       case 'cancel_all':
         // Destructive enough to confirm: it kills in-flight downloads.
-        _confirmCancelAll(context, manager);
+        unawaited(_confirmCancelAll(context, manager));
     }
   }
 
@@ -165,27 +167,17 @@ class _QueueMenu extends StatelessWidget {
     BuildContext context,
     DownloadManager manager,
   ) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel all downloads?'),
-        content: Text(
+    final ok = await showAppConfirm(
+      context,
+      title: 'Cancel all downloads?',
+      message:
           // Paused tasks are included in the count, since cancelAll takes them
           // too — leaving them out would make the dialog understate the effect.
           '${[if (manager.activeCount > 0) '${manager.activeCount} running', if (manager.queuedCount > 0) '${manager.queuedCount} queued', if (manager.pausedCount > 0) '${manager.pausedCount} held'].join(' and ')} will be canceled. Partial downloads are kept so you '
           'can retry them.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep going'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel all'),
-          ),
-        ],
-      ),
+      confirmLabel: 'Cancel all',
+      cancelLabel: 'Keep going',
+      destructive: true,
     );
     if (ok == true) manager.cancelAll();
   }
@@ -585,9 +577,11 @@ class _TaskCard extends ConsumerWidget {
   ) async {
     final ok = await manager.deleteTask(task);
     if (!ok && context.mounted) {
-      context.showToast(
-        'Could not delete the file — the library entry was kept.',
-      );
+      // False means the file could not be removed: `deleteTask` returns before
+      // touching the task or its history record, so nothing is lost — the card
+      // and its library entry are both still there. The old copy-pasted text
+      // ("the library entry was kept") implied the card went away; it did not.
+      context.showToast('Could not delete the download.');
     }
   }
 }

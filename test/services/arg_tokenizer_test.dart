@@ -124,11 +124,62 @@ void main() {
       expect(issues.single.message, contains('ignored'));
     });
 
-    test('flags that run other code are called out', () {
+    test('--exec blocks, whatever spelling it uses', () {
+      // The policy this pins: the extra-args field goes straight into the
+      // download's argv, and yt-dlp would run whatever --exec names the
+      // moment a download lands. That is beyond what a download-flags field
+      // is for, so the field cannot be saved with it.
       final issues = validateExtraArgs('--exec "curl evil"');
       expect(issues.single.message, contains('runs another command'));
+      expect(issues.single.isBlocking, isTrue);
+      expect(validateExtraArgs('-e "curl evil"').single.isBlocking, isTrue);
+    });
+
+    test('--config-location only warns', () {
+      // Loading flags from a file stays a warning — deciding to trust such a
+      // file is a user policy, unlike the command execution of --exec.
+      final issues = validateExtraArgs('--config-location /x/yt.conf');
       expect(issues.single.isBlocking, isFalse);
     });
+
+    test('a second cookie source warns without claiming a false override', () {
+      final issues = validateExtraArgs('--cookies /tmp/jar.txt');
+      final issue = issues.singleWhere((i) => i.message.contains('cookie'));
+      expect(
+        issue.isBlocking,
+        isFalse,
+        reason: 'it only matters when the app also has a cookie source',
+      );
+      expect(
+        issue.message,
+        isNot(contains('is ignored')),
+        reason:
+            'the override claim is true only with a cookie source configured',
+      );
+    });
+
+    test('--netrc is covered by the cookie-source warning', () {
+      expect(
+        validateExtraArgs('--netrc'),
+        anyElement((ArgIssue i) => i.message.contains('netrc')),
+      );
+    });
+
+    test(
+      '-P/--paths is reported as a managed duplicate of where files land',
+      () {
+        for (final input in ['-P /somewhere/else', '--paths /somewhere/else']) {
+          final issues = validateExtraArgs(input);
+          expect(
+            issues.where((i) => i.message.contains('--paths')),
+            hasLength(1),
+            reason:
+                'the app always passes -o with an absolute path, so -P '
+                'cannot move anything',
+          );
+        }
+      },
+    );
 
     test('reports every managed flag present', () {
       final issues = validateExtraArgs('-o /x -f best --yes-playlist');
