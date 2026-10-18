@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'dart:io';
 
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -214,7 +216,7 @@ final downloadManagerProvider = Provider<DownloadManager>((ref) {
   // first pump instead of holding everything as "unknown".
   manager.onConnectivityChanged();
   ref.onDispose(() {
-    sub.cancel();
+    unawaited(sub.cancel());
     manager.dispose();
   });
   return manager;

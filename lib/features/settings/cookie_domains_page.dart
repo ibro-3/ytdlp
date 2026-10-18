@@ -12,6 +12,8 @@
 /// the cookies being withheld.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -51,7 +53,7 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
     // A Hive read is real I/O, which a widget test's fake-async zone will not
     // drive, so it has to be started before the first frame rather than in a
     // callback the test never reaches.
-    _load();
+    unawaited(_load());
   }
 
   Future<void> _load() async {

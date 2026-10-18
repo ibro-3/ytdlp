@@ -24,13 +24,23 @@ class HomePlaylist extends HomeContent {
 }
 
 class HomeState {
-  const HomeState({this.isLoading = false, this.content, this.error});
+  const HomeState({
+    this.isLoading = false,
+    this.content,
+    this.error,
+    this.errorCode,
+  });
 
   final bool isLoading;
 
   /// The fetched video or playlist, or null when nothing has been resolved.
   final HomeContent? content;
   final String? error;
+
+  /// Machine-readable classification of [error] ([YtdlpException.code]) when
+  /// the failure came from the engine itself. Carried beside the message so
+  /// the UI branches on the kind of failure, not on English wording.
+  final String? errorCode;
 
   VideoInfo? get video => switch (content) {
     HomeVideo(:final video) => video,
@@ -46,13 +56,21 @@ class HomeState {
     bool? isLoading,
     HomeContent? content,
     String? error,
+    String? errorCode,
     bool clearContent = false,
     bool clearError = false,
   }) {
+    if (clearError) {
+      return HomeState(
+        isLoading: isLoading ?? this.isLoading,
+        content: clearContent ? null : content ?? this.content,
+      );
+    }
     return HomeState(
       isLoading: isLoading ?? this.isLoading,
       content: clearContent ? null : content ?? this.content,
-      error: clearError ? null : error ?? this.error,
+      error: error ?? this.error,
+      errorCode: errorCode ?? this.errorCode,
     );
   }
 }
@@ -104,8 +122,9 @@ class HomeController extends Notifier<HomeState> {
       );
     } catch (e) {
       if (seq != _requestSeq) return;
+      final code = e is YtdlpException ? e.code : null;
       final message = e is YtdlpException ? e.message : e.toString();
-      state = state.copyWith(isLoading: false, error: message);
+      state = state.copyWith(isLoading: false, error: message, errorCode: code);
     } finally {
       // Only the newest fetch owns the handle; an older request completing late
       // must not clear it out from under its successor.

@@ -52,6 +52,15 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   bool _probeScheduled = false;
 
   final TextEditingController _search = TextEditingController();
+
+  /// One-shot timer that applies a search edit shortly after typing stops.
+  ///
+  /// Every keystroke used to rebuild and re-filter the whole library view even
+  /// while the query was a half-typed prefix of itself — the extra renders
+  /// showed nothing the user could act on. The text field stays immediate; the
+  /// list catches up once the word has had a chance to become final.
+  Timer? _searchDebounce;
+
   String _query = '';
   LibraryFilter _filter = LibraryFilter.all;
   LibrarySort _sort = LibrarySort.newest;
@@ -78,6 +87,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _searchDebounce?.cancel();
     _search.dispose();
     super.dispose();
   }
@@ -122,7 +132,8 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   }
 
   Future<void> _probeExistence(Set<String> wanted) async {
-    final probe = widget.probeExists ?? (path) => File(path).exists();
+    final Future<bool> Function(String) probe =
+        widget.probeExists ?? (path) async => File(path).existsSync();
     final results = <String, bool>{};
     // Sequential rather than parallel on purpose: an unbounded fan-out of
     // hundreds of `stat` syscalls at once is what makes a large library stall,
@@ -163,6 +174,26 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   }
 
   void _patch(void Function() fn) => setState(fn);
+
+  /// Schedules a search edit to land shortly after typing stops.
+  void _patchSearchDeferred(void Function() fn) {
+    _searchDebounce?.cancel();
+    _searchDebounce = Timer(_searchDebounceDelay, () {
+      if (mounted) setState(fn);
+    });
+  }
+
+  /// Applies a search edit immediately, cancelling any pending one.
+  ///
+  /// Used by the clear button: the click itself is the finished input, so
+  /// waiting two hundred more milliseconds would only add a flicker.
+  void _patchSearchNow(void Function() fn) {
+    _searchDebounce?.cancel();
+    setState(fn);
+  }
+
+  /// Delay between the last keystroke and the list re-filter.
+  static const _searchDebounceDelay = Duration(milliseconds: 200);
 
   @override
   Widget build(BuildContext context) {
@@ -321,7 +352,7 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
   /// any other download.
   Future<void> _adopt(DiscoveredFile file) async {
     try {
-      final stat = await File(file.path).stat();
+      final stat = File(file.path).statSync();
       await ref
           .read(historyServiceProvider)
           .add(
@@ -408,14 +439,14 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
           AppTextField(
             controller: _search,
             placeholder: 'Search downloads',
-            onChanged: (v) => _patch(() => _query = v),
+            onChanged: (v) => _patchSearchDeferred(() => _query = v),
             prefix: const Icon(Icons.search, size: 20),
             suffix: _query.isEmpty
                 ? null
                 : AppIconButton(
                     icon: Icons.close,
                     tooltip: 'Clear search',
-                    onPressed: () => _patch(() {
+                    onPressed: () => _patchSearchNow(() {
                       _search.clear();
                       _query = '';
                     }),
@@ -523,6 +554,14 @@ class _RecordCard extends StatelessWidget {
                     : CachedNetworkImage(
                         imageUrl: record.thumbnail!,
                         fit: BoxFit.cover,
+                        // Blank while loading otherwise: a row that looks like
+                        // it lost its thumbnail until the bytes arrive. The
+                        // same surface as the no-thumbnail fallback, so the
+                        // box holds its place from the first frame.
+                        placeholder: (_, _) => ColoredBox(
+                          color: scheme.surfaceContainerHighest,
+                          child: const Icon(Icons.image_outlined, size: 24),
+                        ),
                         errorWidget: (_, _, _) => ColoredBox(
                           color: scheme.surfaceContainerHighest,
                           child: const Icon(Icons.broken_image_outlined),
@@ -595,7 +634,7 @@ class _RecordMenu extends ConsumerWidget {
   ) async {
     switch (action) {
       case 'open':
-        if (!await File(record.filePath).exists()) {
+        if (!File(record.filePath).existsSync()) {
           if (context.mounted) {
             _notify(context, 'This file is no longer on the device.');
           }
@@ -607,7 +646,7 @@ class _RecordMenu extends ConsumerWidget {
           if (context.mounted) _notify(context, 'Could not open the file.');
         }
       case 'share':
-        if (!await File(record.filePath).exists()) {
+        if (!File(record.filePath).existsSync()) {
           if (context.mounted) {
             _notify(context, 'This file is no longer on the device.');
           }
@@ -650,7 +689,9 @@ class _RecordMenu extends ConsumerWidget {
   Future<void> _deleteFile(BuildContext context, WidgetRef ref) async {
     final file = File(record.filePath);
     try {
-      if (await file.exists()) await file.delete();
+      // A missing file is the expected outcome here, so its absence is not
+      // a partial failure worth reporting separately from the delete.
+      if (file.existsSync()) file.deleteSync();
     } catch (_) {
       // The record is kept, because it still points at a real file.
       if (context.mounted) {

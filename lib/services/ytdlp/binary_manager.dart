@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:archive/archive.dart';
 import 'package:flutter/foundation.dart';
@@ -161,13 +162,13 @@ class BinaryManager {
     final ffprobe = File('${support.path}/bin/ffprobe');
     final marker = File('${support.path}/bin/.ffmpeg-v');
 
-    if (await ffmpeg.exists()) {
+    if (ffmpeg.existsSync()) {
       try {
         if ((await marker.readAsString()).trim() == _ffmpegVersion) {
           await _ensureExecutable(ffmpeg.path);
           // A copy stamped by an older build predates ffprobe. Postprocessing
           // needs it, so re-extract rather than silently fail later.
-          if (await ffprobe.exists()) {
+          if (ffprobe.existsSync()) {
             await _ensureExecutable(ffprobe.path);
             // Must be set on this path too. It used to be assigned only in the
             // extraction branch below, so on every launch after the first
@@ -182,7 +183,7 @@ class BinaryManager {
       // Stale or unmarked copy from an older app install.
       for (final f in [ffmpeg, ffprobe]) {
         try {
-          if (await f.exists()) await f.delete();
+          if (f.existsSync()) f.deleteSync();
         } catch (_) {}
       }
     }
@@ -283,10 +284,11 @@ class BinaryManager {
       if (why != null) {
         throw YtdlpException(
           '${_missingHint()}\n\nDownloading yt-dlp did not work: $why',
+          code: YtdlpException.missingBinary,
         );
       }
     }
-    throw YtdlpException(_missingHint());
+    throw YtdlpException(_missingHint(), code: YtdlpException.missingBinary);
   }
 
   Future<ProcessRunner> _ensureAndroidRunner() async {
@@ -330,7 +332,7 @@ class BinaryManager {
         );
       }
     }
-    throw YtdlpException(_missingHint());
+    throw YtdlpException(_missingHint(), code: YtdlpException.missingBinary);
   }
 
   /// Extracts a tar.gz asset into the app support dir, atomically.
@@ -349,7 +351,7 @@ class BinaryManager {
     final pythonBin = File(
       '${root.path}/data/data/com.termux/files/usr/bin/python3.14',
     );
-    if (await marker.exists() && await pythonBin.exists()) {
+    if (marker.existsSync() && pythonBin.existsSync()) {
       await _ensureExecutable(pythonBin.path);
       return root;
     }
@@ -362,26 +364,49 @@ class BinaryManager {
     }
     final tmpRoot = Directory('${root.path}.tmp');
     try {
-      final tarBytes = GZipDecoder().decodeBytes(
-        data.buffer.asUint8List(),
-        verify: true,
-      );
-      final archive = TarDecoder().decodeBytes(tarBytes);
-      if (await tmpRoot.exists()) await tmpRoot.delete(recursive: true);
+      // The runtime is 20-30 MB, and gzip+tar-decoding that is hundreds of
+      // milliseconds of pure CPU — long enough to drop frames on a mid-range
+      // phone during a first-run install, which is exactly when the UI has a
+      // spinner but no work to hide the jank behind. `Isolate.run` moves the
+      // decode off the frame thread.
+      //
+      // The worker hands back plain data (`_TarEntry` records) rather than the
+      // `archive` package's own object graph, so crossing the isolate boundary
+      // never depends on that library's internals staying `SendPort`-friendly.
+      final entries = await Isolate.run(() {
+        final tarBytes = GZipDecoder().decodeBytes(
+          data.buffer.asUint8List(),
+          verify: true,
+        );
+        return [
+          for (final entry in TarDecoder().decodeBytes(tarBytes).files)
+            _TarEntry(
+              name: entry.name,
+              isDirectory: entry.isDirectory,
+              isFile: entry.isFile,
+              isSymbolicLink: entry.isSymbolicLink,
+              target: entry.symbolicLink,
+              content: entry.content as Uint8List?,
+            ),
+        ];
+      });
+      if (tmpRoot.existsSync()) tmpRoot.deleteSync(recursive: true);
       await tmpRoot.create(recursive: true);
-      for (final entry in archive.files) {
-        final outPath = _safeJoin(tmpRoot.path, entry.name);
+      for (final entry in entries) {
+        final outPath = safeJoinRuntime(tmpRoot.path, entry.name);
         if (outPath == null) continue; // Path escapes the runtime root.
         if (entry.isDirectory) {
           await Directory(outPath).create(recursive: true);
         } else if (entry.isSymbolicLink) {
-          final target = entry.symbolicLink;
+          final target = entry.target;
           if (target == null || target.isEmpty) continue;
           final link = Link(outPath);
           await link.parent.create(recursive: true);
-          if (await _pointsOutside(tmpRoot.path, outPath, target)) continue;
+          if (await runtimeLinkPointsOutside(tmpRoot.path, outPath, target)) {
+            continue;
+          }
           try {
-            if (await link.exists()) await link.delete();
+            if (link.existsSync()) link.deleteSync();
           } catch (_) {}
           await link.create(target);
         } else if (entry.isFile) {
@@ -396,7 +421,7 @@ class BinaryManager {
       final script = File(
         '${tmpRoot.path}/data/data/com.termux/files/usr/bin/yt-dlp',
       );
-      if (!await tmpPython.exists() || !await script.exists()) return null;
+      if (!tmpPython.existsSync() || !script.existsSync()) return null;
       await _chmodX(tmpPython.path);
       await File('${tmpRoot.path}/.ready-$_runtimeVersion')
           .writeAsString(_runtimeVersion, flush: true);
@@ -406,7 +431,7 @@ class BinaryManager {
       rethrow;
     } catch (_) {
       try {
-        if (await tmpRoot.exists()) await tmpRoot.delete(recursive: true);
+        if (tmpRoot.existsSync()) tmpRoot.deleteSync(recursive: true);
       } catch (_) {}
       return null;
     }
@@ -414,7 +439,11 @@ class BinaryManager {
 
   /// Joins [root] with a (possibly backslash or `..`-laden) archive name,
   /// returning null when the result would land outside [root].
-  String? _safeJoin(String root, String name) {
+  ///
+  /// Visible for testing because this is the guard that keeps a hand-edited
+  /// or hostile archive from writing outside the runtime root.
+  @visibleForTesting
+  String? safeJoinRuntime(String root, String name) {
     final normalized = p.normalize(
       p.joinAll([root, ...name.split(RegExp(r'[/\\]+'))]),
     );
@@ -424,7 +453,11 @@ class BinaryManager {
   /// Whether a symlink at [linkPath] pointing to [target] would resolve
   /// outside [root]. Relative targets are resolved from the link's parent;
   /// absolute targets must stay inside [root].
-  Future<bool> _pointsOutside(
+  ///
+  /// Visible for testing for the same reason as [safeJoinRuntime]: this is a
+  /// security boundary between archive content and the filesystem.
+  @visibleForTesting
+  Future<bool> runtimeLinkPointsOutside(
     String root,
     String linkPath,
     String target,
@@ -444,14 +477,14 @@ class BinaryManager {
   /// failure so the app is never left without one.
   Future<void> _swapDir(Directory src, Directory dst) async {
     final backup = Directory('${dst.path}.old');
-    if (await backup.exists()) await backup.delete(recursive: true);
-    if (await dst.exists()) await dst.rename(backup.path);
+    if (backup.existsSync()) backup.deleteSync(recursive: true);
+    if (dst.existsSync()) await dst.rename(backup.path);
     try {
       await src.rename(dst.path);
-      if (await backup.exists()) await backup.delete(recursive: true);
+      if (backup.existsSync()) backup.deleteSync(recursive: true);
     } catch (e) {
       try {
-        if (await backup.exists()) await backup.rename(dst.path);
+        if (backup.existsSync()) await backup.rename(dst.path);
       } catch (_) {}
       rethrow;
     }
@@ -599,7 +632,7 @@ class BinaryManager {
       await AssetDownloader().replaceWith(tmp, File(runtime.script));
     } catch (_) {
       try {
-        if (await tmp.exists()) await tmp.delete();
+        if (tmp.existsSync()) tmp.deleteSync();
       } catch (_) {}
       rethrow;
     }
@@ -683,7 +716,7 @@ class BinaryManager {
   Future<String?> _extractAsset(String name) async {
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$name');
-    if (await target.exists()) {
+    if (target.existsSync()) {
       // Re-apply the exec bit on reuse (e.g. after a backup restore).
       if (!Platform.isWindows) {
         try {
@@ -708,7 +741,7 @@ class BinaryManager {
         final data = await rootBundle.load(assetPath);
         await target.parent.create(recursive: true);
         final tmp = File('${target.path}.tmp');
-        if (await tmp.exists()) await tmp.delete();
+        if (tmp.existsSync()) tmp.deleteSync();
         await tmp.writeAsBytes(data.buffer.asUint8List(), flush: true);
         if (!Platform.isWindows) {
           try {
@@ -790,7 +823,7 @@ class BinaryManager {
     if (kIsWeb) return null;
     final dir = await getApplicationSupportDirectory();
     final target = File('${dir.path}/bin/$_ytdlpName');
-    if (!force && await target.exists()) return target.path;
+    if (!force && target.existsSync()) return target.path;
     // The transfer itself — byte cap, stall bound, checksum, atomic rename —
     // lives in [AssetDownloader], which is testable without a support
     // directory or a platform channel.
@@ -833,6 +866,17 @@ class BinaryManager {
   String get _sumsUrl =>
       'https://github.com/yt-dlp/yt-dlp/releases/latest/download/$_sumsAsset';
 
+  /// How long the checksum index may go silent before it is abandoned.
+  ///
+  /// Neither the connect timeout nor `HttpClient`'s pooled-connection idle
+  /// timeout covers a socket left open mid-transfer, so the waits here (the
+  /// headers, then every chunk gap) are bounded explicitly. A failure just
+  /// reads as "no checksum available", which the caller already handles.
+  static const Duration _sumsIdle = Duration(seconds: 60);
+
+  /// How long a whole read may keep dribbling before it is abandoned.
+  static const Duration _sumsTotal = Duration(minutes: 10);
+
   /// Reads [url] as text, capped at [_maxSumsBytes].
   ///
   /// A checksum index is a few kilobytes; a redirect into a page that is not
@@ -840,29 +884,45 @@ class BinaryManager {
   Future<String?> _getText(String url) async {
     HttpClient? client;
     try {
-      client = HttpClient()
-        ..connectionTimeout = const Duration(seconds: 30)
-        // The connect is not the only thing that can stall: a socket that is
-        // open but never sends would otherwise hold the whole request open.
-        ..idleTimeout = const Duration(seconds: 60);
+      client = HttpClient()..connectionTimeout = const Duration(seconds: 30);
       var current = Uri.parse(url);
       for (var hop = 0; hop <= githubReleaseRedirects.maxRedirects; hop++) {
         final req = await client.getUrl(current);
         // Walked by hand so every hop is host-checked; see
         // `githubReleaseRedirects`.
         req.followRedirects = false;
-        final res = await req.close();
+        // Both waits below are bounded: a silent-but-open socket would hang
+        // past every timeout dart:io has otherwise. `catchError` keeps the
+        // header future listened-to, since the `finally` closes the client.
+        final res = await req
+            .close()
+            .catchError(
+              (Object _, StackTrace _) => throw HttpException('no response'),
+            )
+            .timeout(
+              _sumsIdle,
+              onTimeout: () => throw HttpException('no response'),
+            );
         if (isRedirectStatus(res.statusCode)) {
           final location = res.headers.value(HttpHeaders.locationHeader);
           if (location == null) return null;
-          await res.drain<void>();
+          // Bounded: a redirect body that never ends would hang an unbounded
+          // drain, and the force-close in the `finally` settles it either way.
+          await res.drain<void>().timeout(_sumsIdle, onTimeout: () {});
           current = githubReleaseRedirects.resolve(current, location);
           continue;
         }
         if (res.statusCode != 200) return null;
         final body = StringBuffer();
         var received = 0;
-        await for (final chunk in res) {
+        // Total bound between chunks, not a timed wrapper around the loop:
+        // the latter would strand the subscription with no listener.
+        final watch = Stopwatch()..start();
+        await for (final chunk in res.timeout(
+          _sumsIdle,
+          onTimeout: (sink) => sink.addError(HttpException('no response')),
+        )) {
+          if (watch.elapsed > _sumsTotal) return null;
           received += chunk.length;
           if (received > _maxSumsBytes) return null;
           body.write(utf8.decode(chunk, allowMalformed: true));
@@ -904,4 +964,27 @@ class BinaryManager {
   /// the file executable. With a digest the bytes are verified outright and
   /// this never runs.
   static const int _minPlausibleBinaryBytes = 64 * 1024;
+}
+
+/// One decoded runtime entry, copied back across the isolate boundary.
+///
+/// The worker only ever touches the `archive` package's objects itself; the
+/// handover carries primitives, so the result's sendability does not depend on
+/// the library's private state staying `SendPort`-compatible.
+class _TarEntry {
+  const _TarEntry({
+    required this.name,
+    required this.isDirectory,
+    required this.isFile,
+    required this.isSymbolicLink,
+    required this.target,
+    required this.content,
+  });
+
+  final String name;
+  final bool isDirectory;
+  final bool isFile;
+  final bool isSymbolicLink;
+  final String? target;
+  final Uint8List? content;
 }

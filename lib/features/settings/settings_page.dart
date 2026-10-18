@@ -55,8 +55,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   @override
   void initState() {
     super.initState();
-    _loadVersion();
-    _checkAppUpdate();
+    unawaited(_loadVersion());
+    unawaited(_checkAppUpdate());
   }
 
   Future<void> _checkAppUpdate() async {
@@ -144,9 +144,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  /// Imports a Netscape-format `cookies.txt`.
-  ///
-  /// The file is copied into the app's support directory so the picked path
   void _say(String message) {
     if (!mounted) return;
     context.showToast(message);
@@ -175,7 +172,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     // where the platform reports a path but wrote nothing.
     if (target.scheme == 'file' && target.toFilePath() != target.path) {
       final file = File.fromUri(target);
-      if (!await file.exists()) {
+      // Inline check: `exists()` and the write below perform the same syscalls
+      // either way; checking first only adds interleaving between the two.
+      if (!file.existsSync()) {
         try {
           await file.writeAsBytes(bytes, flush: true);
         } catch (_) {}
@@ -268,6 +267,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  /// Imports a Netscape-format `cookies.txt`.
+  ///
+  /// The file is copied into the app's support directory so the picked path
   /// can't stop resolving (Android pickers hand back cache paths, and desktop
   /// users may pick a file on removable media), then yt-dlp is pointed at the
   /// copy via `--cookies`.
@@ -833,15 +835,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       alignment: Alignment.centerLeft,
                       child: FilledButton.tonalIcon(
                         onPressed: () {
-                          ref
-                              .read(notificationServiceProvider)
-                              .showDone(
-                                taskId:
-                                    'test-${DateTime.now().millisecondsSinceEpoch}',
-                                title: 'Notifications work',
-                                success: true,
-                                detail: 'You will see progress here during downloads.',
-                              );
+                          unawaited(
+                            ref
+                                .read(notificationServiceProvider)
+                                .showDone(
+                                  taskId:
+                                      'test-${DateTime.now().millisecondsSinceEpoch}',
+                                  title: 'Notifications work',
+                                  success: true,
+                                  detail: 'You will see progress here during downloads.',
+                                ),
+                          );
                           context.showToast('Test notification sent');
                         },
                         icon: const Icon(Icons.notifications_outlined),
@@ -919,6 +923,17 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
 
   List<ArgIssue> get _issues => validateExtraArgs(_args.text);
 
+  /// Fires whenever either free-text field changes, so the rows that depend on
+  /// their content — warnings, previews, the save button — can listen
+  /// directly.
+  ///
+  /// Rebuilding the whole carousel on every keystroke (the old
+  /// `onChanged: (_) => setState(() {})`) also rebuilt the inactive page, the
+  /// theme rows and the shell around them, for widgets the keystroke had not
+  /// touched. The text fields keep the caret and rebuild themselves; only the
+  /// dependent rows re-render, through [AnimatedBuilder] subs.
+  late final Listenable _textWatch = Listenable.merge([_args, _template]);
+
   List<String> get _templateIssues {
     final t = OutputTemplate(_template.text);
     if (t.raw.trim().isEmpty) return const [];
@@ -984,20 +999,25 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
           onPageChanged: (i) => _tabController.index = i,
         ),
         const SizedBox(height: 8),
-        FilledButton.tonalIcon(
-          onPressed: _valid
-              ? () => unawaited(
-                  widget.onPatch(
-                    widget.settings.copyWith(
-                      extraArgs: _args.text,
-                      outputTemplate: _template.text,
+        // The commit button's enablement follows both text fields; listening
+        // keeps it live without a whole-page rebuild per keystroke.
+        AnimatedBuilder(
+          animation: _textWatch,
+          builder: (context, _) => FilledButton.tonalIcon(
+            onPressed: _valid
+                ? () => unawaited(
+                    widget.onPatch(
+                      widget.settings.copyWith(
+                        extraArgs: _args.text,
+                        outputTemplate: _template.text,
+                      ),
                     ),
-                  ),
-                )
-              : null,
-          icon: const Icon(Icons.save_outlined),
-          // Names the other page too, since one button now commits both.
-          label: const Text('Save advanced settings'),
+                  )
+                : null,
+            icon: const Icon(Icons.save_outlined),
+            // Names the other page too, since one button now commits both.
+            label: const Text('Save advanced settings'),
+          ),
         ),
       ],
     );
@@ -1022,7 +1042,6 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
 
   Widget _buildFlagsPage(TextTheme theme, ColorScheme scheme) {
     final store = ref.watch(templateStoreProvider);
-    final issues = _issues;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1041,31 +1060,43 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         AppTextField(
           controller: _args,
           placeholder: '--concurrent-fragments 4 --embed-metadata',
-          onChanged: (_) => setState(() {}),
         ),
-        for (final issue in issues.where((i) => !i.isBlocking))
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Row(
+        // The advisory warnings appear and disappear as the text changes, so
+        // they listen rather than ride a page-level rebuild.
+        AnimatedBuilder(
+          animation: _textWatch,
+          builder: (context, _) {
+            final issues = validateExtraArgs(_args.text);
+            return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(
-                  Icons.info_outline,
-                  size: 14,
-                  color: scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    issue.message,
-                    style: theme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
+                for (final issue in issues.where((i) => !i.isBlocking))
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 14,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            issue.message,
+                            style: theme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ),
               ],
-            ),
-          ),
+            );
+          },
+        ),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -1092,14 +1123,18 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
               for (final t in store.templates)
                 AppInputChip(
                   label: t.name,
-                  onPressed: () => setState(() => _args.text = t.args),
+                  onPressed: () => _args.text = t.args,
                   onDeleted: () => store.remove(t.name),
                   deleteTooltip: 'Delete ${t.name}',
                 ),
             ],
           ),
         const SizedBox(height: 8),
-        _SaveTemplateButton(args: _args.text, store: store),
+        AnimatedBuilder(
+          animation: _textWatch,
+          builder: (context, _) =>
+              _SaveTemplateButton(args: _args.text, store: store),
+        ),
         const SizedBox(height: 24),
         _YoutubeSection(settings: widget.settings, onPatch: widget.onPatch),
       ],
@@ -1126,16 +1161,20 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         AppTextField(
           controller: _template,
           placeholder: OutputTemplate.defaultTemplate,
-          onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 8),
-        Text(
-          'Example: ${OutputTemplate(_template.text).preview(video: _sampleVideo)}',
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: theme.bodySmall?.copyWith(
-            fontFamily: 'monospace',
-            color: scheme.onSurfaceVariant,
+        // The example and the description are the only rows that move with the
+        // text; they listen directly instead of cycling the whole carousel.
+        AnimatedBuilder(
+          animation: _textWatch,
+          builder: (context, _) => Text(
+            'Example: ${OutputTemplate(_template.text).preview(video: _sampleVideo)}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: theme.bodySmall?.copyWith(
+              fontFamily: 'monospace',
+              color: scheme.onSurfaceVariant,
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -1144,29 +1183,29 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
           runSpacing: 8,
           children: [
             for (final (field, label) in OutputTemplate.knownFields)
-              AppActionChip(
-                label: label,
-                onPressed: () => setState(() => _insertField(field)),
-              ),
+              AppActionChip(label: label, onPressed: () => _insertField(field)),
           ],
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                describeTemplate(_template.text),
-                style: theme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
+        AnimatedBuilder(
+          animation: _textWatch,
+          builder: (context, _) => Row(
+            children: [
+              Expanded(
+                child: Text(
+                  describeTemplate(_template.text),
+                  style: theme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ),
-            ),
-            AppButton(
-              onPressed: () => setState(() => _template.text = ''),
-              variant: AppButtonVariant.plain,
-              child: const Text('Reset'),
-            ),
-          ],
+              AppButton(
+                onPressed: () => _template.text = '',
+                variant: AppButtonVariant.plain,
+                child: const Text('Reset'),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -1181,125 +1220,6 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
       offset: _template.text.length,
     );
   }
-}
-
-/// A dense labelled text field, the one every free-text setting uses.
-Widget _prefField({
-  required String label,
-  required String hint,
-  required String value,
-  required ValueChanged<String> onChanged,
-}) {
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: TextFormField(
-      initialValue: value,
-      onChanged: onChanged,
-      decoration: InputDecoration(
-        isDense: true,
-        labelText: label,
-        hintText: hint,
-        border: const OutlineInputBorder(),
-      ),
-    ),
-  );
-}
-
-/// A whole-number text field, for the few values that have no sensible slider.
-Widget _prefIntField({
-  required String label,
-  required int value,
-  required ValueChanged<int> onChanged,
-  String? helper,
-}) {
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: TextFormField(
-      initialValue: '$value',
-      keyboardType: TextInputType.number,
-      // An unparseable value — a cleared field, a stray letter — falls back to the
-      // current value rather than 0, so deleting the contents to retype does not
-      // momentarily write a zero into the settings.
-      onChanged: (v) {
-        final parsed = int.tryParse(v.trim());
-        if (parsed != null) onChanged(parsed);
-      },
-      decoration: InputDecoration(
-        isDense: true,
-        labelText: label,
-        helperText: helper,
-        helperMaxLines: 2,
-        border: const OutlineInputBorder(),
-      ),
-    ),
-  );
-}
-
-/// A chip row picking one of a fixed set of values.
-Widget _prefChips(
-  BuildContext context, {
-  required String label,
-  required List<String> options,
-  required String selected,
-  required ValueChanged<String> onChanged,
-}) {
-  return Padding(
-    padding: const EdgeInsets.only(bottom: 10, left: 8),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: context.textStyles.bodySmall),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final o in options)
-              AppChoiceChip(
-                label: o.toUpperCase(),
-                selected: selected == o,
-                onSelected: (_) => onChanged(o),
-              ),
-          ],
-        ),
-      ],
-    ),
-  );
-}
-
-/// A slider whose current value is named in a label above it.
-Widget _prefSlider(
-  BuildContext context, {
-  required String label,
-  required int value,
-  required int min,
-  required int max,
-  required String helper,
-  required ValueChanged<int> onChanged,
-}) {
-  return Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text('$label: $value', style: context.textStyles.bodyMedium),
-      AppSlider(
-        value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
-        min: min.toDouble(),
-        max: max.toDouble(),
-        divisions: max - min,
-        label: '$value',
-        onChanged: (v) => onChanged(v.round()),
-      ),
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(
-          helper,
-          style: context.textStyles.bodySmall?.copyWith(
-            color: context.colors.onSurfaceVariant,
-          ),
-        ),
-      ),
-    ],
-  );
 }
 
 /// Patches only the yt-dlp prefs, so a change in one section cannot clobber an
@@ -1342,26 +1262,25 @@ class _NetworkSection extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 12),
-          _prefField(
+          AppPrefField(
             label: 'Proxy',
             hint: 'socks5://host:port — empty for none',
             value: prefs.proxy,
             onChanged: (v) => patch(prefs.copyWith(proxy: v.trim())),
           ),
-          _prefField(
+          AppPrefField(
             label: 'Referer',
             hint: 'Some hosts require one',
             value: prefs.referer,
             onChanged: (v) => patch(prefs.copyWith(referer: v.trim())),
           ),
-          _prefField(
+          AppPrefField(
             label: 'Rate limit',
             hint: 'e.g. 2M, 500K — empty for no limit',
             value: prefs.limitRate,
             onChanged: (v) => patch(prefs.copyWith(limitRate: v.trim())),
           ),
-          _prefSlider(
-            context,
+          AppPrefSlider(
             label: 'Parallel fragments',
             value: prefs.concurrentFragments,
             min: 1,
@@ -1374,7 +1293,7 @@ class _NetworkSection extends ConsumerWidget {
                 : 'Higher can fail on a memory-constrained device.',
             onChanged: (v) => patch(prefs.copyWith(concurrentFragments: v)),
           ),
-          _prefIntField(
+          AppPrefIntField(
             label: 'Delay between requests (s)',
             value: prefs.sleepRequests,
             onChanged: (v) => patch(prefs.copyWith(sleepRequests: v)),
@@ -1385,12 +1304,12 @@ class _NetworkSection extends ConsumerWidget {
                 'Clamped to ${YtPrefs.minSleepRequests}–'
                 '${YtPrefs.maxSleepRequests} seconds.',
           ),
-          _prefIntField(
+          AppPrefIntField(
             label: 'Request retries',
             value: prefs.retries,
             onChanged: (v) => patch(prefs.copyWith(retries: v)),
           ),
-          _prefIntField(
+          AppPrefIntField(
             label: 'Fragment retries',
             value: prefs.fragmentRetries,
             onChanged: (v) => patch(prefs.copyWith(fragmentRetries: v)),
@@ -1555,8 +1474,7 @@ class _PostProcessingBody extends StatelessWidget {
             onChanged: (v) => patch(prefs.copyWith(extractAudio: v)),
           ),
           if (prefs.extractAudio)
-            _prefChips(
-              context,
+            AppPrefChips(
               label: 'Audio format',
               options: YtPrefs.audioFormats,
               selected: prefs.audioFormat,
@@ -1575,8 +1493,7 @@ class _PostProcessingBody extends StatelessWidget {
             onChanged: (v) => patch(prefs.copyWith(remuxVideo: v ? 'mkv' : '')),
           ),
           if (prefs.remuxVideo.isNotEmpty)
-            _prefChips(
-              context,
+            AppPrefChips(
               label: 'Remux target',
               options: YtPrefs.remuxFormats,
               selected: prefs.remuxVideo,
@@ -1845,7 +1762,7 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
   @override
   void initState() {
     super.initState();
-    _loadProfiles();
+    unawaited(_loadProfiles());
   }
 
   @override
@@ -1854,7 +1771,7 @@ class _BrowserCookieSectionState extends State<_BrowserCookieSection> {
     // Only when the folder actually changed; a theme change must not re-walk it.
     if (oldWidget.settings.cookieBrowserRootPath !=
         widget.settings.cookieBrowserRootPath) {
-      _loadProfiles();
+      unawaited(_loadProfiles());
     }
   }
 
@@ -2192,7 +2109,7 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
   @override
   void initState() {
     super.initState();
-    _probe();
+    unawaited(_probe());
   }
 
   Future<void> _probe() async {

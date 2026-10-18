@@ -93,7 +93,7 @@ class FolderScanner {
     required Directory root,
     Set<String> knownPaths = const {},
   }) async {
-    if (!await root.exists()) return const [];
+    if (!root.existsSync()) return const [];
     final known = knownPaths.map(p.normalize).toSet();
     final found = <DiscoveredFile>[];
     final staging = p.normalize(p.join(root.path, '.ytdlp-staging'));
@@ -122,7 +122,8 @@ class FolderScanner {
 
         FileStat stat;
         try {
-          stat = await entity.stat();
+          // One syscall either way; inline keeps it free of interleaving.
+          stat = entity.statSync();
         } catch (_) {
           continue; // Vanished between listing and stat.
         }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -102,6 +103,18 @@ class EjsInstaller {
   /// Ceiling on the download. A pure-Python wheel is well under a megabyte, so
   /// this is a sanity bound rather than a real limit.
   static const int maxDownloadBytes = 32 * 1024 * 1024;
+
+  /// How long the server may go silent before a response is abandoned.
+  ///
+  /// Neither the connect timeout nor `HttpClient`'s pooled-connection idle
+  /// timeout covers a socket left open mid-transfer, which is why this is
+  /// timed on the chunk stream in [_request].
+  static const Duration idleTimeout = Duration(seconds: 30);
+
+  /// How long a whole response may be alive-and-trickling before it is
+  /// abandoned — the second half of the same guarantee, so a drip every 29
+  /// seconds cannot outlive this by design.
+  static const Duration totalTimeout = Duration(minutes: 10);
 
   /// Where the package is expected, given the runtime's `PYTHONPATH`.
   ///
@@ -243,10 +256,10 @@ class EjsInstaller {
     try {
       // The wheel is a zip; a source distribution is a gzipped tar. Both are
       // handled so a PyPI URL of either shape works.
-      _unpack(bytes, staging);
+      await _unpack(bytes, staging);
 
       final staged = Directory(p.join(staging.path, packageName));
-      if (!await staged.exists()) {
+      if (!staged.existsSync()) {
         throw EjsInstallException(
           'The downloaded archive did not contain $packageName.',
         );
@@ -280,7 +293,7 @@ class EjsInstaller {
       // so the swap is two renames rather than a copy.
       final target = p.join(sitePackages, packageName);
       final previous = Directory(target);
-      final hadPrevious = await previous.exists();
+      final hadPrevious = previous.existsSync();
       final backup = Directory('$target.previous');
       if (hadPrevious) await previous.rename(backup.path);
       try {
@@ -537,6 +550,22 @@ class EjsInstaller {
   /// Drained rather than streamed to the caller: a body that is only partly
   /// read holds the socket open, and these are two small requests whose whole
   /// point is to be finished with.
+  ///
+  /// Two bounds keep the request from hanging, because neither the connect
+  /// timeout nor `HttpClient`'s own idle timeout
+  /// covers a socket that is open but has stopped sending:
+  ///
+  /// - **idle** — no chunk for [idleTimeout] and the response is abandoned.
+  ///   This is timed on the *chunk stream*, which is the one place neither
+  ///   dart:io's connect timeout nor its pooled-connection idle timeout
+  ///   helps.
+  /// - **total** — an alive-but-trickling source could keep the idle bound
+  ///   fed with a drip every 59 seconds, so the response consumption itself
+  ///   has a stopwatch checked between chunks; past [totalTimeout] the
+  ///   transfer is abandoned.
+  ///
+  /// Both surface as [EjsInstallException] rather than a raw `TimeoutException`,
+  /// so the installer's failure reason stays user-actionable.
   Future<_Response> _request(Uri url) async {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 30);
@@ -544,15 +573,48 @@ class EjsInstaller {
       final req = await client.getUrl(url);
       // Walked by hand in `_get` so every hop can be host-checked.
       req.followRedirects = false;
-      final res = await req.close();
+      // A server that accepts the connection but never answers would hang
+      // `close()` past every timeout dart:io has for it, so the wait for the
+      // response headers is bounded too. `catchError` keeps the inner future
+      // listened-to: the client is force-closed in the `finally`, and an
+      // abandoned future would otherwise complete with an unhandled error.
+      final res = await req
+          .close()
+          .catchError(
+            (Object _, StackTrace _) =>
+                throw const EjsInstallException('Could not reach the server.'),
+          )
+          .timeout(
+            idleTimeout,
+            onTimeout: () => throw const EjsInstallException(
+              'The server did not reply in time.',
+            ),
+          );
       final builder = BytesBuilder();
-      await for (final chunk in res) {
+      // Total bound; see the doc above for why this lives inside the loop.
+      final watch = Stopwatch()..start();
+      await for (final chunk in res.timeout(
+        idleTimeout,
+        onTimeout: (sink) => sink.addError(
+          const EjsInstallException(
+            'The server stopped sending before the file was complete.',
+          ),
+        ),
+      )) {
+        if (watch.elapsed > totalTimeout) {
+          throw const EjsInstallException(
+            'The download took too long and was abandoned.',
+          );
+        }
         builder.add(chunk);
         // A wheel is small; anything larger is not what was asked for.
         if (builder.length > maxDownloadBytes) {
           // Drains the rest before throwing so the socket is released rather
           // than left half-read for the `finally` to close aggressively.
-          await res.drain<void>();
+          // Bounded, because a body that never ends would hang an unbounded
+          // drain past the very bound that stopped it; the force-close in
+          // the `finally` settles the wait either way.
+          await res.drain<void>().timeout(idleTimeout, onTimeout: () {});
           throw const EjsInstallException(
             'The downloaded file is far larger than expected and was not '
             'installed.',
@@ -628,22 +690,32 @@ class EjsInstaller {
 
   /// Extracts [bytes] into [target], choosing the codec by magic bytes rather
   /// than by file name, since the URL may carry neither extension.
-  void _unpack(List<int> bytes, Directory target) {
+  Future<void> _unpack(List<int> bytes, Directory target) async {
     final isZip = bytes.length > 4 && bytes[0] == 0x50 && bytes[1] == 0x4B;
     final isGzip = bytes.length > 2 && bytes[0] == 0x1F && bytes[1] == 0x8B;
     try {
-      if (isZip) {
-        _writeArchive(ZipDecoder().decodeBytes(bytes), target);
-      } else if (isGzip) {
-        _writeArchive(
-          TarDecoder().decodeBytes(GZipDecoder().decodeBytes(bytes)),
-          target,
-        );
-      } else {
+      if (!isZip && !isGzip) {
         throw const EjsInstallException(
           'The downloaded file was not a wheel or a source archive.',
         );
       }
+      // A downloaded archive is multiple megabytes, and decompression is pure
+      // CPU — this runs while the install spinner is the only thing on screen,
+      // so the decode goes to a background isolate to keep it smooth.
+      //
+      // The worker returns just (name, content) pairs for file entries, plain
+      // data, so crossing the isolate boundary never depends on the `archive`
+      // package's internals staying `SendPort`-compatible.
+      final files = await Isolate.run(() {
+        final archive = isZip
+            ? ZipDecoder().decodeBytes(bytes)
+            : TarDecoder().decodeBytes(GZipDecoder().decodeBytes(bytes));
+        return [
+          for (final entry in archive)
+            if (entry.isFile) (name: entry.name, content: entry.content),
+        ];
+      });
+      _writeFiles(files, target);
     } on EjsInstallException {
       rethrow;
     } catch (e) {
@@ -651,14 +723,17 @@ class EjsInstaller {
     }
   }
 
-  void _writeArchive(Archive archive, Directory target) {
-    for (final entry in archive) {
-      if (!entry.isFile) continue;
-      final out = File(p.join(target.path, entry.name));
+  /// Writes [(name, content)] pairs into [target].
+  void _writeFiles(
+    List<({String name, Uint8List content})> files,
+    Directory target,
+  ) {
+    for (final file in files) {
+      final out = File(p.join(target.path, file.name));
       // A path escaping the staging dir is dropped rather than written.
       if (!p.isWithin(target.path, out.path)) continue;
       out.parent.createSync(recursive: true);
-      out.writeAsBytesSync(entry.content as List<int>, flush: true);
+      out.writeAsBytesSync(file.content, flush: true);
     }
   }
 
@@ -689,7 +764,7 @@ class EjsInstaller {
     final dir = Directory(
       p.join((await _binary.supportDirectory).path, 'ejs-staging'),
     );
-    if (await dir.exists()) await _deleteDir(dir);
+    if (dir.existsSync()) await _deleteDir(dir);
     await dir.create(recursive: true);
     return dir;
   }
@@ -710,7 +785,7 @@ class EjsInstaller {
 
   Future<void> _deleteDir(Directory dir) async {
     try {
-      if (await dir.exists()) await dir.delete(recursive: true);
+      if (dir.existsSync()) dir.deleteSync(recursive: true);
     } catch (_) {
       // Best effort; a leftover staging dir is reclaimed on the next install.
     }

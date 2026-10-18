@@ -11,6 +11,7 @@ import 'package:flutter/cupertino.dart'
         FixedExtentScrollController;
 import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
 import '../../core/platform_style.dart';
 import '../../core/theme/app_theme_context.dart';
@@ -549,24 +550,32 @@ class AppSearchField extends StatelessWidget {
 class AppCheckbox extends StatelessWidget {
   const AppCheckbox({super.key, required this.value, required this.onChanged});
 
-  /// Non-null for the third state; the app only uses two.
+  /// A checkbox the user cannot interact with, painted the way the OS paints
+  /// disabled controls — as opposed to an active-looking box whose taps are
+  /// swallowed, which reads as a broken checkbox.
+  const AppCheckbox.disabled({super.key, required this.value})
+    : onChanged = null;
+
   final bool value;
-  final ValueChanged<bool> onChanged;
+
+  /// Null when disabled, so the underlying control greys itself out.
+  final ValueChanged<bool>? onChanged;
 
   @override
   Widget build(BuildContext context) {
+    final onChanged = this.onChanged;
     return switch (context.style) {
       PlatformStyle.material => Checkbox(
         value: value,
-        onChanged: (v) => onChanged(v ?? false),
+        onChanged: onChanged == null ? null : (v) => onChanged(v ?? false),
       ),
       PlatformStyle.cupertino => CupertinoCheckbox(
         value: value,
-        onChanged: (v) => onChanged(v ?? false),
+        onChanged: onChanged == null ? null : (v) => onChanged(v ?? false),
       ),
       PlatformStyle.fluent => fui.Checkbox(
         checked: value,
-        onChanged: (v) => onChanged(v ?? false),
+        onChanged: onChanged == null ? null : (v) => onChanged(v ?? false),
       ),
     };
   }
@@ -1083,6 +1092,174 @@ class AppTabStrip extends StatelessWidget {
         ),
         PlatformStyle.material => tabBar,
       },
+    );
+  }
+}
+
+/// A dense labelled text field, the one every free-text setting uses.
+class AppPrefField extends StatelessWidget {
+  const AppPrefField({
+    super.key,
+    required this.label,
+    required this.hint,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final String hint;
+  final String value;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextFormField(
+        initialValue: value,
+        onChanged: onChanged,
+        decoration: InputDecoration(
+          isDense: true,
+          labelText: label,
+          hintText: hint,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+}
+
+/// A whole-number text field, for the few values that have no sensible slider.
+class AppPrefIntField extends StatelessWidget {
+  const AppPrefIntField({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onChanged,
+    this.helper,
+  });
+
+  final String label;
+  final int value;
+  final ValueChanged<int> onChanged;
+  final String? helper;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextFormField(
+        initialValue: '$value',
+        keyboardType: TextInputType.number,
+        // Non-digits never reach the field: an unparseable value used to be
+        // *silently refused at the settings layer*, so a stray letter could sit
+        // in the box next to a setting that was still using the old number — no
+        // cue that the edit did not land.
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        // An unparseable value — a cleared field, mostly — falls back to the
+        // current value rather than 0, so deleting the contents to retype does
+        // not momentarily write a zero into the settings.
+        onChanged: (v) {
+          final parsed = int.tryParse(v.trim());
+          if (parsed != null) onChanged(parsed);
+        },
+        decoration: InputDecoration(
+          isDense: true,
+          labelText: label,
+          helperText: helper,
+          helperMaxLines: 2,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+}
+
+/// A chip row picking one of a fixed set of values.
+class AppPrefChips extends StatelessWidget {
+  const AppPrefChips({
+    super.key,
+    required this.label,
+    required this.options,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  final String label;
+  final List<String> options;
+  final String selected;
+  final ValueChanged<String> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10, left: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: context.textStyles.bodySmall),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final o in options)
+                AppChoiceChip(
+                  label: o.toUpperCase(),
+                  selected: selected == o,
+                  onSelected: (_) => onChanged(o),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A slider whose current value is named in a label above it.
+class AppPrefSlider extends StatelessWidget {
+  const AppPrefSlider({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.helper,
+    required this.onChanged,
+  });
+
+  final String label;
+  final int value;
+  final int min;
+  final int max;
+  final String helper;
+  final ValueChanged<int> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$label: $value', style: context.textStyles.bodyMedium),
+        AppSlider(
+          value: value.toDouble().clamp(min.toDouble(), max.toDouble()),
+          min: min.toDouble(),
+          max: max.toDouble(),
+          divisions: max - min,
+          label: '$value',
+          onChanged: (v) => onChanged(v.round()),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            helper,
+            style: context.textStyles.bodySmall?.copyWith(
+              color: context.colors.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }

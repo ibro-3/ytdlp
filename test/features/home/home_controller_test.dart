@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:ytdlp/core/models/playlist_info.dart';
@@ -205,7 +207,7 @@ void main() {
     );
 
     final controller = container.read(homeControllerProvider.notifier);
-    controller.fetch(url: _videoUrl);
+    unawaited(controller.fetch(url: _videoUrl));
     final cancelled = ytdlp.lastCancelled;
     expect(cancelled, isNotNull);
 
