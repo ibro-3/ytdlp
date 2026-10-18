@@ -1,8 +1,10 @@
 name: Device test (Android)
 
-# Opt-in: this boots an emulator, so it is deliberately not on every push.
-# Run it from the Actions tab ("Run workflow") or via:
-#   gh workflow run device-test.yml
+# The emulator boot itself is the cost here, so this is not on every push.
+# It runs manually from the Actions tab ("Run workflow", or
+# `gh workflow run device-test.yml`), and on PRs that actually touch the code
+# the integration test exercises — a docs-only edit would pay 20 minutes of
+# emulator boot to learn nothing.
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +14,13 @@ on:
         default: '34'
         type: choice
         options: ['34', '35']
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/**'
+      - 'integration_test/**'
+      - 'pubspec.yaml'
+      - '.github/workflows/device-test.yml'
 
 jobs:
   integration:

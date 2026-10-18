@@ -1,3 +1,5 @@
+import 'dart:async';
+
 // ignore_for_file: avoid_print
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -12,7 +14,7 @@ void main() {
   testWidgets('fetch shows the format sheet and enqueues a download', (
     tester,
   ) async {
-    app.main();
+    unawaited(app.main());
     await tester.pumpAndSettle(const Duration(seconds: 5));
 
     await tester.enterText(

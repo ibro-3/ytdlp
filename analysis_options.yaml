@@ -32,21 +32,19 @@ linter:
   # `// ignore_for_file: name_of_lint` syntax on the line or in the file
   # producing the lint.
   rules:
-    # Nothing added to the `flutter_lints` baseline, deliberately. Three rules
-    # this codebase would benefit from are left off because enabling them
-    # without first running the analyzer over all of `lib/` and `test/` risks
-    # failing CI's `--fatal-infos` on pre-existing violations rather than on
-    # anything new:
+    # The three rules the audit flagged as tracked debt, now enabled. Each was
+    # first run over everything (`flutter analyze --fatal-diagnostics` on
+    # `lib/` + `test/`) so this file never turns CI's `--fatal-infos` on
+    # pre-existing violations rather than new ones:
     #
-    #   unawaited_futures     every discarded Hive write in the settings screen
-    #                         had to be wrapped in `unawaited` first; `test/`
-    #                         has many more
-    #   avoid_slow_async_io  `test/` legitimately uses sync IO to set up
-    #                         deterministically
-    #   discarded_futures    the shape behind the disposed-widget TypeError
-    #
-    # Each needs a pass making it green, then a separate commit enabling it.
-    # Worth doing; not worth doing blind.
+    #   unawaited_futures     a dropped Future is a fire-and-forget exception
+    #   discarded_futures     its sibling for `void`-returning async calls;
+    #                         the shape behind the disposed-widget TypeError
+    #   avoid_slow_async_io   `File.existsSync` and friends block the isolate;
+    #                         async variants exist and are one keystroke away
+    unawaited_futures: true
+    discarded_futures: true
+    avoid_slow_async_io: true
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
 
 # Additional information about this file can be found at

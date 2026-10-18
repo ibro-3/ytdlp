@@ -26,6 +26,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+have() { command -v "$1" >/dev/null 2>&1; }
 # Scratch directory for the cross-compile. `${TMPDIR:-/tmp}` rather than a
 # hard-coded path, so this runs the same on any machine.
 WORK="${WORK_DIR:-${TMPDIR:-/tmp}/ytdl-android}"
@@ -52,6 +53,42 @@ if [ ! -f "$SRC/configure" ]; then
     echo "fetching ffmpeg $VER source..."
     curl -fL --max-time 600 -o "$TARBALL" \
       "https://ffmpeg.org/releases/ffmpeg-$VER.tar.xz"
+    # The source tree is compiled and shipped inside the APK, so its integrity
+    # is the integrity of everything the app executes. ffmpeg.org publishes a
+    # GPG signature beside every release; the check below refuses signed
+    # binaries that fail to verify. It requires the FFmpeg release key in the
+    # local keyring first, so on a machine that has never met the key the
+    # failure is explicit rather than silently skipped — scripts that verify
+    # "when they can" verify nothing in practice. Import it once with
+    #   gpg --keyserver keyserver.ubuntu.com --recv-keys <FFMPEG KEY ID>
+    # (the key id is announced on https://ffmpeg.org/download.html). To opt
+    # out deliberately instead, set SKIP_FFMPEG_SIGNATURE_CHECK=1, or pin a
+    # digest you obtained another way in FFMPEG_SHA256.
+    if [ "${SKIP_FFMPEG_SIGNATURE_CHECK:-}" != "1" ]; then
+      have gpg || { echo "verification: gpg not found; install gnupg, or set SKIP_FFMPEG_SIGNATURE_CHECK=1 to skip (not recommended)"; exit 1; }
+      SIG="$TARBALL.asc"
+      if [ ! -f "$SIG" ]; then
+        curl -fL --max-time 60 \
+          "https://ffmpeg.org/releases/ffmpeg-$VER.tar.xz.asc" -o "$SIG"
+      fi
+      if ! gpg --output /dev/null --verify "$SIG" "$TARBALL" 2>"$WORK/ffmpeg-gpg.err"; then
+        echo "ffmpeg source signature check FAILED; not trusting the tarball." >&2
+        cat "$WORK/ffmpeg-gpg.err" >&2
+        echo "Import the FFmpeg release key first (see above), or set" >&2
+        echo "SKIP_FFMPEG_SIGNATURE_CHECK=1 to consciously skip this check." >&2
+        exit 1
+      fi
+      echo "ffmpeg source signature verified."
+    elif [ -n "${FFMPEG_SHA256:-}" ]; then
+      have sha256sum || have shasum || { echo "need sha256sum or shasum"; exit 1; }
+      if have sha256sum; then actual="$(sha256sum "$TARBALL" | cut -d' ' -f1)"
+      else actual="$(shasum -a 256 "$TARBALL" | cut -d' ' -f1)"; fi
+      if [ "$actual" != "$FFMPEG_SHA256" ]; then
+        echo "ffmpeg tarball hash mismatch (expected $FFMPEG_SHA256, got $actual)" >&2
+        exit 1
+      fi
+      echo "ffmpeg tarball hash matches the pinned value."
+    fi
   fi
   tar -xJf "$TARBALL" -C "$WORK"
 fi
