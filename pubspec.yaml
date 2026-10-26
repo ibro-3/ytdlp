@@ -72,7 +72,7 @@ dependencies:
   # what the Windows screen's buttons, switches, dialogs and navigation panes
   # are built from. It compiles everywhere but is only instantiated on Windows,
   # so it adds nothing to the Android, Linux or macOS bundles.
-  fluent_ui: ^4.16.1
+  fluent_ui: ^4.17.0
 
 dev_dependencies:
   flutter_test:
