@@ -686,11 +686,21 @@ class YtdlpService implements DownloadEngine {
   }) async {
     final Process process;
     try {
-      process = await Process.start(
-        runner.executable,
-        runner.args(args),
-        environment: runner.env,
-      );
+      // Handle run-as wrapper for Android SELinux compatibility
+      if (runner.useRunAs && runner.packageName != null) {
+        final runAsArgs = _buildRunAsArgs(runner, args);
+        process = await Process.start(
+          'run-as',
+          runAsArgs,
+          environment: runner.env,
+        );
+      } else {
+        process = await Process.start(
+          runner.executable,
+          runner.args(args),
+          environment: runner.env,
+        );
+      }
     } catch (e) {
       throw YtdlpException(_spawnHint(e));
     }
@@ -911,17 +921,56 @@ class YtdlpService implements DownloadEngine {
 
     final YtdlpProcess process;
     try {
-      process = YtdlpProcess(
-        await Process.start(
-          bin.executable,
-          bin.args(args),
-          environment: bin.env,
-        ),
-      );
+      // Handle run-as wrapper for Android SELinux compatibility
+      if (bin.useRunAs && bin.packageName != null) {
+        final runAsArgs = _buildRunAsArgs(bin, args);
+        process = YtdlpProcess(
+          await Process.start(
+            'run-as',
+            runAsArgs,
+            environment: bin.env,
+          ),
+        );
+      } else {
+        process = YtdlpProcess(
+          await Process.start(
+            bin.executable,
+            bin.args(args),
+            environment: bin.env,
+          ),
+        );
+      }
     } catch (e) {
       throw YtdlpException(_spawnHint(e));
     }
     return process;
+  }
+
+  /// Builds the run-as command arguments for Android SELinux compatibility.
+  ///
+  /// The command runs as: `run-as <package> sh -c 'export VAR=value ... && exec python script args...'`
+  static List<String> _buildRunAsArgs(ProcessRunner bin, List<String> args) {
+    final envExports = bin.env.entries
+        .map((e) => 'export ${e.key}=${_shellEscape(e.value)}')
+        .join(' && ');
+    final cmd = [bin.executable, ...bin.preArgs, ...args]
+        .map(_shellEscape)
+        .join(' ');
+    final shellCmd = envExports.isEmpty
+        ? 'exec $cmd'
+        : '$envExports && exec $cmd';
+    return [
+      bin.packageName!,
+      'sh',
+      '-c',
+      shellCmd,
+    ];
+  }
+
+  /// Escapes a string for safe use in a shell command.
+  static String _shellEscape(String s) {
+    // Simple escaping: wrap in single quotes, escape any single quotes inside
+    return "'${s.replaceAll("'", "'\\''")}'";
   }
 
   /// The location of the bundled Android ffmpeg, or null when unavailable.

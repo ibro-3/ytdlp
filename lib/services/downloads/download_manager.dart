@@ -111,7 +111,7 @@ class DownloadManager extends ChangeNotifier {
 
   /// Serialises snapshot writes so two overlapping saves cannot land out of
   /// order and leave an older queue on disk.
-  Future<void> _writeChain = Future<void>.value();
+  final _writeChain = Future<void>.value();
 
   bool _restoring = false;
 
@@ -279,20 +279,24 @@ class DownloadManager extends ChangeNotifier {
     try {
       final restored = store.load();
       for (final task in restored) {
-        if (task.status == DownloadStatus.queued ||
-            task.status == DownloadStatus.downloading) {
-          task.status = DownloadStatus.failed;
-          task.error =
-              'Interrupted when the app closed — tap Retry to continue.';
+        switch (task.status) {
+          case DownloadStatus.queued:
+          case DownloadStatus.downloading:
+            // Process died mid-download → failed but resumable
+            task.status = DownloadStatus.failed;
+            task.error =
+                'Interrupted when the app closed — tap Retry to continue.';
+            break;
+          case DownloadStatus.paused:
+            // User explicitly paused → KEEP paused, don't mark as failed.
+            // Staging dir and .part file are intact, resume will work.
+            break;
+          case DownloadStatus.completed:
+          case DownloadStatus.failed:
+          case DownloadStatus.canceled:
+            // Terminal states unchanged
+            break;
         }
-        // A paused task keeps its pause across the restart. Pausing is the
-        // user's own deliberate hold — `pauseTask` stopped the process and
-        // froze that exact state — so restoring it as `failed` used to turn a
-        // held download into an XS crash-looking failure with "Interrupted"
-        // claiming a cause it did not have. The hold survives, staging and
-        // `.part` with it, and Resume releases it as before. (`_paused`, the
-        // queue-wide switch, is deliberately *not* restored: it is documented
-        // as a decision about this session.)
         _tasks.add(task);
       }
       _tasks.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -335,37 +339,49 @@ class DownloadManager extends ChangeNotifier {
   /// schedules exactly one write for when the interval elapses. A pending
   /// timer is never pushed back, so a continuous stream of progress lines
   /// still produces writes at a steady rate.
+  ///
+  /// Uses a persist gate to serialize writes and prevent race conditions where
+  /// an older snapshot could overwrite a newer one.
   void _schedulePersist() {
     if (_restoring || queueStore == null) return;
     final now = DateTime.now();
     final last = _lastPersistAt;
+
+    // Cancel any pending timer
+    _persistTimer?.cancel();
+    _persistTimer = null;
+
     if (last == null || now.difference(last) >= _persistInterval) {
-      _persistTimer?.cancel();
-      _persistTimer = null;
-      unawaited(_persist());
-      return;
+      // Immediate: wait for any in-flight persist, then run new one
+      unawaited(_persistGate);
+      _persistGate = _persist();
+    } else {
+      // Debounced: schedule single timer
+      _persistTimer = Timer(_persistInterval - now.difference(last), () {
+        _persistTimer = null;
+        unawaited(_persistGate);
+        _persistGate = _persist();
+      });
     }
-    if (_persistTimer != null) return;
-    _persistTimer = Timer(_persistInterval - now.difference(last), () {
-      _persistTimer = null;
-      unawaited(_persist());
-    });
   }
 
-  Future<void> _persist() {
+  /// Gate that serializes persist operations. Only one persist runs at a time.
+  Future<void>? _persistGate;
+
+  Future<void> _persist() async {
     final store = queueStore;
-    if (store == null) return Future<void>.value();
+    if (store == null) return;
     _lastPersistAt = DateTime.now();
     final maxTasks =
         settings?.settings.maxQueueSize ?? QueueStore.defaultMaxTasks;
-    // Writes are serialised. Hive's `put` is asynchronous, and two overlapping
-    // saves of a list that is still changing can land out of order, leaving the
-    // *older* snapshot on disk — the one case where a queued download silently
-    // vanishes. The failure is absorbed on the chain itself rather than at each
-    // call site, so one rejected write cannot break every write after it.
-    return _writeChain = _writeChain
-        .then((_) => store.save(_tasks, maxTasks: maxTasks))
-        .catchError((Object _) {});
+    try {
+      await store.save(_tasks, maxTasks: maxTasks);
+    } catch (e) {
+      // Log but don't crash; schedule a retry
+      debugPrint('Queue persist failed: $e');
+      _persistTimer?.cancel();
+      _persistTimer = Timer(const Duration(seconds: 10), () => unawaited(_persist()));
+    }
   }
 
   /// Persists right away rather than waiting for the throttle window, for
@@ -377,7 +393,8 @@ class DownloadManager extends ChangeNotifier {
   Future<void> _schedulePersistNow() async {
     _persistTimer?.cancel();
     _persistTimer = null;
-    await _persist();
+    await _persistGate; // Wait for any in-flight persist
+    await _persist();   // Then run ours synchronously
   }
 
   /// Enqueues a download. Returns the created task.

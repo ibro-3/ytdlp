@@ -1,11 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/models/download_task.dart';
 import '../../core/models/video_info.dart';
+import '../../core/platform_style.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme_context.dart';
 import '../../core/utils/formatters.dart';
@@ -13,13 +16,32 @@ import '../../services/downloads/download_manager.dart';
 import '../../widgets/app_full_width.dart';
 import '../../widgets/platform/platform.dart';
 
+/// Intent to pause/resume the queue.
+class _ToggleQueueIntent extends Intent {
+  const _ToggleQueueIntent();
+}
+
+/// Intent to clear finished tasks.
+class _ClearFinishedIntent extends Intent {
+  const _ClearFinishedIntent();
+}
+
+/// Pull-to-refresh handler: refreshes network connectivity and pumps the queue.
+Future<void> _refreshQueue(DownloadManager manager) async {
+  // Trigger connectivity refresh and queue pump.
+  manager.onConnectivityChanged();
+  // Give the async operations a moment to complete so the refresh indicator
+  // shows for a reasonable duration.
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+}
+
 class QueuePage extends ConsumerWidget {
   const QueuePage({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final manager = ref.watch(downloadManagerProvider);
-    return AppScaffold(
+    Widget content = AppScaffold(
       title: 'Queue',
       actions: [
         // Flexible, so the menu yields width to the title on a narrow screen
@@ -38,35 +60,82 @@ class QueuePage extends ConsumerWidget {
         builder: (context, _) {
           final tasks = manager.tasks;
           if (tasks.isEmpty) {
-            return const _EmptyQueue();
+            return RefreshIndicator(
+              onRefresh: () => _refreshQueue(manager),
+              child: ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
+                  SizedBox(height: 200), // Minimal height for pull-to-refresh
+                  _EmptyQueue(),
+                ],
+              ),
+            );
           }
-          return AppFullWidth(
-            child: ListView.separated(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              itemCount: tasks.length,
-              separatorBuilder: (_, _) => const SizedBox(height: 12),
-              itemBuilder: (context, i) {
-                final task = tasks[i];
-                // Reordering only means something for a task that is
-                // waiting. A held one is not: releasing it puts it at the
-                // back of the queue, so its arrows would promise an ordering
-                // the scheduler would not honour.
-                final canReorder = task.status == DownloadStatus.queued;
-                return _TaskCard(
-                  task: task,
-                  onMoveUp: canReorder
-                      ? () => manager.reorder(task.id, -1)
-                      : null,
-                  onMoveDown: canReorder
-                      ? () => manager.reorder(task.id, 1)
-                      : null,
-                );
-              },
+          return RefreshIndicator(
+            onRefresh: () => _refreshQueue(manager),
+            child: AppFullWidth(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                itemCount: tasks.length,
+                separatorBuilder: (_, _) => const SizedBox(height: 12),
+                itemBuilder: (context, i) {
+                  final task = tasks[i];
+                  // Reordering only means something for a task that is
+                  // waiting. A held one is not: releasing it puts it at the
+                  // back of the queue, so its arrows would promise an ordering
+                  // the scheduler would not honour.
+                  final canReorder = task.status == DownloadStatus.queued;
+                  return _TaskCard(
+                    task: task,
+                    onMoveUp: canReorder
+                        ? () => manager.reorder(task.id, -1)
+                        : null,
+                    onMoveDown: canReorder
+                        ? () => manager.reorder(task.id, 1)
+                        : null,
+                  );
+                },
+              ),
             ),
           );
         },
       ),
     );
+
+    // Add keyboard shortcuts on desktop platforms.
+    if (context.isDesktop) {
+      content = Focus(
+        autofocus: true,
+        child: Shortcuts(
+          shortcuts: <LogicalKeySet, Intent>{
+            // Space: Pause/Resume queue
+            LogicalKeySet(LogicalKeyboardKey.space):
+                const _ToggleQueueIntent(),
+            // Delete: Remove selected task (handled by _TaskCard)
+            // Ctrl/Cmd + Shift + C: Clear finished
+            LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.shift,
+                LogicalKeyboardKey.keyC):
+                const _ClearFinishedIntent(),
+            LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.shift,
+                LogicalKeyboardKey.keyC):
+                const _ClearFinishedIntent(),
+          },
+          child: Actions(
+            actions: <Type, Action<Intent>>{
+              _ToggleQueueIntent: CallbackAction<_ToggleQueueIntent>(
+                onInvoke: (_) => manager.togglePause(),
+              ),
+              _ClearFinishedIntent: CallbackAction<_ClearFinishedIntent>(
+                onInvoke: (_) => manager.clearFinished(),
+              ),
+            },
+            child: content,
+          ),
+        ),
+      );
+    }
+
+    return content;
   }
 }
 
@@ -209,6 +278,13 @@ class _EmptyQueue extends StatelessWidget {
               'Add a video from the Download tab.',
               style: Theme.of(context).textTheme.bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonalIcon(
+              onPressed: () => context.go('/download'),
+              icon: const Icon(Icons.add_link),
+              label: const Text('Go to Download'),
             ),
           ],
         ),

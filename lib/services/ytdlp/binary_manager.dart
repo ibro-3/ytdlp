@@ -21,11 +21,20 @@ class ProcessRunner {
     required this.executable,
     this.preArgs = const [],
     this.env = const <String, String>{},
+    this.useRunAs = false,
+    this.packageName,
   });
 
   final String executable;
   final List<String> preArgs;
   final Map<String, String> env;
+
+  /// Whether to use `run-as` wrapper for Android SELinux compatibility.
+  /// When true, the executable is run via `run-as <packageName> sh -c '...'`
+  final bool useRunAs;
+
+  /// The Android package name for run-as (required when useRunAs is true).
+  final String? packageName;
 
   List<String> args(List<String> rest) => [...preArgs, ...rest];
 }
@@ -325,14 +334,44 @@ class BinaryManager {
           },
         );
         _androidRuntime = runtime;
+
+        // Check if run-as works for SELinux compatibility on Android 10+ (API 29+).
+        // run-as executes in the app's UID but with shell SELinux context,
+        // which has execute permissions on app-writable storage.
+        final useRunAs = await _checkRunAsWorks();
+        final packageName = 'com.github.ytdlp'; // From android/app/build.gradle.kts
+
         return ProcessRunner(
           executable: runtime.python,
           preArgs: <String>[runtime.script],
           env: runtime.env,
+          useRunAs: useRunAs,
+          packageName: useRunAs ? packageName : null,
         );
       }
     }
     throw YtdlpException(_missingHint(), code: YtdlpException.missingBinary);
+  }
+
+  /// Checks if `run-as` works for executing the app's own files.
+  ///
+  /// On Android 10+ (API 29+), apps targeting API 29+ cannot execute files
+  /// in their app-specific directories due to W^X enforcement. However,
+  /// `run-as <package> command` executes in the app's UID but with the
+  /// shell's SELinux domain (untrusted_app -> shell), which CAN execute
+  /// files in the app's data directory.
+  Future<bool> _checkRunAsWorks() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      // Try a simple run-as command to see if it works.
+      final res = await Process.run('run-as', [
+        'com.github.ytdlp',
+        'sh', '-c', 'true',
+      ]);
+      return res.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Extracts a tar.gz asset into the app support dir, atomically.

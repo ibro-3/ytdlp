@@ -163,10 +163,14 @@ class _CookieDomainsPageState extends ConsumerState<CookieDomainsPage> {
     final off = _domains.where((d) => !d.enabled).toList();
     final withheld = off.fold<int>(0, (n, d) => n + d.cookieCount);
     final now = DateTime.now();
-    final browser = CookieBrowser.byArgument(
-      ref.watch(settingsControllerProvider).cookieBrowser,
+    final settings = ref.watch(settingsControllerProvider);
+    final source = resolveCookieSource(
+      cookiesPath: settings.cookiesPath,
+      cookieBrowser: settings.cookieBrowser,
     );
-    final browserInUse = browser?.label;
+    final browserInUse = (source == CookieSource.browser)
+        ? CookieBrowser.byArgument(settings.cookieBrowser)?.label
+        : null;
 
     return AppScaffold(
       title: 'Cookie sites',

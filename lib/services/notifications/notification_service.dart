@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Download notifications on the `downloads` channel.
 ///
@@ -35,6 +36,12 @@ class NotificationService {
   static const _channelId = 'downloads';
   static const _channelName = 'Downloads';
   static const _channelDesc = 'Video download progress and completion';
+
+  /// SharedPreferences key prefix for persisted notification ID mapping.
+  static const _prefsPrefix = 'notif_id_';
+
+  /// Golden ratio hash constant for stable ID generation.
+  static const _idSalt = 0x9e3779b9;
 
   Future<void> init() async {
     if (_ready || _initializing) return;
@@ -104,18 +111,28 @@ class NotificationService {
     }
   }
 
-  /// Notification ids for the tasks this session has announced.
+  /// Returns a stable notification ID for [taskId] that persists across restarts.
   ///
-  /// A small counter rather than `taskId.hashCode`. Two distinct ids can hash to
-  /// the same 32-bit value, and then one task's completion notice overwrites the
-  /// other's — or a cancel removes the wrong notification. The counter cannot
-  /// collide within a session, and ids are not persisted, so the numbers being
-  /// reused after a restart is harmless.
-  int _nextId = 0;
-  final Map<String, int> _ids = {};
+  /// Uses a hash of the taskId combined with a persisted mapping to ensure
+  /// the same taskId always gets the same notification ID, preventing ghost
+  /// notifications after app restart.
+  Future<int> _idFor(String taskId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = '$_prefsPrefix$taskId';
+    int? id = prefs.getInt(key);
+    if (id == null) {
+      // Generate stable hash-based ID as fallback
+      id = (taskId.hashCode * _idSalt) & 0x7FFFFFFF;
+      await prefs.setInt(key, id);
+    }
+    return id;
+  }
 
-  /// Stable per-session notification id for [taskId].
-  int _idFor(String taskId) => _ids.putIfAbsent(taskId, () => _nextId++);
+  /// Removes the persisted notification ID mapping for [taskId].
+  Future<void> _removeId(String taskId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('$_prefsPrefix$taskId');
+  }
 
   Future<void> showProgress({
     required String taskId,
@@ -129,7 +146,7 @@ class NotificationService {
       final pct = (progress * 100).round().clamp(0, 100);
       final sub = [?speed, if (eta != null) 'ETA $eta'].join(' · ');
       await _plugin.show(
-        id: _idFor(taskId),
+        id: await _idFor(taskId),
         title: 'Downloading… $pct%',
         body: sub.isEmpty ? title : '$title\n$sub',
         notificationDetails: NotificationDetails(
@@ -169,7 +186,7 @@ class NotificationService {
     if (!_ready) return;
     try {
       await _plugin.show(
-        id: _idFor(taskId),
+        id: await _idFor(taskId),
         title: success ? 'Download complete' : 'Download failed',
         body: detail == null || detail.isEmpty ? title : '$title\n$detail',
         notificationDetails: NotificationDetails(
@@ -195,10 +212,8 @@ class NotificationService {
   Future<void> cancel(String taskId) async {
     if (!_ready) return;
     try {
-      await _plugin.cancel(id: _idFor(taskId));
-      // Released, so a long session does not accumulate one entry per task ever
-      // shown. A later show for the same task simply gets a fresh id.
-      _ids.remove(taskId);
+      await _plugin.cancel(id: await _idFor(taskId));
+      await _removeId(taskId);
     } catch (_) {}
   }
 }

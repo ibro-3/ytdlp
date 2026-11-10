@@ -36,6 +36,12 @@ enum PlatformStyle {
 /// The style the current platform gets.
 extension PlatformStyleContext on BuildContext {
   PlatformStyle get style => platformStyleOf(defaultTargetPlatform);
+
+  /// Whether the current platform is a desktop platform (Windows, macOS, Linux).
+  bool get isDesktop => switch (style) {
+    PlatformStyle.fluent || PlatformStyle.cupertino || PlatformStyle.gtk => true,
+    PlatformStyle.material => false,
+  };
 }
 
 /// Maps a Flutter platform onto [PlatformStyle].

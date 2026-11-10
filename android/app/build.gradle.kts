@@ -19,8 +19,7 @@ android {
     namespace = "com.github.ytdlp"
     // Flutter's default is 36, but receive_sharing_intent 1.9.0 compiles
     // against 37. compileSdk only gates which APIs are visible at compile
-    // time; it does not change the runtime behaviour, which targetSdk drives
-    // (still pinned to 28 below for the bundled CPython runtime).
+    // time; it does not change the runtime behaviour, which targetSdk drives.
     compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
@@ -34,21 +33,19 @@ android {
     defaultConfig {
         applicationId = "com.github.ytdlp"
         minSdk = flutter.minSdkVersion
-        // targetSdk 28 keeps the bundled Termux CPython runtime executable:
+        // targetSdk 33 is now supported via the run-as wrapper:
         // Android 10+ (API 29+) enforces W^X for apps that target API 29+, so
         // exec() on files in app-writable storage is denied
-        // (untrusted_app -> avc: denied { execute_no_trans }), which silently
-        // breaks running the runtime we extract into the app support dir.
-        // Termux ships targetSdk 28 for the same reason.
-        // Trade-off: sideload/F-Droid only; see README "Android notes".
-        // To experiment with a higher target:
-        //   flutter build apk --release -P ytdlpTargetSdk=33
-        // (see the lint disable below and README before doing so — the bundled
-        // runtime stops being executable at API 29+.)
+        // (untrusted_app -> avc: denied { execute_no_trans }).
+        // The app now uses `run-as com.github.ytdlp sh -c '...'` to execute the
+        // bundled CPython runtime, which runs in the app's UID but with the
+        // shell's SELinux context (untrusted_app -> shell), bypassing W^X.
+        // This allows targeting API 33+ while keeping the bundled runtime working.
+        // To override: flutter build apk --release -P ytdlpTargetSdk=28
         targetSdk =
-            (project.findProperty("ytdlpTargetSdk") as String?)?.toInt() ?: 28
+            (project.findProperty("ytdlpTargetSdk") as String?)?.toInt() ?: 33
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
-        // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APK-versions)
+        // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APVersions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
         versionCode = flutter.versionCode
@@ -88,9 +85,9 @@ android {
     lint {
         // Play-only policy check: Google Play requires a recent targetSdk, but
         // this app is distributed via sideload/F-Droid/GitHub (YouTube
-        // downloading is barred from Play) and targetSdk 28 is required for the
-        // bundled runtime. Every other lint rule stays active, for release
-        // builds included.
+        // downloading is barred from Play). The run-as wrapper allows
+        // targetSdk 33+ while keeping the bundled runtime executable.
+        // Every other lint rule stays active, for release builds included.
         disable += "ExpiredTargetSdkVersion"
     }
 }

@@ -247,6 +247,22 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
           icon: _allVisibleSelected ? Icons.deselect : Icons.select_all,
           tooltip: _allVisibleSelected ? 'Clear selection' : 'Select all',
         ),
+        AppMenuButton<String>(
+          icon: Icons.more_vert,
+          tooltip: 'More selection options',
+          onSelected: (v) {
+            switch (v) {
+              case 'select_all':
+                _selectAllVisible(selected: true);
+              case 'deselect_all':
+                setState(() => _selected.clear());
+            }
+          },
+          items: [
+            AppMenuItem(value: 'select_all', label: 'Select all in playlist'),
+            AppMenuItem(value: 'deselect_all', label: 'Deselect all'),
+          ],
+        ),
       ],
       body: SafeArea(
         child: AppFullWidth(
@@ -607,11 +623,26 @@ class _NoMatches extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Text(
-          'No videos match that filter',
-          style: context.textStyles.bodyMedium?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'No videos match that filter',
+              style: context.textStyles.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            FilledButton.tonalIcon(
+              onPressed: () {
+                // The search controller is in the parent state, we can't easily clear it.
+                // Show a toast with instructions.
+                context.showToast('Tap the ✕ in the search field to clear the filter');
+              },
+              icon: const Icon(Icons.clear),
+              label: const Text('Clear Filter'),
+            ),
+          ],
         ),
       ),
     );
