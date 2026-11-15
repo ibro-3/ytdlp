@@ -1,8 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 
-import '../../core/platform_style.dart';
-import '../../core/theme/app_theme.dart';
-import '../../core/theme/app_theme_context.dart';
+import '../core/platform_style.dart';
+import '../core/theme/app_theme.dart';
+import '../core/theme/app_theme_context.dart';
+import 'platform/platform.dart';
 
 /// A dismissed-able strip listing what failed at start-up.
 ///
@@ -119,24 +120,19 @@ class _StartupBannerState extends State<StartupBanner> {
 
   void _dismiss() {
     setState(() => _dismissed = true);
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(
-        const SnackBar(
-          content: Text('These will be retried the next time the app starts.'),
-        ),
-      );
+    // A toast, not a snackbar: this banner is built above the Navigator,
+    // where no ScaffoldMessenger exists to receive one.
+    context.showToast('These will be retried the next time the app starts.');
   }
 }
 
 /// The strip itself, shared by all three families.
 ///
-/// The Material [IconButton] deliberately carries no `Tooltip`: a `Tooltip`
-/// needs an `Overlay` ancestor, and this banner is built in the root's
-/// `builder` — above the `Navigator`, so there is none. Using one threw every
-/// time the banner appeared, which is to say exactly when it was needed. The
-/// `Semantics` wrapper gives assistive tech the same label without it.
+/// The banner is built in the root's `builder` — above the `Navigator` — so
+/// it cannot use a `ScaffoldMessenger`; a toast inserted into the root
+/// overlay (installed there for exactly this) is what its dismiss button
+/// raises. The dismiss button is an [AppIconButton], whose tooltip is safe
+/// there because the root overlay exists.
 class _BannerRow extends StatelessWidget {
   const _BannerRow({
     required this.problems,
@@ -187,14 +183,11 @@ class _BannerRow extends StatelessWidget {
                 ],
               ),
             ),
-            Semantics(
-              button: true,
-              label: 'Dismiss',
-              child: IconButton(
-                onPressed: onDismiss,
-                icon: const Icon(Icons.close),
-                color: onAccent,
-              ),
+            AppIconButton(
+              onPressed: onDismiss,
+              icon: Icons.close,
+              tooltip: 'Dismiss',
+              color: onAccent,
             ),
           ],
         ),

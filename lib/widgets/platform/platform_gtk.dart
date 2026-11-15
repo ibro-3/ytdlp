@@ -604,11 +604,16 @@ class GtkIconButton extends StatefulWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
+    this.color,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
+
+  /// Overrides the icon colour (e.g. on a non-surface fill); defaults to
+  /// onSurface, dimmed when disabled.
+  final Color? color;
 
   @override
   State<GtkIconButton> createState() => _GtkIconButtonState();
@@ -641,9 +646,11 @@ class _GtkIconButtonState extends State<GtkIconButton> {
           child: Icon(
             widget.icon,
             size: 18,
-            color: colors.onSurface.withValues(
-              alpha: widget.onPressed == null ? 0.38 : 1,
-            ),
+            color:
+                widget.color ??
+                colors.onSurface.withValues(
+                  alpha: widget.onPressed == null ? 0.38 : 1,
+                ),
           ),
         ),
       ),

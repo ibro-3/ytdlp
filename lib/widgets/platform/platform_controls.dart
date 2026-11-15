@@ -257,18 +257,23 @@ class AppIconButton extends StatelessWidget {
     required this.icon,
     required this.onPressed,
     this.tooltip,
+    this.color,
   });
 
   final IconData icon;
   final VoidCallback? onPressed;
   final String? tooltip;
 
+  /// Overrides the family's icon colour — for icon buttons drawn on a
+  /// non-surface fill (the start-up banner's error container).
+  final Color? color;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     final button = switch (context.style) {
       PlatformStyle.material => IconButton(
-        icon: Icon(icon),
+        icon: Icon(icon, color: color),
         onPressed: onPressed,
         tooltip: tooltip,
       ),
@@ -281,11 +286,11 @@ class AppIconButton extends StatelessWidget {
           onPressed: onPressed,
           padding: const EdgeInsets.all(12),
           minimumSize: const Size(44, 44),
-          child: Icon(icon, size: 22, color: colors.primary),
+          child: Icon(icon, size: 22, color: color ?? colors.primary),
         ),
       ),
       PlatformStyle.fluent => fui.IconButton(
-        icon: Icon(icon),
+        icon: Icon(icon, color: color),
         onPressed: onPressed,
       ),
       // GTK's header-bar button is a flat, square, 32dp icon target with a
@@ -294,6 +299,7 @@ class AppIconButton extends StatelessWidget {
         icon: icon,
         onPressed: onPressed,
         tooltip: tooltip,
+        color: color,
       ),
     };
     // Material's own IconButton shows a tooltip, and nesting a second one would
