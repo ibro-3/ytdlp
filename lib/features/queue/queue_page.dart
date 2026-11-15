@@ -650,6 +650,17 @@ class _TaskCard extends ConsumerWidget {
     DownloadManager manager,
     DownloadTask task,
   ) async {
+    // Deleting the file is the one irreversible thing on a card — ask first.
+    final confirm = await showAppConfirm(
+      context,
+      title: 'Delete file?',
+      message:
+          '"${task.video.title}" will be deleted from disk and removed from '
+          'your library. This cannot be undone.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
+    if (!confirm || !context.mounted) return;
     final ok = await manager.deleteTask(task);
     if (!ok && context.mounted) {
       // False means the file could not be removed: `deleteTask` returns before

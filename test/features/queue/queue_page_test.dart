@@ -80,6 +80,7 @@ class _StubManager extends DownloadManager {
   int reorderCalls = 0;
   int allCanceled = 0;
   int finishedCleared = 0;
+  int deleteCalls = 0;
 
   /// Real `resume` would pump the scheduler and spawn yt-dlp processes, so the
   /// UI tests count the call instead. The queue genuinely staying paused also
@@ -152,6 +153,14 @@ class _StubManager extends DownloadManager {
       cancel(id);
     }
     return super.dismiss(id);
+  }
+
+  /// Counted rather than delegated: the real delete removes the file and the
+  /// history entry, neither of which this test wants to perform (or can).
+  @override
+  Future<bool> deleteTask(DownloadTask task) async {
+    deleteCalls++;
+    return true;
   }
 
   @override
@@ -384,6 +393,36 @@ void main() {
       expect(find.byTooltip('Move earlier in the queue'), findsNothing);
       expect(find.byTooltip('Move later in the queue'), findsNothing);
     });
+  });
+
+  testWidgets('delete file asks before deleting', (tester) async {
+    manager.seed([_task('a')]);
+    manager.setStatus('a', DownloadStatus.completed);
+    await pump(tester);
+
+    await tester.tap(find.byTooltip('Delete file'));
+    await tester.pumpAndSettle();
+
+    // The dialog stands between the tap and the delete.
+    expect(find.text('Delete file?'), findsOneWidget);
+    expect(manager.deleteCalls, 0);
+
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+    expect(manager.deleteCalls, 1);
+  });
+
+  testWidgets('delete file backing out deletes nothing', (tester) async {
+    manager.seed([_task('a')]);
+    manager.setStatus('a', DownloadStatus.completed);
+    await pump(tester);
+
+    await tester.tap(find.byTooltip('Delete file'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(manager.deleteCalls, 0);
   });
 
   testWidgets('a canceled task shows its state and can be dismissed', (

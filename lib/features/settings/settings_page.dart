@@ -361,6 +361,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// the jar would leave yt-dlp sending a login the user has just asked to stop
   /// sending — the button would say "removed" and mean nothing.
   Future<void> _removeCookies(AppSettings settings) async {
+    // Irreversible — the jar is deleted, not merely detached — so ask first.
+    final confirm = await showAppConfirm(
+      context,
+      title: 'Remove cookies?',
+      message:
+          'The imported cookie jar is deleted and your saved consent is '
+          'cleared. Downloads that need a login will stop working until you '
+          'import a jar again.',
+      confirmLabel: 'Remove',
+      destructive: true,
+    );
+    if (!confirm || !mounted) return;
     final service = await ref.read(cookieJarServiceProvider.future);
     await service.remove();
     await _patch(
@@ -902,6 +914,30 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
     _syncFromSettings();
   }
 
+  /// Asks before deleting saved templates, either one or all of them.
+  /// Deleting a template throws away a piece of the user's own configuration.
+  Future<void> _confirmDeleteTemplates(
+    TemplateStore store, {
+    CommandTemplate? only,
+  }) async {
+    final confirmed = await showAppConfirm(
+      context,
+      title: only == null ? 'Clear all templates?' : 'Delete template?',
+      message: only == null
+          ? 'All ${store.templates.length} saved template(s) will be deleted. '
+                'This cannot be undone.'
+          : '"${only.name}" will be deleted. This cannot be undone.',
+      confirmLabel: only == null ? 'Clear all' : 'Delete',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    if (only == null) {
+      await store.clear();
+    } else {
+      await store.remove(only.name);
+    }
+  }
+
   /// Seeds the fields from persisted settings, once.
   ///
   /// Done in initState rather than build because the fields are free text: a
@@ -1105,7 +1141,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
             Expanded(child: Text('Saved templates', style: theme.labelMedium)),
             if (store.templates.isNotEmpty)
               AppButton(
-                onPressed: () => store.clear(),
+                onPressed: () => unawaited(_confirmDeleteTemplates(store)),
                 variant: AppButtonVariant.plain,
                 child: const Text('Clear all'),
               ),
@@ -1126,7 +1162,8 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
                 AppInputChip(
                   label: t.name,
                   onPressed: () => _args.text = t.args,
-                  onDeleted: () => store.remove(t.name),
+                  onDeleted: () =>
+                      unawaited(_confirmDeleteTemplates(store, only: t)),
                   deleteTooltip: 'Delete ${t.name}',
                 ),
             ],
