@@ -89,38 +89,51 @@ class _GtkPillState extends State<GtkPill> {
 }
 
 class GtkSwitch extends StatelessWidget {
-  const GtkSwitch({super.key, required this.value, required this.onChanged});
+  const GtkSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+  });
 
   final bool value;
-  final ValueChanged<bool> onChanged;
+  final ValueChanged<bool>? onChanged;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     final size = AppTheme.gtkSwitchSize;
+    final active = enabled && onChanged != null;
+    final track = active
+        ? (value ? colors.primary : colors.surfaceContainerHighest)
+        : colors.surfaceContainerHigh;
     return Semantics(
       toggled: value,
       child: GestureDetector(
-        onTap: () => onChanged(!value),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut,
-          width: size.width,
-          height: size.height,
-          padding: const EdgeInsets.all(3),
-          decoration: BoxDecoration(
-            color: value ? colors.primary : colors.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(size.height / 2),
-            border: value ? null : Border.all(color: colors.outline),
-          ),
-          child: Align(
-            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-            child: Container(
-              width: size.height - 10,
-              height: size.height - 10,
-              decoration: BoxDecoration(
-                color: value ? colors.onPrimary : colors.onSurfaceVariant,
-                shape: BoxShape.circle,
+        onTap: active ? () => onChanged!(!value) : null,
+        child: Opacity(
+          opacity: active ? 1 : 0.5,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            curve: Curves.easeOut,
+            width: size.width,
+            height: size.height,
+            padding: const EdgeInsets.all(3),
+            decoration: BoxDecoration(
+              color: track,
+              borderRadius: BorderRadius.circular(size.height / 2),
+              border: value ? null : Border.all(color: colors.outline),
+            ),
+            child: Align(
+              alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+              child: Container(
+                width: size.height - 10,
+                height: size.height - 10,
+                decoration: BoxDecoration(
+                  color: value ? colors.onPrimary : colors.onSurfaceVariant,
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
           ),

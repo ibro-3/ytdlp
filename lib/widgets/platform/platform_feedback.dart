@@ -611,7 +611,9 @@ class AppLinearProgress extends StatelessWidget {
 
 /// Cupertino has no determinate bar — iOS uses a `UIProgressView` here, which
 /// is exactly a rounded track with a fill, so this is that and nothing more.
-class _CupertinoBar extends StatelessWidget {
+/// The indeterminate case is a segment sweeping across the track, the way
+/// iOS shows one.
+class _CupertinoBar extends StatefulWidget {
   const _CupertinoBar({
     required this.value,
     required this.track,
@@ -623,15 +625,32 @@ class _CupertinoBar extends StatelessWidget {
   final Color fill;
 
   @override
+  State<_CupertinoBar> createState() => _CupertinoBarState();
+}
+
+class _CupertinoBarState extends State<_CupertinoBar>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _sweep = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _sweep.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final fraction = value?.clamp(0.0, 1.0);
+    final fraction = widget.value?.clamp(0.0, 1.0);
     return Stack(
       alignment: Alignment.centerLeft,
       children: [
         Container(
           height: 6,
           decoration: BoxDecoration(
-            color: track,
+            color: widget.track,
             borderRadius: BorderRadius.circular(3),
           ),
         ),
@@ -643,10 +662,28 @@ class _CupertinoBar extends StatelessWidget {
               curve: Curves.easeOut,
               height: 6,
               decoration: BoxDecoration(
-                color: fill,
+                color: widget.fill,
                 borderRadius: BorderRadius.circular(3),
               ),
             ),
+          )
+        else
+          AnimatedBuilder(
+            animation: _sweep,
+            builder: (context, _) {
+              final t = Curves.easeInOut.transform(_sweep.value);
+              return FractionallySizedBox(
+                widthFactor: 0.28,
+                alignment: Alignment(-1 + 2 * t, 0),
+                child: Container(
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: widget.fill,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              );
+            },
           ),
       ],
     );

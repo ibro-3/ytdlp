@@ -8,7 +8,8 @@ import 'package:cupertino_ui/cupertino_ui.dart'
         CupertinoSlider,
         CupertinoSwitch,
         CupertinoTextField,
-        FixedExtentScrollController;
+        FixedExtentScrollController,
+        OverlayVisibilityMode;
 import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
@@ -218,13 +219,23 @@ class AppChoiceChip extends StatelessWidget {
 /// Fluent's is a square switch with a knob — three genuinely different controls
 /// saying the same thing, which is the point of the wrapper.
 class AppSwitch extends StatelessWidget {
-  const AppSwitch({super.key, required this.value, required this.onChanged});
+  const AppSwitch({
+    super.key,
+    required this.value,
+    required this.onChanged,
+    this.enabled = true,
+  });
 
   final bool value;
-  final ValueChanged<bool> onChanged;
+
+  /// When false the switch can be read but not moved: Material spells this
+  /// as a null callback; the other two need it said.
+  final ValueChanged<bool>? onChanged;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
+    final onChanged = enabled ? this.onChanged : null;
     return switch (context.style) {
       PlatformStyle.material => Switch(value: value, onChanged: onChanged),
       PlatformStyle.cupertino => CupertinoSwitch(
@@ -233,9 +244,13 @@ class AppSwitch extends StatelessWidget {
       ),
       PlatformStyle.fluent => fui.ToggleSwitch(
         checked: value,
-        onChanged: (v) => onChanged(v),
+        onChanged: onChanged == null ? null : (v) => onChanged(v),
       ),
-      PlatformStyle.gtk => GtkSwitch(value: value, onChanged: onChanged),
+      PlatformStyle.gtk => GtkSwitch(
+        value: value,
+        onChanged: onChanged,
+        enabled: enabled,
+      ),
     };
   }
 }
@@ -270,7 +285,8 @@ class AppSwitchTile extends StatelessWidget {
   final bool dense;
 
   /// When false the switch can be read but not moved. Material spells this as a
-  /// null callback; the other two families need it said.
+  /// null callback; the other two families need it said — and the switch
+  /// itself is inert, not merely the text dimmed.
   final bool enabled;
 
   @override
@@ -307,7 +323,7 @@ class AppSwitchTile extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        AppSwitch(value: value, onChanged: onChanged),
+        AppSwitch(value: value, onChanged: onChanged, enabled: enabled),
       ],
     );
     final result = Padding(
@@ -554,10 +570,16 @@ class AppSearchField extends StatelessWidget {
           onSubmitted: onSubmitted,
         );
       case PlatformStyle.cupertino:
+        // The family's clear affordance is the built-in X-Mark, so the
+        // caller's `trailing` row is not drawn here. It is shown whenever
+        // the field is non-empty — the editing-only default hides it for
+        // text that arrives without focus (a paste), which is exactly the
+        // URL-bar case.
         return CupertinoSearchTextField(
           controller: controller,
           placeholder: placeholder,
           style: TextStyle(color: colors.onSurface),
+          suffixMode: OverlayVisibilityMode.always,
           onSubmitted: onSubmitted,
         );
       case PlatformStyle.gtk:
@@ -1011,34 +1033,79 @@ class _CupertinoDropdown<T> extends StatelessWidget {
   }
 
   Future<void> _openWheel(BuildContext context) async {
-    final initial = items.indexWhere((i) => i.value == value);
+    if (items.isEmpty) return;
+    final found = items.indexWhere((i) => i.value == value);
     await showAppBottomSheet<void>(
       context: context,
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Expanded(
-            child: CupertinoPicker(
-              scrollController: initial > 0
-                  ? FixedExtentScrollController(initialItem: initial)
-                  : null,
-              itemExtent: 40,
-              onSelectedItemChanged: (i) => onChanged(items[i].value),
-              children: [
-                for (final item in items) Center(child: Text(item.label)),
-              ],
-            ),
-          ),
-          SafeArea(
-            top: false,
-            child: AppButton.icon(
-              onPressed: () => Navigator.of(context).pop(),
-              icon: Icons.check,
-              label: const Text('Done'),
-            ),
-          ),
-        ],
+      builder: (context) => _CupertinoWheelSheet<T>(
+        items: items,
+        initialIndex: found < 0 ? 0 : found,
+        // The choice is committed on Done, not as the wheel passes each
+        // option — snapping past a value must not half-write a setting.
+        onCommit: onChanged,
       ),
+    );
+  }
+}
+
+/// The picker sheet lifted by the Cupertino dropdown, owning the wheel's
+/// position until the user presses Done.
+class _CupertinoWheelSheet<T> extends StatefulWidget {
+  const _CupertinoWheelSheet({
+    required this.items,
+    required this.initialIndex,
+    required this.onCommit,
+  });
+
+  final List<({T? value, String label})> items;
+  final int initialIndex;
+  final ValueChanged<T?> onCommit;
+
+  @override
+  State<_CupertinoWheelSheet<T>> createState() =>
+      _CupertinoWheelSheetState<T>();
+}
+
+class _CupertinoWheelSheetState<T> extends State<_CupertinoWheelSheet<T>> {
+  late final FixedExtentScrollController _controller =
+      FixedExtentScrollController(initialItem: widget.initialIndex);
+
+  late int _selected = widget.initialIndex;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final items = widget.items;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Expanded(
+          child: CupertinoPicker(
+            scrollController: _controller,
+            itemExtent: 40,
+            onSelectedItemChanged: (i) => setState(() => _selected = i),
+            children: [
+              for (final item in items) Center(child: Text(item.label)),
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          child: AppButton.icon(
+            onPressed: () {
+              widget.onCommit(items[_selected].value);
+              Navigator.of(context).pop();
+            },
+            icon: Icons.check,
+            label: const Text('Done'),
+          ),
+        ),
+      ],
     );
   }
 }
