@@ -833,7 +833,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     ),
                     Align(
                       alignment: Alignment.centerLeft,
-                      child: FilledButton.tonalIcon(
+                      child: AppButton.icon(
+                        variant: AppButtonVariant.tonal,
                         onPressed: () {
                           unawaited(
                             ref
@@ -848,7 +849,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           );
                           context.showToast('Test notification sent');
                         },
-                        icon: const Icon(Icons.notifications_outlined),
+                        icon: Icons.notifications_outlined,
                         label: const Text('Send test notification'),
                       ),
                     ),
@@ -1003,7 +1004,8 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
         // keeps it live without a whole-page rebuild per keystroke.
         AnimatedBuilder(
           animation: _textWatch,
-          builder: (context, _) => FilledButton.tonalIcon(
+          builder: (context, _) => AppButton.icon(
+            variant: AppButtonVariant.tonal,
             onPressed: _valid
                 ? () => unawaited(
                     widget.onPatch(
@@ -1014,7 +1016,7 @@ class _AdvancedSettingsState extends ConsumerState<_AdvancedSettings>
                     ),
                   )
                 : null,
-            icon: const Icon(Icons.save_outlined),
+            icon: Icons.save_outlined,
             // Names the other page too, since one button now commits both.
             label: const Text('Save advanced settings'),
           ),
@@ -1701,20 +1703,16 @@ class _SaveTemplateButtonState extends ConsumerState<_SaveTemplateButton> {
     return Row(
       children: [
         Expanded(
-          child: TextField(
+          child: AppTextField(
             controller: _name,
             onChanged: (_) => setState(() {}),
-            decoration: const InputDecoration(
-              isDense: true,
-              hintText: 'Template name',
-              border: OutlineInputBorder(),
-            ),
+            placeholder: 'Template name',
           ),
         ),
         const SizedBox(width: 8),
-        IconButton.filledTonal(
+        AppIconButton(
           onPressed: canSave ? _save : null,
-          icon: const Icon(Icons.bookmark_add_outlined),
+          icon: Icons.bookmark_add_outlined,
           tooltip: 'Save these flags as a template',
         ),
       ],
@@ -2212,7 +2210,8 @@ class _YoutubeSectionState extends ConsumerState<_YoutubeSection> {
         if (ejs?.isUsable == true)
           Align(
             alignment: Alignment.centerLeft,
-            child: TextButton(
+            child: AppButton(
+              variant: AppButtonVariant.plain,
               onPressed: _uninstall,
               child: const Text('Remove'),
             ),

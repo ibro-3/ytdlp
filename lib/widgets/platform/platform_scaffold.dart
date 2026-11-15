@@ -4,6 +4,7 @@ import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/platform_style.dart';
+import 'platform_controls.dart';
 import 'platform_gtk.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/theme/app_theme_context.dart';
@@ -219,6 +220,93 @@ Widget _fluentFab({
   );
   if (tooltip == null) return button;
   return Tooltip(message: tooltip, child: button);
+}
+
+/// The bottom selection strip: a count and one primary action.
+///
+/// The playlist and batch screens both ended in a raw Material bar before
+/// this existed, which is why it takes no family-specific chrome of its own —
+/// each family draws its standard bottom-edge strip and the row inside it is
+/// the same everywhere.
+class AppSelectionBar extends StatelessWidget {
+  const AppSelectionBar({
+    super.key,
+    required this.label,
+    required this.actionLabel,
+    required this.onAction,
+    this.icon = Icons.download,
+  });
+
+  /// The leading text — the running count of what is selected.
+  final String label;
+
+  final String actionLabel;
+
+  /// Null disables the action.
+  final VoidCallback? onAction;
+
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final child = SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: context.textStyles.bodyMedium,
+              ),
+            ),
+            AppButton.icon(
+              onPressed: onAction,
+              icon: icon,
+              label: Text(actionLabel),
+            ),
+          ],
+        ),
+      ),
+    );
+    return switch (context.style) {
+      PlatformStyle.material => Material(
+        elevation: 3,
+        color: colors.surfaceContainer,
+        child: child,
+      ),
+      // A translucent top-edge band with a hairline, iOS' tab-bar idiom.
+      PlatformStyle.cupertino => DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainer.withValues(alpha: 0.92),
+          border: Border(
+            top: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.6)),
+          ),
+        ),
+        child: child,
+      ),
+      // Windows' command bar look: a high surface with a hard top border.
+      PlatformStyle.fluent => DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHigh,
+          border: Border(top: BorderSide(color: colors.outline)),
+        ),
+        child: child,
+      ),
+      // GTK: a low surface with one hairline, no elevation.
+      PlatformStyle.gtk => DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerLow,
+          border: Border(top: BorderSide(color: colors.outline)),
+        ),
+        child: child,
+      ),
+    };
+  }
 }
 
 /// The floating action button, in the family the OS asked for.

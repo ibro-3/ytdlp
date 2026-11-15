@@ -259,7 +259,7 @@ class _HomePageState extends ConsumerState<HomePage> {
                   ),
                 ],
               ] else
-                const _EmptyHint(),
+                _EmptyHint(onPaste: _pasteFromClipboard),
             ],
           ),
         ),
@@ -587,7 +587,11 @@ class _ErrorCard extends StatelessWidget {
 }
 
 class _EmptyHint extends StatelessWidget {
-  const _EmptyHint();
+  const _EmptyHint({required this.onPaste});
+
+  /// Paste from the clipboard right here — the FAB is a small target, and
+  /// this card is where the user is looking when it says "get started".
+  final VoidCallback onPaste;
 
   @override
   Widget build(BuildContext context) {
@@ -615,15 +619,10 @@ class _EmptyHint extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            FilledButton.tonalIcon(
-              onPressed: () {
-                // The FAB handles paste, but we can't easily call it from here.
-                // Show a toast pointing to the FAB.
-                context.showToast(
-                  'Tap the paste button (clipboard icon) to add a link',
-                );
-              },
-              icon: const Icon(Icons.content_paste),
+            AppButton.icon(
+              variant: AppButtonVariant.tonal,
+              onPressed: onPaste,
+              icon: Icons.content_paste,
               label: const Text('Paste from Clipboard'),
             ),
           ],

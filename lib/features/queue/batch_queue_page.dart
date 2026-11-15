@@ -63,8 +63,10 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
       );
     }
     if (!mounted) return;
-    context.go('/queue');
+    // Same ordering as the playlist picker: toast before the navigation,
+    // above the screen it lands on.
     context.showToast('Queued ${videos.length} download(s)');
+    context.go('/queue');
   }
 
   @override
@@ -115,7 +117,15 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
             ),
       bottomBar: state.total == 0
           ? null
-          : _buildBottomBar(state, selectedVideos),
+          : AppSelectionBar(
+              label: '${selectedVideos.length} selected',
+              actionLabel: selectedVideos.length == 1
+                  ? 'Download 1'
+                  : 'Download ${selectedVideos.length}',
+              onAction: selectedVideos.isEmpty
+                  ? null
+                  : () => _downloadAll(selectedVideos),
+            ),
     );
   }
 
@@ -162,42 +172,6 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
             ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildBottomBar(BatchState state, List<VideoInfo> selected) {
-    final theme = context.textStyles;
-    final colors = context.colors;
-    return Material(
-      elevation: 3,
-      color: colors.surfaceContainer,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${selected.length} selected',
-                  style: theme.bodyMedium,
-                ),
-              ),
-              AppButton.icon(
-                onPressed: selected.isEmpty
-                    ? null
-                    : () => _downloadAll(selected),
-                icon: Icons.download,
-                label: Text(
-                  selected.length == 1
-                      ? 'Download 1'
-                      : 'Download ${selected.length}',
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -505,6 +479,13 @@ class _NothingToDo extends StatelessWidget {
               'Paste several links on the Download tab to queue them together.',
               textAlign: TextAlign.center,
               style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            AppButton.icon(
+              onPressed: () => context.go('/download'),
+              variant: AppButtonVariant.tonal,
+              icon: Icons.add_link,
+              label: const Text('Go to Download'),
             ),
           ],
         ),

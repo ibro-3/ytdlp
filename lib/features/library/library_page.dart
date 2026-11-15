@@ -5,6 +5,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/foundation.dart' show setEquals;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -765,6 +766,13 @@ class _EmptyLibrary extends StatelessWidget {
               'Completed downloads will appear here.',
               style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
+            const SizedBox(height: 16),
+            AppButton.icon(
+              onPressed: () => context.go('/download'),
+              variant: AppButtonVariant.tonal,
+              icon: Icons.download,
+              label: const Text('Go to Download'),
+            ),
           ],
         ),
       ),
@@ -868,71 +876,71 @@ class _DiscoveredBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final scheme = context.colors;
+    final text = context.textStyles;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Card(
-        color: theme.colorScheme.secondaryContainer,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.folder_open,
-                    size: 18,
-                    color: theme.colorScheme.onSecondaryContainer,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${files.length} file(s) in the download folder are not '
-                      'in the library',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: theme.colorScheme.onSecondaryContainer,
-                      ),
+      child: AppCard(
+        color: scheme.secondaryContainer,
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.folder_open,
+                  size: 18,
+                  color: scheme.onSecondaryContainer,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${files.length} file(s) in the download folder are not '
+                    'in the library',
+                    style: text.titleSmall?.copyWith(
+                      color: scheme.onSecondaryContainer,
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              // Capped: a large folder is summarised rather than dumped into
-              // the page.
-              for (final f in files.take(5))
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: Text(
-                    f.guessedTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodyMedium,
-                  ),
-                  subtitle: Text(
-                    '${f.group} · ${formatBytes(f.size)}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSecondaryContainer,
-                    ),
-                  ),
-                  trailing: AppButton(
-                    onPressed: () => onAdopt(f),
-                    variant: AppButtonVariant.plain,
-                    child: const Text('Add'),
                   ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Capped: a large folder is summarised rather than dumped into
+            // the page.
+            for (final f in files.take(5))
+              AppListTile(
+                dense: true,
+                title: Text(
+                  f.guessedTitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: text.bodyMedium?.copyWith(
+                    color: scheme.onSecondaryContainer,
+                  ),
+                ),
+                subtitle: Text(
+                  '${f.group} · ${formatBytes(f.size)}',
+                  style: text.labelSmall?.copyWith(
+                    color: scheme.onSecondaryContainer,
+                  ),
+                ),
+                trailing: AppButton(
+                  onPressed: () => onAdopt(f),
+                  variant: AppButtonVariant.plain,
+                  child: const Text('Add'),
+                ),
+              ),
               if (files.length > 5)
                 Text(
                   'and ${files.length - 5} more',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: theme.colorScheme.onSecondaryContainer,
+                  style: text.labelSmall?.copyWith(
+                    color: scheme.onSecondaryContainer,
                   ),
                 ),
             ],
           ),
         ),
-      ),
     );
   }
 }

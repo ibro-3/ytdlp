@@ -17,9 +17,9 @@ import '../../core/theme/app_theme_context.dart';
 /// An overlay entry rather than a `ScaffoldMessenger` call, because the
 /// start-up banner is built in the root's `builder` — above the `Navigator`,
 /// where no `ScaffoldMessenger` exists — and its dismiss button is exactly what
-/// needs to say something. The nearest overlay is used: that is the one
-/// installed above the Navigator for anything built before it (platform_app's
-/// root Overlay), and the Navigator's own everywhere else.
+/// needs to say something. The root overlay (installed above everything in
+/// platform_app.dart) is used so a toast shown just before a navigation still
+/// stands above the screen that navigation lands on.
 /// The toast currently on screen.
 ///
 /// One at a time, the way Material's `SnackBar` queue is one at a time: the
@@ -35,7 +35,7 @@ void showAppToast(
   VoidCallback? action,
   String actionLabel = '',
 }) {
-  final overlay = Overlay.maybeOf(context);
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return;
   // The next toast replaces the one still on screen. Its timer is still
   // pending, and cancels itself when the entry is disposed — so an abandoned

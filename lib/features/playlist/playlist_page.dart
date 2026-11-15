@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -61,6 +63,14 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
   String? _loadError;
 
   final TextEditingController _search = TextEditingController();
+
+  /// Delayed so the list re-filters once typing pauses rather than per
+  /// keystroke — the library's field does the same.
+  Timer? _queryDebounce;
+
+  /// Delay between the last keystroke and the list re-filter.
+  static const _queryDebounceDelay = Duration(milliseconds: 200);
+
   String _query = '';
 
   FormatKind _kind = FormatKind.video;
@@ -90,8 +100,26 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
 
   @override
   void dispose() {
+    _queryDebounce?.cancel();
     _search.dispose();
     super.dispose();
+  }
+
+  /// Applies a filter edit once typing pauses.
+  void _patchQueryDeferred(String v) {
+    _queryDebounce?.cancel();
+    _queryDebounce = Timer(_queryDebounceDelay, () {
+      if (mounted) setState(() => _query = v);
+    });
+  }
+
+  /// Clears the filter text and applies it — the field, the query and the
+  /// list all return to "no filter" together. Applied immediately: the click
+  /// itself is the finished input, so a delayed re-filter would only flicker.
+  void _clearFilter() {
+    _queryDebounce?.cancel();
+    _search.clear();
+    setState(() => _query = '');
   }
 
   /// Fetches the next slice of a collection too large to arrive at once, and
@@ -220,17 +248,14 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
           format: _format,
           options: options,
         );
+    // Shown before the navigation: the root overlay carries it above the
+    // queue screen the user lands on, whereas doing this with the context
+    // after `go` would look an ancestor up from a deactivated widget.
+    context.showToast(
+      'Queued $count video${count == 1 ? '' : 's'} from '
+      '"${_playlist.title}"',
+    );
     context.go('/queue');
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            'Queued $count video${count == 1 ? '' : 's'} from '
-            '"${_playlist.title}"',
-          ),
-        ),
-      );
   }
 
   @override
@@ -274,7 +299,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
               const Divider(height: 1),
               Expanded(
                 child: visible.isEmpty
-                    ? const _NoMatches()
+                    ? _NoMatches(onClearFilter: _clearFilter)
                     : ListView.builder(
                         padding: const EdgeInsets.symmetric(vertical: 4),
                         // One extra row for the "load more" footer. Counting
@@ -299,7 +324,13 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
           ),
         ),
       ),
-      bottomBar: _buildBottomBar(chosenCount),
+      bottomBar: AppSelectionBar(
+        label: chosenCount == 0
+            ? 'Nothing selected'
+            : '$chosenCount selected',
+        actionLabel: chosenCount == 1 ? 'Download 1' : 'Download $chosenCount',
+        onAction: chosenCount == 0 ? null : _download,
+      ),
     );
   }
 
@@ -405,16 +436,14 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
           AppTextField(
             controller: _search,
             placeholder: 'Filter videos',
-            onChanged: (v) => setState(() => _query = v),
+            onChanged: _patchQueryDeferred,
             prefix: const Icon(Icons.search, size: 20),
             suffix: _query.isEmpty
                 ? null
                 : AppIconButton(
                     icon: Icons.close,
-                    onPressed: () {
-                      _search.clear();
-                      setState(() => _query = '');
-                    },
+                    tooltip: 'Clear filter',
+                    onPressed: _clearFilter,
                   ),
           ),
           if (filtered)
@@ -521,40 +550,6 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
       ),
     );
   }
-
-  Widget _buildBottomBar(int chosenCount) {
-    final theme = context.textStyles;
-    final colors = context.colors;
-    return Material(
-      elevation: 3,
-      color: colors.surfaceContainer,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  chosenCount == 0
-                      ? 'Nothing selected'
-                      : '$chosenCount selected',
-                  style: theme.bodyMedium,
-                ),
-              ),
-              AppButton.icon(
-                onPressed: chosenCount == 0 ? null : _download,
-                icon: Icons.download,
-                label: Text(
-                  chosenCount == 1 ? 'Download 1' : 'Download $chosenCount',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _EntryRow extends StatelessWidget {
@@ -615,7 +610,9 @@ class _EntryRow extends StatelessWidget {
 }
 
 class _NoMatches extends StatelessWidget {
-  const _NoMatches();
+  const _NoMatches({required this.onClearFilter});
+
+  final VoidCallback onClearFilter;
 
   @override
   Widget build(BuildContext context) {
@@ -633,15 +630,10 @@ class _NoMatches extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 12),
-            FilledButton.tonalIcon(
-              onPressed: () {
-                // The search controller is in the parent state, we can't easily clear it.
-                // Show a toast with instructions.
-                context.showToast(
-                  'Tap the ✕ in the search field to clear the filter',
-                );
-              },
-              icon: const Icon(Icons.clear),
+            AppButton.icon(
+              variant: AppButtonVariant.tonal,
+              onPressed: onClearFilter,
+              icon: Icons.clear,
               label: const Text('Clear Filter'),
             ),
           ],

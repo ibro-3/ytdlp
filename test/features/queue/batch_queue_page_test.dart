@@ -129,6 +129,10 @@ void main() {
           builder: (_, _) => const Scaffold(),
         ),
         GoRoute(path: '/queue', builder: (_, _) => const Scaffold()),
+        GoRoute(
+          path: '/download',
+          builder: (_, _) => const Scaffold(body: Text('download stub')),
+        ),
       ],
     );
     addTearDown(router.dispose);
@@ -153,7 +157,15 @@ void main() {
       await pump(tester, const BatchState());
 
       expect(find.textContaining('No links to queue'), findsOneWidget);
-      expect(find.byType(FilledButton), findsNothing);
+    });
+
+    testWidgets('offers a way to the Download tab', (tester) async {
+      await pump(tester, const BatchState());
+
+      await tester.tap(find.text('Go to Download'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('download stub'), findsOneWidget);
     });
   });
 

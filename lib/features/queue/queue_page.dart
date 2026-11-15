@@ -179,24 +179,19 @@ class _QueueMenu extends StatelessWidget {
         if (manager.isPaused)
           const Padding(
             padding: EdgeInsets.only(right: 8),
-            child: Chip(
-              avatar: Icon(Icons.pause, size: 16),
-              label: Text('All held'),
-              visualDensity: VisualDensity.compact,
-            ),
+            child: AppLabelChip(label: 'All held', icon: Icons.pause),
           )
         else if (manager.pausedCount > 0)
           Padding(
             padding: const EdgeInsets.only(right: 8),
-            child: Chip(
-              avatar: const Icon(Icons.pause, size: 16),
-              label: Text('${manager.pausedCount} held'),
-              visualDensity: VisualDensity.compact,
+            child: AppLabelChip(
+              label: '${manager.pausedCount} held',
+              icon: Icons.pause,
             ),
           ),
-        IconButton(
+        AppIconButton(
           onPressed: manager.tasks.isEmpty ? null : manager.togglePause,
-          icon: Icon(manager.isPaused ? Icons.play_arrow : Icons.pause),
+          icon: manager.isPaused ? Icons.play_arrow : Icons.pause,
           // Named as the *queue* explicitly, because each card now has its own
           // pause and the two are easy to confuse.
           tooltip: manager.isPaused
@@ -284,9 +279,10 @@ class _EmptyQueue extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            FilledButton.tonalIcon(
+            AppButton.icon(
               onPressed: () => context.go('/download'),
-              icon: const Icon(Icons.add_link),
+              variant: AppButtonVariant.tonal,
+              icon: Icons.add_link,
               label: const Text('Go to Download'),
             ),
           ],
