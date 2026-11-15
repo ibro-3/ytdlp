@@ -2,7 +2,7 @@
 
 A Flutter app that downloads videos with a **bundled `yt-dlp` binary** and `ffmpeg`, covering 1000+ sites (YouTube, TikTok, Vimeo, …). It targets **Android and desktop (Linux/Windows/macOS)** and follows the host OS's widget family — **Material 3** on Android, **Cupertino** on macOS, **Fluent UI** on Windows, **GTK4/Adwaita** on Linux — with one red seed theme across all four. State is Riverpod, routing is `go_router`.
 
-![M3](https://img.shields.io/badge/Material-3-red) ![Flutter](https://img.shields.io/badge/Flutter-3.47-blue)
+![M3](https://img.shields.io/badge/Material-3-red) ![Flutter](https://img.shields.io/badge/Flutter-3.50-blue)
 
 ## Features
 

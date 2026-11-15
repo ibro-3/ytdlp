@@ -41,9 +41,10 @@ updates:
           - path
           - cached_network_image
 
-  # CI actions. flutter-action is pinned to Flutter 3.47.5 to match pubspec's
-  # `flutter: >=3.47.0`; a major bump here must not land silently alongside an
-  # engine change, so these are left ungrouped and reviewed one at a time.
+  # CI actions. flutter-action is pinned to Flutter 3.50.0, the floor the
+  # tree is built and formatted with; a major bump here must not land
+  # silently alongside an engine change, so these are left ungrouped and
+  # reviewed one at a time.
   - package-ecosystem: github-actions
     directory: /
     schedule:
