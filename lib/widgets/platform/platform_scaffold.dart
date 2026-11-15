@@ -49,9 +49,22 @@ class AppScaffold extends StatelessWidget {
     final fab = floatingActionButton;
     final style = context.style;
     if (fab != null && style != PlatformStyle.material) {
+      // Not flush with the corner: the other families drew this as a positioned
+      // overlay with no inset at all.
       content = Stack(
         alignment: Alignment.bottomRight,
-        children: [content, fab],
+        children: [
+          content,
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              0,
+              0,
+              16,
+              16 + MediaQuery.viewPaddingOf(context).bottom,
+            ),
+            child: fab,
+          ),
+        ],
       );
     }
 
@@ -66,6 +79,9 @@ class AppScaffold extends StatelessWidget {
           floatingActionButton: fab,
         );
       case PlatformStyle.cupertino:
+        // CupertinoPageScaffold has no bottomBar of its own: the body sits
+        // above it in a column so the selection bar (playlist, batch) shows on
+        // iOS exactly as it does on Android.
         return CupertinoPageScaffold(
           navigationBar: title == null
               ? null
@@ -75,7 +91,15 @@ class AppScaffold extends StatelessWidget {
                       ? null
                       : Row(mainAxisSize: MainAxisSize.min, children: actions),
                 ),
-          child: content,
+          child: bottomBar == null
+              ? content
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: content),
+                    ?bottomBar,
+                  ],
+                ),
         );
       case PlatformStyle.fluent:
         return fui.ScaffoldPage(
@@ -176,13 +200,34 @@ class _GtkFrame extends StatelessWidget {
   }
 }
 
+/// The Fluent FAB: a filled accent circle with the Windows 56dp metric,
+/// wrapped in a tooltip so the icon-only button is labelled for screen readers
+/// and hover.
+Widget _fluentFab({
+  required VoidCallback? onPressed,
+  required IconData icon,
+  String? tooltip,
+}) {
+  final button = fui.FilledButton(
+    onPressed: onPressed,
+    style: const fui.ButtonStyle(
+      shape: fui.WidgetStatePropertyAll(CircleBorder()),
+      padding: fui.WidgetStatePropertyAll(EdgeInsets.all(14)),
+      iconSize: fui.WidgetStatePropertyAll(22),
+    ),
+    child: Icon(icon, size: 22),
+  );
+  if (tooltip == null) return button;
+  return Tooltip(message: tooltip, child: button);
+}
+
 /// The floating action button, in the family the OS asked for.
 ///
-/// Material's is a filled circle; the Fluent equivalent is a circular icon
-/// button; Cupertino has none, so it is a circle tinted with the theme's accent
-/// — the shape a Mac user expects from a floating control. GTK has no FAB at
-/// all: what it has is a button in the header bar, so this is a flat round
-/// accent-tinted icon button with no shadow.
+/// Material's is a filled circle; the Fluent equivalent is a circular
+/// accent-filled button; Cupertino has none, so it is a circle tinted with the
+/// theme's accent — the shape a Mac user expects from a floating control.
+/// GTK has no FAB at all: what it has is a button in the header bar, so this
+/// is a flat round accent-tinted icon button with no shadow.
 class AppFab extends StatelessWidget {
   const AppFab({
     super.key,
@@ -220,10 +265,7 @@ class AppFab extends StatelessWidget {
           ),
         ),
       ),
-      PlatformStyle.fluent => fui.IconButton(
-        icon: Icon(icon),
-        onPressed: onPressed,
-      ),
+      PlatformStyle.fluent => _fluentFab(onPressed: onPressed, icon: icon, tooltip: tooltip),
       PlatformStyle.gtk => GtkFab(
         onPressed: onPressed,
         icon: icon,
