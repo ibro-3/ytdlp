@@ -60,18 +60,28 @@ class PlatformApp extends ConsumerWidget {
       if (style != PlatformStyle.material) {
         content = _materialFallback(content, style, resolved, settings.seed);
       }
-      if (startupProblems.isEmpty) return content;
-      // Above the app rather than in place of it: the failed subsystem may be
-      // the only thing broken, so the rest stays usable.
-      return Stack(
-        children: [
-          content,
-          Positioned(
-            left: 0,
-            right: 0,
-            top: 0,
-            child: StartupBanner(problems: startupProblems),
-          ),
+      if (startupProblems.isNotEmpty) {
+        // Above the app rather than in place of it: the failed subsystem may
+        // be the only thing broken, so the rest stays usable.
+        content = Stack(
+          children: [
+            content,
+            Positioned(
+              left: 0,
+              right: 0,
+              top: 0,
+              child: StartupBanner(problems: startupProblems),
+            ),
+          ],
+        );
+      }
+      // [Tooltip] and [showAppToast] both need an Overlay ancestor, and the
+      // one inside the Navigator is not an ancestor of what is built here —
+      // the start-up banner sits above it. One Overlay wraps everything,
+      // so both work from the banner too.
+      return Overlay(
+        initialEntries: [
+          OverlayEntry(builder: (_) => content),
         ],
       );
     }
@@ -107,12 +117,10 @@ class PlatformApp extends ConsumerWidget {
           title: 'YTDL',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.gtk(brightness: resolved, seedColor: settings.seed),
-          // A MaterialApp takes a theme *pair*, so this is the other half of
-          // the same light/dark choice rather than a second derivation.
+          // A MaterialApp takes a theme *pair*: the dark half is always a dark
+          // theme, and themeMode decides which of the pair is in force.
           darkTheme: AppTheme.gtk(
-            brightness: resolved == Brightness.dark
-                ? Brightness.light
-                : Brightness.dark,
+            brightness: Brightness.dark,
             seedColor: settings.seed,
           ),
           themeMode: settings.themeMode,
@@ -128,9 +136,7 @@ class PlatformApp extends ConsumerWidget {
             seedColor: settings.seed,
           ),
           darkTheme: AppTheme.fluent(
-            brightness: resolved == Brightness.dark
-                ? Brightness.light
-                : Brightness.dark,
+            brightness: Brightness.dark,
             seedColor: settings.seed,
           ),
           themeMode: settings.themeMode,
