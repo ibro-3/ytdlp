@@ -66,20 +66,35 @@ Future<bool> showAppConfirm(
     ),
     PlatformStyle.fluent => fui.showDialog<bool>(
       context: context,
-      builder: (context) => fui.ContentDialog(
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          fui.Button(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: Text(cancelLabel),
-          ),
-          fui.FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: Text(confirmLabel),
-          ),
-        ],
-      ),
+      builder: (context) {
+        final colors = context.colors;
+        return fui.ContentDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            fui.Button(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: Text(cancelLabel),
+            ),
+            fui.FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              // A destructive confirm takes the error fill, like the other
+              // families' destructive actions — neutral would read as safe.
+              style: destructive
+                  ? fui.ButtonStyle(
+                      backgroundColor: fui.WidgetStatePropertyAll(
+                        colors.error,
+                      ),
+                      foregroundColor: fui.WidgetStatePropertyAll(
+                        colors.onError,
+                      ),
+                    )
+                  : null,
+              child: Text(confirmLabel),
+            ),
+          ],
+        );
+      },
     ),
     // An Adwaita dialog: a rounded box with a title strip along the top, the
     // message under it, and the buttons in a row along the bottom with the

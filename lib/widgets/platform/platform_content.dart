@@ -320,8 +320,21 @@ class AppExpander extends StatelessWidget {
           ),
         );
       case PlatformStyle.fluent:
+        // Fluent's Expander header is arbitrary content, so the subtitle
+        // rides inside it — dropping it loses information unique to the
+        // row on the one family that can carry it.
         return fui.Expander(
-          header: titleWidget,
+          header: subtitleWidget == null
+              ? titleWidget
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    titleWidget,
+                    const SizedBox(height: 2),
+                    subtitleWidget,
+                  ],
+                ),
           content: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: children,
