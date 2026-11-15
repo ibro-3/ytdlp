@@ -175,11 +175,25 @@ class _BannerRow extends StatelessWidget {
                         : '${problems.length} parts of the app did not start',
                     style: titleStyle,
                   ),
-                  for (final problem in problems)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(problem, style: textStyle),
+                  // A long failure list must not grow the banner into the
+                  // whole window: the list scrolls past this cap instead.
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.sizeOf(context).height * 0.4,
                     ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          for (final problem in problems)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: Text(problem, style: textStyle),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ],
               ),
             ),
