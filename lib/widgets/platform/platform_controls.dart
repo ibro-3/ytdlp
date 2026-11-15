@@ -95,34 +95,40 @@ class AppButton extends StatelessWidget {
         };
 
       case PlatformStyle.cupertino:
-        return CupertinoButton(
-          onPressed: onPressed,
-          borderRadius: BorderRadius.circular(10),
-          // Cupertino sizes its buttons from their padding alone; this is the
-          // app's 48dp target rather than iOS' 44.
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-          color: switch (variant) {
-            AppButtonVariant.filled => colors.primary,
-            AppButtonVariant.tonal => colors.secondaryContainer,
-            AppButtonVariant.plain => Colors.transparent,
-            AppButtonVariant.outlined => Colors.transparent,
-          },
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 18),
-                const SizedBox(width: 8),
+        return Opacity(
+          // CupertinoButton does not grey itself out when onPressed is null
+          // the way Material does, so a disabled button reads as tappable —
+          // dimmed here instead.
+          opacity: onPressed == null ? 0.38 : 1,
+          child: CupertinoButton(
+            onPressed: onPressed,
+            borderRadius: BorderRadius.circular(10),
+            // Cupertino sizes its buttons from their padding alone; this is the
+            // app's 48dp target rather than iOS' 44.
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            color: switch (variant) {
+              AppButtonVariant.filled => colors.primary,
+              AppButtonVariant.tonal => colors.secondaryContainer,
+              AppButtonVariant.plain => Colors.transparent,
+              AppButtonVariant.outlined => Colors.transparent,
+            },
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 18, color: _onAccent(colors, variant)),
+                  const SizedBox(width: 8),
+                ],
+                DefaultTextStyle.merge(
+                  style: (context.textStyles.labelLarge ?? const TextStyle())
+                      .copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: _onAccent(colors, variant),
+                      ),
+                  child: child,
+                ),
               ],
-              DefaultTextStyle.merge(
-                style: (context.textStyles.labelLarge ?? const TextStyle())
-                    .copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: _onAccent(colors, variant),
-                    ),
-                child: child,
-              ),
-            ],
+            ),
           ),
         );
 
@@ -160,7 +166,7 @@ class AppButton extends StatelessWidget {
             ),
             AppButtonVariant.plain => fui.HyperlinkButton(
               onPressed: onPressed,
-              child: child,
+              child: content,
             ),
             AppButtonVariant.outlined => fui.OutlinedButton(
               onPressed: onPressed,
@@ -267,12 +273,16 @@ class AppIconButton extends StatelessWidget {
         tooltip: tooltip,
       ),
       // Cupertino has no icon button: what iOS ships is a 44pt tap target
-      // around an icon, which is what this is.
-      PlatformStyle.cupertino => CupertinoButton(
-        onPressed: onPressed,
-        padding: const EdgeInsets.all(12),
-        minimumSize: const Size(44, 44),
-        child: Icon(icon, size: 22, color: colors.primary),
+      // around an icon, which is what this is. Disabled dims like the
+      // filled family button does.
+      PlatformStyle.cupertino => Opacity(
+        opacity: onPressed == null ? 0.38 : 1,
+        child: CupertinoButton(
+          onPressed: onPressed,
+          padding: const EdgeInsets.all(12),
+          minimumSize: const Size(44, 44),
+          child: Icon(icon, size: 22, color: colors.primary),
+        ),
       ),
       PlatformStyle.fluent => fui.IconButton(
         icon: Icon(icon),
