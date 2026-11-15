@@ -21,20 +21,11 @@ class ProcessRunner {
     required this.executable,
     this.preArgs = const [],
     this.env = const <String, String>{},
-    this.useRunAs = false,
-    this.packageName,
   });
 
   final String executable;
   final List<String> preArgs;
   final Map<String, String> env;
-
-  /// Whether to use `run-as` wrapper for Android SELinux compatibility.
-  /// When true, the executable is run via `run-as <packageName> sh -c '...'`
-  final bool useRunAs;
-
-  /// The Android package name for run-as (required when useRunAs is true).
-  final String? packageName;
 
   List<String> args(List<String> rest) => [...preArgs, ...rest];
 }
@@ -91,7 +82,10 @@ class AndroidRuntimeHandle {
 ///
 /// Android:
 /// 1. Bundled CPython + yt-dlp runtime —
-///    `assets/bin/android/<abi>/python.tar.gz`
+///    `assets/bin/android/<abi>/python-runtime.bin`
+///    (content is gzip-compressed tar; the extension must NOT be `.gz` —
+///    AGP's release pipeline decompresses `.gz` assets, which renamed the
+///    entry and left the app unable to load it)
 ///    (built by `tool/fetch_android_runtime.sh` from Termux packages)
 ///
 /// There is deliberately no single-file fallback asset. An earlier revision
@@ -310,7 +304,7 @@ class BinaryManager {
     }
     final abi = await _androidAbi();
     final candidates = <String>[
-      if (abi != null) 'assets/bin/android/$abi/python.tar.gz',
+      if (abi != null) 'assets/bin/android/$abi/python-runtime.bin',
     ];
     for (final assetPath in candidates) {
       final dir = await _extractRuntime(assetPath);
@@ -335,46 +329,19 @@ class BinaryManager {
         );
         _androidRuntime = runtime;
 
-        // Check if run-as works for SELinux compatibility on Android 10+ (API 29+).
-        // run-as executes in the app's UID but with shell SELinux context,
-        // which has execute permissions on app-writable storage.
-        final useRunAs = await _checkRunAsWorks();
-        final packageName =
-            'com.github.ytdlp'; // From android/app/build.gradle.kts
-
+        // The runtime executes directly: at targetSdk 28 (deliberate, see
+        // android/app/build.gradle.kts) W^X does not apply, which is the only
+        // configuration in which the bundled interpreter can run. A `run-as`
+        // wrapper was tried and cannot work for release builds — `run-as`
+        // refuses non-debuggable packages — so it was removed.
         return ProcessRunner(
           executable: runtime.python,
           preArgs: <String>[runtime.script],
           env: runtime.env,
-          useRunAs: useRunAs,
-          packageName: useRunAs ? packageName : null,
         );
       }
     }
     throw YtdlpException(_missingHint(), code: YtdlpException.missingBinary);
-  }
-
-  /// Checks if `run-as` works for executing the app's own files.
-  ///
-  /// On Android 10+ (API 29+), apps targeting API 29+ cannot execute files
-  /// in their app-specific directories due to W^X enforcement. However,
-  /// `run-as <package> command` executes in the app's UID but with the
-  /// shell's SELinux domain (untrusted_app -> shell), which CAN execute
-  /// files in the app's data directory.
-  Future<bool> _checkRunAsWorks() async {
-    if (!Platform.isAndroid) return false;
-    try {
-      // Try a simple run-as command to see if it works.
-      final res = await Process.run('run-as', [
-        'com.github.ytdlp',
-        'sh',
-        '-c',
-        'true',
-      ]);
-      return res.exitCode == 0;
-    } catch (_) {
-      return false;
-    }
   }
 
   /// Extracts a tar.gz asset into the app support dir, atomically.
@@ -697,7 +664,7 @@ class BinaryManager {
     if (Platform.isAndroid) {
       return 'yt-dlp runtime not found.\n'
           'Bundle it with tool/fetch_android_runtime.sh, which produces\n'
-          'assets/bin/android/<abi>/python.tar.gz (e.g. x86_64 for this\n'
+          'assets/bin/android/<abi>/python-runtime.bin (e.g. x86_64 for this\n'
           'emulator, arm64-v8a for devices), then run\n'
           '"flutter clean && flutter run".\n'
           'See the README for details.';

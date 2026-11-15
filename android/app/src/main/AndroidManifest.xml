@@ -36,6 +36,14 @@
                 <data android:mimeType="text/plain"/>
             </intent-filter>
         </activity>
+        <!-- Monochrome small icon for the ongoing download notification.
+             flutter_foreground_task resolves the drawable through this
+             meta-data; without it the notification falls back to the
+             full-colour launcher icon, which renders as a white blob. -->
+        <meta-data
+            android:name="ic_notification"
+            android:resource="@drawable/ic_notification" />
+
         <!-- Foreground service for keeping downloads alive when backgrounded -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"

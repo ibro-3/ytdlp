@@ -113,8 +113,8 @@ flutter:
     # minimal static ffmpeg + ffprobe (tool/fetch_ffmpeg_android.sh). Both are
     # required: ffmpeg merges DASH streams, ffprobe is what yt-dlp's
     # postprocessing (embed subs / thumbnail) probes the output with.
-    - assets/bin/android/x86_64/python.tar.gz
-    - assets/bin/android/arm64-v8a/python.tar.gz
+    - assets/bin/android/x86_64/python-runtime.bin
+    - assets/bin/android/arm64-v8a/python-runtime.bin
     - assets/bin/android/x86_64/ffmpeg
     - assets/bin/android/x86_64/ffprobe
     - assets/bin/android/arm64-v8a/ffmpeg

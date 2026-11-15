@@ -48,7 +48,9 @@ class NotificationService {
     _initializing = true;
     try {
       const settings = InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        // Monochrome drawable, not the full-colour adaptive icon: the shade
+        // renders small icons as a white alpha silhouette.
+        android: AndroidInitializationSettings('@drawable/ic_notification'),
         linux: LinuxInitializationSettings(defaultActionName: 'Open'),
         // Permissions are not requested here: the notification toggle in
         // Settings is what asks, mirroring the Android behaviour, so the

@@ -19,7 +19,7 @@ It fetches the official single-file builds into `assets/bin/` and verifies each 
 ./tool/fetch_android_runtime.sh x86_64   # emulator only
 ```
 
-This produces `assets/bin/android/<abi>/python.tar.gz` (~16 MB per ABI). At first launch the app extracts it to its private files dir and runs `python3.14 bin/yt-dlp` with `LD_LIBRARY_PATH`/`PYTHONHOME`/`SSL_CERT_FILE` pointed at the tree — no root, no Termux app needed. Settings → **Update yt-dlp** refreshes only the yt-dlp script; the interpreter, native libs and bundled ffmpeg need an app update.
+This produces `assets/bin/android/<abi>/python-runtime.bin` (~16 MB per ABI; gzip content, but the filename must not end in `.gz` — AGP's release asset pipeline decompresses `.gz` entries). At first launch the app extracts it to its private files dir and runs `python3.14 bin/yt-dlp` with `LD_LIBRARY_PATH`/`PYTHONHOME`/`SSL_CERT_FILE` pointed at the tree — no root, no Termux app needed. Settings → **Update yt-dlp** refreshes only the yt-dlp script; the interpreter, native libs and bundled ffmpeg need an app update.
 
 ## ffmpeg and ffprobe
 
@@ -62,14 +62,14 @@ Release builds are signed with a real keystore, falling back to the debug key wi
 ```bash
 keytool -genkey -v -keystore ~/ytdlp-release.keystore -alias ytdlp -keyalg RSA -keysize 2048 -validity 10000
 cp android/key.properties.example android/key.properties   # then fill in your details
-flutter build apk --release --split-per-abi
+flutter build apk --release --split-per-abi --target-platform=android-arm64,android-x64
 ```
 
 `android/key.properties` is gitignored — never commit it. For CI, inject the keystore from GitHub secrets at build time.
 
 ## Per-ABI splits
 
-Each ABI adds ~16 MB (CPython) + ~2 MB ffmpeg + ~1.7 MB ffprobe. A universal release APK is ~90 MB; `--split-per-abi` produces one APK per ABI at ~25 MB each for `arm64-v8a`, `armeabi-v7a`, `x86_64` and `x86`.
+Each ABI adds ~16 MB (CPython) + ~2 MB ffmpeg + ~1.7 MB ffprobe. A universal release APK is ~50 MB; `--split-per-abi` with `--target-platform=android-arm64,android-x64` produces one APK per ABI at ~25 MB. Only `arm64-v8a` and `x86_64` are built — the bundled runtime exists for exactly those two, and anything else would be an APK that installs but can never download. (`x86_64` covers Studio emulators; everything else is `arm64-v8a`.)
 
 ## Metadata fetch limits
 

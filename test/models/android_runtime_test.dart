@@ -9,7 +9,7 @@ void main() {
   group('android runtime assets', () {
     for (final abi in ['x86_64', 'arm64-v8a']) {
       test('$abi bundle contains a runnable runtime', () {
-        final asset = File('assets/bin/android/$abi/python.tar.gz');
+        final asset = File('assets/bin/android/$abi/python-runtime.bin');
         expect(
           asset.existsSync(),
           isTrue,
@@ -103,10 +103,10 @@ void main() {
       'assets/bin/.gitkeep',
       'assets/bin/android/x86_64/ffmpeg',
       'assets/bin/android/x86_64/ffprobe',
-      'assets/bin/android/x86_64/python.tar.gz',
+      'assets/bin/android/x86_64/python-runtime.bin',
       'assets/bin/android/arm64-v8a/ffmpeg',
       'assets/bin/android/arm64-v8a/ffprobe',
-      'assets/bin/android/arm64-v8a/python.tar.gz',
+      'assets/bin/android/arm64-v8a/python-runtime.bin',
     ];
 
     test('every asset declared in pubspec.yaml is present', () {

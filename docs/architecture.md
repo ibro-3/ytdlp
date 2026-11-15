@@ -92,7 +92,7 @@ lib/
   widgets/{app_shell,startup_banner,tab_carousel}.dart
   features/{home,queue,library,settings,playlist}/…
 assets/bin/
-  android/<abi>/{python.tar.gz,ffmpeg,ffprobe}    # required on Android, committed
+  android/<abi>/{python-runtime.bin,ffmpeg,ffprobe}   # required on Android, committed
   linux/yt-dlp, macos/yt-dlp, windows/yt-dlp.exe   # desktop fallbacks, gitignored
 tool/{fetch_binaries,fetch_android_runtime,fetch_ffmpeg_android}.sh
 ```

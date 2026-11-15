@@ -33,21 +33,34 @@ android {
     defaultConfig {
         applicationId = "com.github.ytdlp"
         minSdk = flutter.minSdkVersion
-        // targetSdk 33 is now supported via the run-as wrapper:
-        // Android 10+ (API 29+) enforces W^X for apps that target API 29+, so
-        // exec() on files in app-writable storage is denied
-        // (untrusted_app -> avc: denied { execute_no_trans }).
-        // The app now uses `run-as com.github.ytdlp sh -c '...'` to execute the
-        // bundled CPython runtime, which runs in the app's UID but with the
-        // shell's SELinux context (untrusted_app -> shell), bypassing W^X.
-        // This allows targeting API 33+ while keeping the bundled runtime working.
-        // To override: flutter build apk --release -P ytdlpTargetSdk=28
+        // targetSdk 28 is deliberate and load-bearing. Android 10+ enforces
+        // W^X for apps targeting API 29+: exec() of files in app-writable
+        // storage is denied (avc: denied { execute_no_trans }, verified
+        // 2026-11-15 on an API 37 x86_64 Google-Play emulator, SELinux
+        // enforcing: a release APK with targetSdk 33 failed to start the
+        // bundled CPython runtime; `run-as com.github.ytdlp` additionally
+        // refused with "package not debuggable", so the run-as wrapper never
+        // engaged — release builds are non-debuggable by construction).
+        // Termux ships targetSdk 28 for the same reason. Play's
+        // ExpiredTargetSdkVersion lint is disabled below; every other lint
+        // rule still runs. `-P ytdlpTargetSdk=33` remains for experiments —
+        // the runtime will not execute under it.
         targetSdk =
-            (project.findProperty("ytdlpTargetSdk") as String?)?.toInt() ?: 33
+            (project.findProperty("ytdlpTargetSdk") as String?)?.toInt() ?: 28
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
         // is added automatically by Flutter. (https://developer.android.com/studio/build/configure-apk-splits#configure-APVersions)
         // You can force using the value of versionCode by specifying the `-P force-version-code-ignoring-abi=true`
         // flag during build.
+        // Only the two ABIs with a bundled CPython runtime are shippable:
+        // assets/bin/android carries arm64-v8a and x86_64. Anything else
+        // builds fine but has no runtime to run. Skip when the split-APK
+        // build is on — splits are driven by --target-platform (see CI),
+        // and AGP refuses ndk abiFilters on top of splits.
+        if (project.findProperty("split-per-abi") == null) {
+            ndk {
+                abiFilters += listOf("arm64-v8a", "x86_64")
+            }
+        }
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -85,9 +98,10 @@ android {
     lint {
         // Play-only policy check: Google Play requires a recent targetSdk, but
         // this app is distributed via sideload/F-Droid/GitHub (YouTube
-        // downloading is barred from Play). The run-as wrapper allows
-        // targetSdk 33+ while keeping the bundled runtime executable.
-        // Every other lint rule stays active, for release builds included.
+        // downloading is barred from Play). The bundled runtime cannot execute
+        // at targetSdk 29+ (see defaultConfig), so this single check is
+        // disabled. Every other lint rule stays active, for release builds
+        // included.
         disable += "ExpiredTargetSdkVersion"
     }
 }

@@ -93,7 +93,7 @@ cat <<'EOF'
 Android:
   The Android runtime is separate and IS committed, because it is packaged into
   the APK:
-    tool/fetch_android_runtime.sh   produces assets/bin/android/<abi>/python.tar.gz
+    tool/fetch_android_runtime.sh   produces assets/bin/android/<abi>/python-runtime.bin
     tool/fetch_ffmpeg_android.sh    produces assets/bin/android/<abi>/ffmpeg + ffprobe
   See README "Android notes" for distribution caveats.
 EOF

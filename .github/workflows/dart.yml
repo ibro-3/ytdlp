@@ -65,7 +65,7 @@ jobs:
       # The release path is what must compile: it exercises the Android lint
       # block and produces the per-ABI APKs that splitting actually ships.
       - name: Build release APKs
-        run: flutter build apk --release --split-per-abi
+        run: flutter build apk --release --split-per-abi --target-platform=android-arm64,android-x64
 
       - name: Upload APKs
         uses: actions/upload-artifact@v4

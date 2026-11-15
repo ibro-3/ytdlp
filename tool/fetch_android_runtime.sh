@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Assembles a self-contained Termux-based CPython + yt-dlp runtime for
-# Android (bionic) and packs it as assets/bin/android/<abi>/python.tar.gz.
+# Android (bionic) and packs it as assets/bin/android/<abi>/python-runtime.bin.
+# The asset name must not end in .gz: AGP's release asset pipeline decompresses
+# .gz entries (the asset silently arrived as a plain tar and the app could not
+# load it). The content is still gzip; the app decodes it in an isolate.
 #
 # Usage: ./tool/fetch_android_runtime.sh [x86_64|arm64-v8a]   (default: both)
 #
@@ -115,8 +118,8 @@ EOF
   [ -f "$U/bin/yt-dlp" ] || { echo "yt-dlp script missing!"; exit 1; }
   [ -d "$U/lib/python3.14/site-packages/yt_dlp" ] || { echo "yt_dlp module missing!"; exit 1; }
 
-  tar -czf "$OUT/$ARCH/python.tar.gz" -C "$SYSROOT" data
-  echo "wrote $OUT/$ARCH/python.tar.gz ($(du -h "$OUT/$ARCH/python.tar.gz" | cut -f1))"
+  tar -czf "$OUT/$ARCH/python-runtime.bin" -C "$SYSROOT" data
+  echo "wrote $OUT/$ARCH/python-runtime.bin ($(du -h "$OUT/$ARCH/python-runtime.bin" | cut -f1))"
 done
 
 echo "Done. Register new files in pubspec.yaml flutter.assets, then"
