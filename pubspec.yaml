@@ -125,9 +125,9 @@ flutter:
 
     # NOTE: assets/bin/{linux,macos,windows}/yt-dlp exist in the repo but are
     # deliberately NOT registered here. `flutter.assets` has no per-platform
-    # scoping, so declaring them would package ~56 MB of desktop binaries into
-    # every Android APK as well — nearly tripling the 19 MB/ABI payload and
-    # blowing the ~25 MB per-ABI split target documented in the README. On
+    # (or per-ABI) scoping: declaring them would package ~56 MB of desktop
+    # binaries into every Android APK, on top of the ~40 MB of both ABIs'
+    # Android assets each split APK already carries. On
     # desktop, BinaryManager instead resolves a system install first and then
     # auto-downloads the official single-file build into the app support dir
     # (see tool/fetch_binaries.sh and the Engine section of the README).

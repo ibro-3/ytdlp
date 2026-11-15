@@ -69,7 +69,7 @@ flutter build apk --release --split-per-abi --target-platform=android-arm64,andr
 
 ## Per-ABI splits
 
-Each ABI adds ~16 MB (CPython) + ~2 MB ffmpeg + ~1.7 MB ffprobe. A universal release APK is ~50 MB; `--split-per-abi` with `--target-platform=android-arm64,android-x64` produces one APK per ABI at ~25 MB. Only `arm64-v8a` and `x86_64` are built — the bundled runtime exists for exactly those two, and anything else would be an APK that installs but can never download. (`x86_64` covers Studio emulators; everything else is `arm64-v8a`.)
+Each ABI adds ~16 MB (CPython) + ~2 MB ffmpeg + ~1.7 MB ffprobe — but `flutter.assets` has no per-ABI scoping, so **every split APK carries both ABIs' assets** and can't be shrunk below ~58 MB that way: an `arm64-v8a` APK measured 58.2 MB with ~40 MB it will never execute. `--split-per-abi --target-platform=android-arm64,android-x64` still earns its keep on the native engine (`libflutter.so`/`libapp.so` are per-ABI) but a "~25 MB per APK" figure is not achievable with this asset layout. The real fix is per-ABI flavors with AGP resource excludes — a build-system change, deliberately not folded into the rc. Only `arm64-v8a` and `x86_64` are built — the bundled runtime exists for exactly those two, and anything else would be an APK that installs but can never download. (`x86_64` covers Studio emulators; everything else is `arm64-v8a`.)
 
 ## Metadata fetch limits
 

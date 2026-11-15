@@ -200,7 +200,9 @@ and the date on it was never accurate and is gone with the heading.
   libraries are gone from the tree.
 - **Split APKs drop to two ABIs** — `arm64-v8a` and `x86_64` only, matching the
   two ABIs the bundled runtime exists for (`armeabi-v7a`/`x86` APKs installed
-  but could never download).
+  but could never download). Note the honest size: `flutter.assets` has no
+  per-ABI scoping, so each APK carries both ABIs' assets — ~58 MB measured —
+  and the older "~25 MB per APK" claim is gone from the docs.
 - **CI release workflow** — a format/analyze/test gate runs before any build,
   tag builds fail fast without the keystore secret, every APK is verified with
   `apksigner --print-certs` to reject the debug key, release tags must match
