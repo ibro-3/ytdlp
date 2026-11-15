@@ -1,5 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -637,7 +637,9 @@ class _NoMatches extends StatelessWidget {
               onPressed: () {
                 // The search controller is in the parent state, we can't easily clear it.
                 // Show a toast with instructions.
-                context.showToast('Tap the ✕ in the search field to clear the filter');
+                context.showToast(
+                  'Tap the ✕ in the search field to clear the filter',
+                );
               },
               icon: const Icon(Icons.clear),
               label: const Text('Clear Filter'),

@@ -31,6 +31,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Material and Cupertino were split out of `package:flutter/*.dart` in
+  # Flutter 3.47; the old library imports are deprecated. These are the
+  # supported replacements and must be direct dependencies because every
+  # screen imports them. Versions match the ones the SDK resolves.
+  material_ui: ^1.11.0
+  cupertino_ui: ^1.1.6
   # The localization delegates for all three widget families. `MaterialApp`
   # registers these itself; `CupertinoApp` and `FluentApp` register only their
   # own, and a Material widget that survives under either would then throw
@@ -74,7 +80,7 @@ dependencies:
   # what the Windows screen's buttons, switches, dialogs and navigation panes
   # are built from. It compiles everywhere but is only instantiated on Windows,
   # so it adds nothing to the Android, Linux or macOS bundles.
-  fluent_ui: ^4.16.1
+  fluent_ui: ^4.17.0
 
 dev_dependencies:
   flutter_test:

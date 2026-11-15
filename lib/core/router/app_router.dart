@@ -1,5 +1,5 @@
-import 'package:flutter/cupertino.dart' show CupertinoPage;
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoPage;
+import 'package:material_ui/material_ui.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/models/playlist_info.dart';

@@ -339,7 +339,8 @@ class BinaryManager {
         // run-as executes in the app's UID but with shell SELinux context,
         // which has execute permissions on app-writable storage.
         final useRunAs = await _checkRunAsWorks();
-        final packageName = 'com.github.ytdlp'; // From android/app/build.gradle.kts
+        final packageName =
+            'com.github.ytdlp'; // From android/app/build.gradle.kts
 
         return ProcessRunner(
           executable: runtime.python,
@@ -366,7 +367,9 @@ class BinaryManager {
       // Try a simple run-as command to see if it works.
       final res = await Process.run('run-as', [
         'com.github.ytdlp',
-        'sh', '-c', 'true',
+        'sh',
+        '-c',
+        'true',
       ]);
       return res.exitCode == 0;
     } catch (_) {

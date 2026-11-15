@@ -925,11 +925,7 @@ class YtdlpService implements DownloadEngine {
       if (bin.useRunAs && bin.packageName != null) {
         final runAsArgs = _buildRunAsArgs(bin, args);
         process = YtdlpProcess(
-          await Process.start(
-            'run-as',
-            runAsArgs,
-            environment: bin.env,
-          ),
+          await Process.start('run-as', runAsArgs, environment: bin.env),
         );
       } else {
         process = YtdlpProcess(
@@ -953,18 +949,15 @@ class YtdlpService implements DownloadEngine {
     final envExports = bin.env.entries
         .map((e) => 'export ${e.key}=${_shellEscape(e.value)}')
         .join(' && ');
-    final cmd = [bin.executable, ...bin.preArgs, ...args]
-        .map(_shellEscape)
-        .join(' ');
+    final cmd = [
+      bin.executable,
+      ...bin.preArgs,
+      ...args,
+    ].map(_shellEscape).join(' ');
     final shellCmd = envExports.isEmpty
         ? 'exec $cmd'
         : '$envExports && exec $cmd';
-    return [
-      bin.packageName!,
-      'sh',
-      '-c',
-      shellCmd,
-    ];
+    return [bin.packageName!, 'sh', '-c', shellCmd];
   }
 
   /// Escapes a string for safe use in a shell command.

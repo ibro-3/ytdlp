@@ -1,5 +1,5 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Which of the four widget families the app draws itself with.
 ///
@@ -39,7 +39,9 @@ extension PlatformStyleContext on BuildContext {
 
   /// Whether the current platform is a desktop platform (Windows, macOS, Linux).
   bool get isDesktop => switch (style) {
-    PlatformStyle.fluent || PlatformStyle.cupertino || PlatformStyle.gtk => true,
+    PlatformStyle.fluent ||
+    PlatformStyle.cupertino ||
+    PlatformStyle.gtk => true,
     PlatformStyle.material => false,
   };
 }

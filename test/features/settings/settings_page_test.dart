@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
@@ -40,31 +40,46 @@ Finder _templateField(WidgetTester tester) => find.byWidgetPredicate(
 );
 
 void main() {
+  var testCounter = 0;
   late Directory tempRoot;
   late Box<dynamic> settingsBox;
   late SettingsService service;
+  var closeOwnsCleanup = false;
 
   setUp(() async {
     tempRoot = Directory.systemTemp.createTempSync('ytdlp-settings-');
     Hive.init(tempRoot.path);
-    settingsBox = await Hive.openBox<dynamic>('settings-page-test');
+    // Unique box name per test: Hive caches open boxes by name within the
+    // isolate, so reusing one name makes a later test's box point at an
+    // earlier test's — deleted — temp root, and its close fails deleting the
+    // lock file asynchronously.
+    settingsBox = await Hive.openBox<dynamic>('settings-page-test-${testCounter++}');
     service = SettingsService(settingsBox);
     await service.update(const AppSettings());
+    closeOwnsCleanup = false;
   });
 
   tearDown(() async {
+    // When the test pumped the page, the box close runs in that test's
+    // `addTearDown` — deleting the temp root here would remove the lock file
+    // out from under the close and fail the test asynchronously. Deletion is
+    // then owned there; this is only the fallback for tests with no tester.
+    if (closeOwnsCleanup) return;
     try {
       tempRoot.deleteSync(recursive: true);
     } catch (_) {}
   });
 
-  /// Flushes any in-flight save, then closes the box.
+  /// Flushes any in-flight save, closes the box, then deletes the temp root.
   ///
   /// Registered per test rather than in `tearDown` because it needs the tester:
   /// both the Hive `put` and the `close` are real IO, and inside `testWidgets`
-  /// — which runs in a fake-async zone — neither would ever complete. Without
-  /// this, closing a box with a save still pending waits forever.
+  /// — which runs in a fake-async zone — neither would ever complete. The
+  /// deletion must happen here, after the close: the Hive lock file lives
+  /// inside the temp root, and removing it first makes the close fail
+  /// deleting it, which reports itself as an asynchronous test failure.
   void closeBoxWhenSettled(WidgetTester tester) {
+    closeOwnsCleanup = true;
     addTearDown(() async {
       // Unmount first: the page holds a `SettingsService` on the still-mounted
       // tree, and closing the box out from under it leaves a listener that can
@@ -77,12 +92,17 @@ void main() {
         // Bounded: with the tree gone and the last write awaited, nothing should
         // still be in flight — but `close()` waiting on Hive's internal write
         // queue does not always settle here, and a hang would take the whole
-        // suite down with it. The box is a per-test temp file that `tearDown`
-        // deletes regardless, so giving up on the close costs nothing.
+        // suite down with it. The temp root is deleted right after regardless,
+        // so giving up on the close costs nothing.
         await settingsBox.close().timeout(
           const Duration(seconds: 5),
           onTimeout: () {},
         );
+        // Delete the temp root only now that the lock file inside it has
+        // outlived the close; see tearDown.
+        try {
+          tempRoot.deleteSync(recursive: true);
+        } catch (_) {}
       });
     });
   }

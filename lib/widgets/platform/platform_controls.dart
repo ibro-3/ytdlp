@@ -1,6 +1,6 @@
-import 'package:flutter/cupertino.dart' show CupertinoButton;
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoButton;
 import 'package:fluent_ui/fluent_ui.dart' as fui;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../../core/platform_style.dart';
 import 'platform_gtk.dart';

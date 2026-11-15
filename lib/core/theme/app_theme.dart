@@ -1,5 +1,5 @@
-import 'package:flutter/cupertino.dart' show CupertinoThemeData;
-import 'package:flutter/material.dart';
+import 'package:cupertino_ui/cupertino_ui.dart' show CupertinoThemeData;
+import 'package:material_ui/material_ui.dart';
 
 // Aliased, and deliberately so: fluent_ui exports `Card`, `ListTile`, `Slider`,
 // `IconButton`, `Divider`, `Checkbox` and `showDialog`, all of which collide by

@@ -380,7 +380,10 @@ class DownloadManager extends ChangeNotifier {
       // Log but don't crash; schedule a retry
       debugPrint('Queue persist failed: $e');
       _persistTimer?.cancel();
-      _persistTimer = Timer(const Duration(seconds: 10), () => unawaited(_persist()));
+      _persistTimer = Timer(
+        const Duration(seconds: 10),
+        () => unawaited(_persist()),
+      );
     }
   }
 
@@ -394,7 +397,7 @@ class DownloadManager extends ChangeNotifier {
     _persistTimer?.cancel();
     _persistTimer = null;
     await _persistGate; // Wait for any in-flight persist
-    await _persist();   // Then run ours synchronously
+    await _persist(); // Then run ours synchronously
   }
 
   /// Enqueues a download. Returns the created task.

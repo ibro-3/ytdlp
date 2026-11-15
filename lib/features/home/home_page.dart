@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -278,12 +278,16 @@ class _HomePageState extends ConsumerState<HomePage> {
             LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.keyV):
                 const _PasteUrlIntent(),
             // Ctrl/Cmd + Shift + V: Paste as batch
-            LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.shift,
-                LogicalKeyboardKey.keyV):
-                const _PasteBatchIntent(),
-            LogicalKeySet(LogicalKeyboardKey.meta, LogicalKeyboardKey.shift,
-                LogicalKeyboardKey.keyV):
-                const _PasteBatchIntent(),
+            LogicalKeySet(
+              LogicalKeyboardKey.control,
+              LogicalKeyboardKey.shift,
+              LogicalKeyboardKey.keyV,
+            ): const _PasteBatchIntent(),
+            LogicalKeySet(
+              LogicalKeyboardKey.meta,
+              LogicalKeyboardKey.shift,
+              LogicalKeyboardKey.keyV,
+            ): const _PasteBatchIntent(),
             // Ctrl/Cmd + L: Focus URL field
             LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.keyL):
                 const _FocusUrlIntent(),
@@ -615,7 +619,9 @@ class _EmptyHint extends StatelessWidget {
               onPressed: () {
                 // The FAB handles paste, but we can't easily call it from here.
                 // Show a toast pointing to the FAB.
-                context.showToast('Tap the paste button (clipboard icon) to add a link');
+                context.showToast(
+                  'Tap the paste button (clipboard icon) to add a link',
+                );
               },
               icon: const Icon(Icons.content_paste),
               label: const Text('Paste from Clipboard'),

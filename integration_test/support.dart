@@ -1,5 +1,5 @@
 // ignore_for_file: avoid_print
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Waits for [finder] (or [orElse]) to appear, printing a heartbeat so a CI

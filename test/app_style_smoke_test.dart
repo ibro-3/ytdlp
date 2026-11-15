@@ -1,12 +1,13 @@
 import 'dart:io';
 
 import 'package:fluent_ui/fluent_ui.dart' as fui;
-import 'package:flutter/cupertino.dart'
-    show CupertinoApp, CupertinoNavigationBar;
+import 'package:cupertino_ui/cupertino_ui.dart'
+    show CupertinoApp, CupertinoNavigationBar, GlobalCupertinoLocalizations;
 import 'package:flutter/foundation.dart'
     show debugDefaultTargetPlatformOverride;
-import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:flutter_localizations/flutter_localizations.dart'
+    show GlobalWidgetsLocalizations;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';

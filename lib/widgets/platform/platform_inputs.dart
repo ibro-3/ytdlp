@@ -1,4 +1,4 @@
-import 'package:flutter/cupertino.dart'
+import 'package:cupertino_ui/cupertino_ui.dart'
     show
         CupertinoCheckbox,
         CupertinoPicker,
@@ -10,7 +10,7 @@ import 'package:flutter/cupertino.dart'
         CupertinoTextField,
         FixedExtentScrollController;
 import 'package:fluent_ui/fluent_ui.dart' as fui;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart' show FilteringTextInputFormatter;
 
 import '../../core/platform_style.dart';
