@@ -2075,8 +2075,9 @@ class _AppUpdateRow extends StatelessWidget {
         contentPaddingZero: true,
         leading: const Icon(Icons.system_update_alt_outlined),
         title: const Text('Update available'),
-        subtitle:
-            'Version ${result!.release!.version} is out — you have an older build.',
+        subtitle: result!.release!.prerelease
+            ? 'Version ${result!.release!.version} (pre-release) is out — you have an older build.'
+            : 'Version ${result!.release!.version} is out — you have an older build.',
         trailing: AppButton(
           onPressed: () => launchUrl(Uri.parse(result!.release!.url)),
           variant: AppButtonVariant.plain,
