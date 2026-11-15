@@ -268,6 +268,9 @@ class _LibraryPageState extends ConsumerState<LibraryPage>
           return Column(
             children: [
               _buildSearchBar(view),
+              // The scan button goes inert while it runs, so the page says why
+              // nothing else is happening rather than looking frozen.
+              if (_scanning) const _ScanPendingBanner(),
               if (_scanError != null)
                 _ScanErrorBanner(
                   message: _scanError!,
@@ -826,6 +829,35 @@ class _NoMatches extends StatelessWidget {
 ///
 /// Adopting is explicit so clearing history stays a real reset: nothing joins
 /// the library without the user saying so.
+/// Shown in place of an error or results banner while a folder scan is in
+/// flight: the scan button is inert for the duration, so this says why.
+class _ScanPendingBanner extends StatelessWidget {
+  const _ScanPendingBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.textStyles;
+    final scheme = context.colors;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Row(
+        children: [
+          const AppCircularProgress(),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Scanning the download folder…',
+              style: theme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// Shown when a folder scan failed, instead of an empty "nothing found".
 class _ScanErrorBanner extends StatelessWidget {
   const _ScanErrorBanner({required this.message, required this.onRetry});

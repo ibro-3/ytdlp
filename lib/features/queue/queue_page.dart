@@ -254,7 +254,8 @@ class _EmptyQueue extends StatelessWidget {
   const _EmptyQueue();
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final scheme = context.colors;
+    final text = context.textStyles;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -269,13 +270,12 @@ class _EmptyQueue extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               'Nothing downloading',
-              style: Theme.of(context).textTheme.titleSmall,
+              style: text.titleSmall,
             ),
             const SizedBox(height: 6),
             Text(
               'Add a video from the Download tab.',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
