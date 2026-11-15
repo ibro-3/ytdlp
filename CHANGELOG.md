@@ -8,8 +8,80 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] — 2026-11-15
+
+The first release candidate, and the first release since `0.1` (tagged
+2026-10-10). It is a release candidate rather than a 1.0.0: it has been built,
+install-tested and download-tested on emulators and one API 37 release build,
+but it has not yet met the bar for a final 1.0.0 tag.
+
+This section also folds in the work that earlier revisions of this file recorded
+under a `## [1.0.0] — 2026-09-30` heading. No `v1.0.0` tag or GitHub release was
+ever cut under that name; rather than rewrite history, the content is kept here,
+and the date on it was never accurate and is gone with the heading.
+
 ### Added
 
+- **Android engine** — a self-contained CPython 3.14 + yt-dlp runtime assembled
+  from official Termux packages, plus a minimal static `ffmpeg`/`ffprobe`
+  cross-compiled with the NDK for DASH merges and postprocessing. Ships as two
+  APKs (`arm64-v8a`, `x86_64`).
+- **Resumable downloads** — a failed or interrupted download keeps its staging
+  directory and `.part` file, so Retry continues instead of re-fetching. Engine
+  flags add `--continue`, `--retries 10`, `--fragment-retries 10` and a capped
+  `--retry-sleep linear=1:5:2` backoff.
+- **Queue persistence** — the queue is snapshotted to Hive (including each
+  task's subtitle options). Work interrupted by a killed process returns as
+  *failed* with its partial intact, and orphaned staging directories are cleaned
+  up on startup.
+- **Cookies** — `cookies.txt` import, copied into the app support directory and
+  passed via `--cookies`. Credentials are never parsed or logged.
+- **One-tap yt-dlp update** — system installs via `yt-dlp -U`; app-managed copies
+  and the Android runtime refresh from the official release, verified by running
+  `--version` before the working script is replaced.
+- **Foreground service (Android)** — a `dataSync` foreground service keeps
+  downloads alive when the app is backgrounded, with a wake lock and throttled
+  notification updates.
+- **Share-sheet intake (Android)** — `ACTION_SEND` text intents are captured, so
+  a URL shared from another app lands on the Download tab. Cold-start payloads
+  are buffered and consumed with `reset()`.
+- **Playlist downloads** — playlist links are recognised and re-fetched with
+  `--flat-playlist`; a picker lists every entry with thumbnail, duration, a text
+  filter, select-all/clear and per-batch quality + subtitle options. Each
+  selected entry becomes its own queue task and lands in a folder named after
+  the playlist.
+- **Advanced settings** — extra yt-dlp flags (shell-word-split but never passed
+  through a shell, with the app's own flags detected and reported as ignored),
+  a live-previewed output template that must resolve to an extension, and saved
+  named argument templates.
+- **YouTube support** — a verified `yt-dlp-ejs` installer (staged, validated
+  against symlink/traversal, swapped in, then imported by the bundled
+  interpreter, and removed again if it does not import) plus player-client
+  selection.
+- **yt-dlp capability controls** — fragment parallelism (capped at 4), rate
+  limit, request delay, proxy, `Referer`, audio extraction + container, remux,
+  embedded metadata/chapters, SponsorBlock, livestream-from-start, download
+  archive and `--no-part`. Postprocessing is dropped without ffmpeg + ffprobe
+  rather than passed through to fail after the bytes are downloaded.
+- **Queue controls** — configurable concurrency, per-task hold alongside the
+  queue-wide pause, cancel-all, clear-finished, move-earlier/later reordering,
+  and a remembered queue size.
+- **Library** — Hive-backed history with search, sort (newest/oldest/largest/
+  title), an all/video/audio filter, and optional grouping by playlist. A folder
+  scan finds media with no history record and offers to adopt it explicitly; a
+  scan in flight now says so under the header instead of looking frozen.
+- **Batch URL queueing** — text with several URLs opens a batch page where each
+  link resolves independently, so one unavailable video does not fail the rest.
+  **Per-link removal** — a single bad link in a pasted batch no longer costs the
+  good ones alongside it. The header clear action only clears settled rows, so
+  in-flight work is never silently discarded.
+- **Settings backup / restore** and **Copy diagnostics** (versions, paths and
+  settings as plain text; cookies are never included, only whether one is
+  configured).
+- **Release identity** — app id `com.github.ytdlp`, label `YTDL`, an adaptive
+  launcher icon, and real-keystore signing for releases.
+- **macOS sandbox entitlements** — `network.client` and
+  `files.user-selected.read-write`, mirrored into `DebugProfile.entitlements`.
 - **GTK4 Linux builds** — the Linux shell now selects its toolkit at
   configure time (`FLUTTER_TOOLKIT=gtk4 flutter build linux`) instead of
   being pinned to GTK3, covering the pkg-config module, the embedder
@@ -17,11 +89,15 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   released Linux bundles are unchanged, because the stable Flutter SDK
   ships no GTK4 embedder yet; a GTK4 build says so by name at configure
   time rather than producing a bundle that cannot start.
-
 - **App update check** — Settings now reports whether a newer YTDL
   release is on GitHub, with a link to it. A check that cannot reach
   the server, or a build whose own version is unknown, says so rather
-  than claiming to be current.
+  than claiming to be current. Release selection is channel-aware:
+  prerelease builds see every published (non-draft) release, stable
+  builds ride the stable channel, and a repo with no stable release at
+  all falls back to considering prereleases rather than reporting a
+  false "up to date" or an unreachable server. A v1.0.0-rc.1 tag is no
+  longer invisible to the check.
 - **Retry controls** — `--retries` and `--fragment-retries` are
   first-class Settings controls (clamped to 0–20) instead of hard-coded
   constants. A raw `--retries` in the extra-arguments field still wins,
@@ -75,9 +151,6 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   to list. Selection and the pages already fetched survive a tab switch.
   The **Load more** offer is withdrawn once a page comes back empty or
   short, so it cannot re-request a page the site has no entries for.
-- **Per-link removal in the batch queue** — the only action was "clear the
-  list", so one bad link in a pasted batch cost the user every good one
-  alongside it.
 - **Start-up failures are reported instead of being fatal** — anything thrown
   before the first frame (a store that will not open, notifications that will
   not initialise) killed the app with a blank screen and nothing to explain
@@ -85,12 +158,54 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   the app, which stays usable.
 - **A failed folder scan says so** — an unreadable download folder and an
   empty one looked identical, with no way to tell that anything went wrong.
+- **GTK keyboard access** — the GTK controls (pill, switch, segmented items,
+  icon button, list row, FAB, drop-down) now activate on Enter/Space with a
+  visible focus ring, and the GTK switch and segmented items carry button
+  semantics. Linux is a desktop platform; this is its accessibility floor.
+- **Destructive actions ask first** — deleting a file, removing cookies,
+  deleting a named template, clearing the batch list and clearing all
+  templates now confirm through the platform confirm sheet with the
+  destructive styling on Material, GTK and Fluent.
+- **Empty-state dead ends are gone** — home's *Paste from Clipboard* actually
+  pastes; a playlist filter with no matches offers *Clear filter*; the library
+  and batch empty states offer a *Go to Download* call to action.
+- **NOTICE** — the licences of every component the APKs and bundles ship,
+  and of the direct Dart dependencies, are now recorded in the repo.
+- **docs/release.md** — the release checklist, from toolchain gate to tag to
+  post-release verification.
 
 ### Changed
 
-- **CI** now builds release APKs split per ABI, plus Linux, Windows and
-  macOS bundles, and uploads a coverage report. The Android release
-  workflow signs with a keystore from secrets when provided.
+- **Cover art is derived, not a toggle** — an audio download embeds the
+  thumbnail, a video download does not, and the thumbnail switches were removed
+  rather than defaulted. A video file gains nothing from embedded cover art; an
+  audio file looks broken in a music player without one.
+- **Format and quality selection moved into a bottom sheet**, replacing the
+  inline section on the Download tab. Audio quality is offered as named tiers
+  resolved against the source's actual bitrates, with tiers that would deliver
+  the same file hidden and every row showing the real container + kbps.
+- **Metadata fetches are bounded and honest** — a 90s timeout with a 16 MB
+  stdout budget and 64 KB stderr budget; oversize stdout kills the process and
+  says what happened, rather than truncating a payload that then fails to
+  parse. A chatty stderr never fails a successful fetch.
+- **`OutputTemplate.identityFragment`** generalises the previous hard-coded
+  `" [<id>]"` filename check, so templates without `%(id)s` are identified by
+  title instead of reporting "output file not found".
+- **One toolchain, pinned everywhere** — Flutter 3.50.0 / Dart 3.14 across the
+  workflows, the `pubspec.yaml` environment and the docs; `flutter analyze
+  --fatal-infos` is part of every gate.
+- **`material_ui` / `cupertino_ui`** — the Material and Cupertino libraries were
+  split out of `package:flutter/*.dart` in Flutter 3.47; every screen now
+  imports the supported replacements (63 import sites) and the deprecated
+  libraries are gone from the tree.
+- **Split APKs drop to two ABIs** — `arm64-v8a` and `x86_64` only, matching the
+  two ABIs the bundled runtime exists for (`armeabi-v7a`/`x86` APKs installed
+  but could never download).
+- **CI release workflow** — a format/analyze/test gate runs before any build,
+  tag builds fail fast without the keystore secret, every APK is verified with
+  `apksigner --print-certs` to reject the debug key, release tags must match
+  the `pubspec.yaml` version, prerelease tags publish as GitHub pre-releases,
+  and SHA-256 checksums ship alongside the artifacts.
 - **macOS is built on every pull request**, not only for releases. Its
   sandbox entitlements are not verifiable any other way, which is how a
   release shipped with no network at all.
@@ -104,6 +219,12 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   documented promise that the suite needs no network.
 - **iOS and web scaffolds removed** — there was no engine for either, so
   they were present-but-broken rather than supported.
+- **Batch queue clearing is surgical** — the header clear only removes settled
+  rows, and retrying a row addresses it by id rather than list index, so a
+  retry can no longer act on the wrong row after a reorder.
+- **Linux has one header bar again** — the shell carries the view switcher and
+  the screen title; the per-screen frame is gone, so window chrome and content
+  no longer stack two headers.
 
 ### Security
 
@@ -179,6 +300,32 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ### Fixed
 
+- **Release APKs could never start the bundled runtime — two release-blocking
+  bugs, both found by building and running a release APK on an emulator.**
+  AGP's release asset pipeline decompresses `.gz` assets, so
+  `python.tar.gz` arrived as a plain 51 MB tar the app could not load; the
+  asset is now `python-runtime.bin` (same gzip+tar payload, neutral
+  extension). And `targetSdk = 33` shipped a `run-as` wrapper claiming to
+  bypass W^X — it cannot: release packages are non-debuggable, `run-as`
+  refuses, and the direct exec fails with `avc: denied { execute_no_trans }`
+  under SELinux Enforcing on API 33+. The default is back to `28` (lint
+  suppression kept, `-P ytdlpTargetSdk=33` documented as unusable), and the
+  `run-as` machinery is removed. With `28`, the same release APK fetched
+  metadata and downloaded a video end-to-end through the bundled runtime.
+- **`targetSdk = 28` and `compileSdk = 37`** — kept at 28 so the bundled CPython
+  runtime stays executable under W^X (same approach as Termux), while `compileSdk`
+  tracks what `receive_sharing_intent` and `flutter_foreground_task` need. This
+  makes Android sideload/F-Droid only; the Play Store both requires a recent
+  target SDK and forbids YouTube downloading.
+- **The ongoing-download notification was a white blob** — it reused the
+  full-colour adaptive launcher icon, which Android renders as a silhouette;
+  a dedicated monochrome `ic_notification` drawable is now used by both the
+  download notification and the foreground service.
+- **The update check was blind to pre-releases** — `1.0.0-rc.1` failed to
+  parse and GitHub's `releases/latest` endpoint never returns prereleases, so
+  the check reported "couldn't reach the server" against a healthy repo.
+  Prerelease tags now parse and compare per semver, and the check selects
+  from the releases list under the channel rules above.
 - **Scrolling on desktop only worked over a column in the middle of the
   window.** Every screen wrapped its scroll view in a `Center` plus a
   `ConstrainedBox` capped at 760 px, which is what a phone wants. On a
@@ -275,103 +422,43 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
   `# Netscape HTTP Cookie File` header, so an HTML error page saved as
   `cookies.txt` was accepted and then failed every download with a yt-dlp
   parse error. A file must now parse to at least one real cookie.
-
-## [1.0.0] — 2026-09-30
-
-First tagged release. Everything below landed on `main` between 2026-09-22 and
-2026-09-30.
-
-### Added
-
-- **Android engine** — a self-contained CPython 3.14 + yt-dlp runtime assembled
-  from official Termux packages, plus a minimal static `ffmpeg`/`ffprobe`
-  cross-compiled with the NDK for DASH merges and postprocessing.
-- **Resumable downloads** — a failed or interrupted download keeps its staging
-  directory and `.part` file, so Retry continues instead of re-fetching. Engine
-  flags add `--continue`, `--retries 10`, `--fragment-retries 10` and a capped
-  `--retry-sleep linear=1:5:2` backoff.
-- **Queue persistence** — the queue is snapshotted to Hive (including each
-  task's subtitle options). Work interrupted by a killed process returns as
-  *failed* with its partial intact, and orphaned staging directories are cleaned
-  up on startup.
-- **Cookies** — `cookies.txt` import, copied into the app support directory and
-  passed via `--cookies`. Credentials are never parsed or logged.
-- **One-tap yt-dlp update** — system installs via `yt-dlp -U`; app-managed copies
-  and the Android runtime refresh from the official release, verified by running
-  `--version` before the working script is replaced.
-- **Foreground service (Android)** — a `dataSync` foreground service keeps
-  downloads alive when the app is backgrounded, with a wake lock and throttled
-  notification updates.
-- **Share-sheet intake (Android)** — `ACTION_SEND` text intents are captured, so
-  a URL shared from another app lands on the Download tab. Cold-start payloads
-  are buffered and consumed with `reset()`.
-- **Playlist downloads** — playlist links are recognised and re-fetched with
-  `--flat-playlist`; a picker lists every entry with thumbnail, duration, a text
-  filter, select-all/clear and per-batch quality + subtitle options. Each
-  selected entry becomes its own queue task and lands in a folder named after
-  the playlist.
-- **Advanced settings** — extra yt-dlp flags (shell-word-split but never passed
-  through a shell, with the app's own flags detected and reported as ignored),
-  a live-previewed output template that must resolve to an extension, and saved
-  named argument templates.
-- **YouTube support** — a verified `yt-dlp-ejs` installer (staged, validated
-  against symlink/traversal, swapped in, then imported by the bundled
-  interpreter, and removed again if it does not import) plus player-client
-  selection.
-- **yt-dlp capability controls** — fragment parallelism (capped at 4), rate
-  limit, request delay, proxy, `Referer`, audio extraction + container, remux,
-  embedded metadata/chapters, SponsorBlock, livestream-from-start, download
-  archive and `--no-part`. Postprocessing is dropped without ffmpeg + ffprobe
-  rather than passed through to fail after the bytes are downloaded.
-- **Queue controls** — configurable concurrency, per-task hold alongside the
-  queue-wide pause, cancel-all, clear-finished, move-earlier/later reordering,
-  and a remembered queue size.
-- **Library** — Hive-backed history with search, sort (newest/oldest/largest/
-  title), an all/video/audio filter, and optional grouping by playlist. A folder
-  scan finds media with no history record and offers to adopt it explicitly.
-- **Batch URL queueing** — text with several URLs opens a batch page where each
-  link resolves independently, so one unavailable video does not fail the rest.
-- **Settings backup / restore** and **Copy diagnostics** (versions, paths and
-  settings as plain text; cookies are never included, only whether one is
-  configured).
-- **Release identity** — app id `com.github.ytdlp`, label `YTDL`, an adaptive
-  launcher icon, and real-keystore signing for releases.
-- **macOS sandbox entitlements** — `network.client` and
-  `files.user-selected.read-write`, mirrored into `DebugProfile.entitlements`.
-
-### Changed
-
-- **Cover art is derived, not a toggle** — an audio download embeds the
-  thumbnail, a video download does not, and the thumbnail switches were removed
-  rather than defaulted. A video file gains nothing from embedded cover art; an
-  audio file looks broken in a music player without one.
-- **Format and quality selection moved into a bottom sheet**, replacing the
-  inline section on the Download tab. Audio quality is offered as named tiers
-  resolved against the source's actual bitrates, with tiers that would deliver
-  the same file hidden and every row showing the real container + kbps.
-- **Metadata fetches are bounded and honest** — a 90s timeout with a 16 MB
-  stdout budget and 64 KB stderr budget; oversize stdout kills the process and
-  says what happened, rather than truncating a payload that then fails to
-  parse. A chatty stderr never fails a successful fetch.
-- **`OutputTemplate.identityFragment`** generalises the previous hard-coded
-  `" [<id>]"` filename check, so templates without `%(id)s` are identified by
-  title instead of reporting "output file not found".
-
-### Fixed
-
 - **macOS Release builds had no network at all** — `network.client` was missing
   from the entitlements, so every fetch and download failed in a Release build.
 - **macOS notifications were inert** — no `DarwinInitializationSettings` was
   registered.
 - **`ffprobe` detection hid the embed toggles** on every Android launch after
   the first, because the extraction marker only checked for `ffmpeg`.
-- **`targetSdk = 28` and `compileSdk = 37`** — kept at 28 so the bundled CPython
-  runtime stays executable under W^X (same approach as Termux), while `compileSdk`
-  tracks what `receive_sharing_intent` and `flutter_foreground_task` need. This
-  makes Android sideload/F-Droid only; the Play Store both requires a recent
-  target SDK and forbids YouTube downloading.
+- **Platform parity fixes, across all four widget families** — the Cupertino
+  scaffold dropped the bottom bar; the Fluent FAB was a square `IconButton`
+  with no accent and sat flush on the corner; the non-Material families' FABs
+  carried no tooltip or accent. The root themes ignored the platform's dark
+  Brightness on Fluent and GTK (inverted-brightness ternaries deleted).
+  The Cupertino sheet surface used a hard-coded `Color(0xFFF2F2F7)` regardless
+  of theme; the Fluent flyout controller is now hoisted into State; menu
+  buttons carry tooltips and semantics; GTK action-sheet rows honor the
+  destructive `isDestructive` flag. On the inputs side: `AppSwitch`'s `enabled`
+  is honoured on all four families, the Cupertino search field gained a clear
+  affordance, indeterminate Cupertino progress actually animates, and the
+  Cupertino wheel dropdown commits on Done rather than per tick. The toast
+  carries a live-region semantics node, its action dismisses on tap, and it
+  anchors above the bottom navigation. Cupertino filled buttons take the
+  on-accent icon colour, Fluent plain buttons keep their icons, and disabled
+  Cupertino buttons dim honestly. Raw Material escapees (`IconButton`,
+  `ListTile`, `Card`, `FilledButton`) that would debug-crash on macOS and
+  Windows swept to the platform wrappers in the queue, library, settings,
+  home, playlist and batch pages. The startup banner uses the app's icon
+  button and toasts instead of a swallowed `ScaffoldMessenger` snackbar.
+- **Playlist and batch polish** — the playlist filter field is debounced
+  (200 ms, like Library) and its clear button has a tooltip; playlist's
+  post-`go()` path shows a toast instead of touching `ScaffoldMessenger`
+  after disposal.
+- **Linux double header** — the per-screen GTK frame is gone; the shell header
+  carries the screen title and the view switcher.
+- **The flaky `settings_page_test` teardown race** is fixed: the Hive box is
+  closed before the temp root is deleted.
 - Async library I/O, permission-aware settings, and a stale-fetch guard on the
   Download tab.
 
-[Unreleased]: https://github.com/ibro-3/ytdlp/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/ibro-3/ytdlp/releases/tag/v1.0.0
+[Unreleased]: https://github.com/ibro-3/ytdlp/compare/v1.0.0-rc.1...HEAD
+[1.0.0-rc.1]: https://github.com/ibro-3/ytdlp/compare/0.1...v1.0.0-rc.1
+[0.1]: https://github.com/ibro-3/ytdlp/releases/tag/0.1
