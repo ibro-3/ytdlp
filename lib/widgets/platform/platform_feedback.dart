@@ -187,13 +187,18 @@ Future<void> showAppActionSheet({
       ),
     ),
     // GTK has no action sheet: what it has is a popover menu, so a choice of
-    // actions for one row opens one of those.
+    // actions for one row opens one of those. A destructive row keeps the
+    // error tint it carries in the other families rather than going neutral.
     PlatformStyle.gtk => _showGtkMenu<void>(
       context: context,
       title: title,
       entries: [
         for (final action in actions)
-          (label: action.label, onPressed: action.onPressed),
+          (
+            label: action.label,
+            onPressed: action.onPressed,
+            destructive: action.destructive,
+          ),
       ],
     ),
   };
@@ -261,13 +266,20 @@ class _CupertinoSheetBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final media = MediaQuery.of(context);
+    // The sheet's surface is the grouped background the OS paints, resolved
+    // against the current brightness — not a hard-coded light grey, which
+    // stuck out as a bright slab in dark mode.
+    final surface = CupertinoDynamicColor.resolve(
+      CupertinoColors.systemGroupedBackground,
+      context,
+    );
     return SafeArea(
       child: Container(
         constraints: BoxConstraints(maxHeight: media.size.height * 0.9),
         margin: const EdgeInsets.only(top: 24),
-        decoration: const BoxDecoration(
-          color: Color(0xFFF2F2F7),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(10)),
+        decoration: BoxDecoration(
+          color: surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(10)),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -430,28 +442,34 @@ class _CupertinoMenuButton<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
-    return CupertinoButton(
-      padding: const EdgeInsets.all(12),
-      minimumSize: const Size(44, 44),
-      onPressed: () => showAppActionSheet(
-        context: context,
-        actions: [
-          for (final item in items)
-            AppAction(
-              label: item.checked == true ? '✓  ${item.label}' : item.label,
-              onPressed: () => onSelected(item.value),
-            ),
-        ],
+    final button = Semantics(
+      button: true,
+      label: tooltip,
+      child: CupertinoButton(
+        padding: const EdgeInsets.all(12),
+        minimumSize: const Size(44, 44),
+        onPressed: () => showAppActionSheet(
+          context: context,
+          actions: [
+            for (final item in items)
+              AppAction(
+                label: item.checked == true ? '✓  ${item.label}' : item.label,
+                onPressed: () => onSelected(item.value),
+              ),
+          ],
+        ),
+        child: Icon(icon, size: 22, color: colors.primary),
       ),
-      child: Icon(icon, size: 22, color: colors.primary),
     );
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
   }
 }
 
 /// Fluent's menu is a `MenuFlyout` shown from the anchor button. It is the one
 /// family where the right control exists as-is, so this is a straight
 /// `MenuFlyoutItem` per row.
-class _FluentMenuButton<T> extends StatelessWidget {
+class _FluentMenuButton<T> extends StatefulWidget {
   const _FluentMenuButton({
     required this.icon,
     required this.items,
@@ -465,29 +483,51 @@ class _FluentMenuButton<T> extends StatelessWidget {
   final String? tooltip;
 
   @override
+  State<_FluentMenuButton<T>> createState() => _FluentMenuButtonState<T>();
+}
+
+class _FluentMenuButtonState<T> extends State<_FluentMenuButton<T>> {
+  /// The controller belongs to this state, not to `build`: creating it there
+  /// re-registered a binding observer on every rebuild and leaked the old
+  /// ones.
+  final fui.FlyoutController _controller = fui.FlyoutController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final controller = fui.FlyoutController();
-    return fui.FlyoutTarget(
-      controller: controller,
+    final button = Semantics(
+      button: true,
+      label: widget.tooltip,
       child: fui.IconButton(
-        icon: Icon(icon),
-        onPressed: () => controller.showFlyout<void>(
+        icon: Icon(widget.icon),
+        onPressed: () => _controller.showFlyout<void>(
           builder: (context) => fui.MenuFlyout(
             items: [
-              for (final item in items)
+              for (final item in widget.items)
                 fui.MenuFlyoutItem(
                   text: Text(
                     item.checked == true ? '✓  ${item.label}' : item.label,
                   ),
                   onPressed: () {
-                    controller.close();
-                    onSelected(item.value);
+                    _controller.close();
+                    widget.onSelected(item.value);
                   },
                 ),
             ],
           ),
         ),
       ),
+    );
+    return fui.FlyoutTarget(
+      controller: _controller,
+      child: widget.tooltip == null
+          ? button
+          : Tooltip(message: widget.tooltip!, child: button),
     );
   }
 }
@@ -747,10 +787,16 @@ class _GtkSheetBody<T> extends StatelessWidget {
 ///
 /// Material's popup and Fluent's `MenuFlyout` both anchor to the button; GTK's
 /// does too, and the [AppMenuButton] wrapper gives it the trigger.
+typedef GtkMenuEntry = ({
+  String label,
+  VoidCallback onPressed,
+  bool destructive,
+});
+
 Future<T?> _showGtkMenu<T extends Object?>({
   required BuildContext context,
   String? title,
-  List<({String label, VoidCallback onPressed})> entries = const [],
+  List<GtkMenuEntry> entries = const [],
 }) {
   return showDialog<T>(
     context: context,
@@ -764,7 +810,7 @@ class _GtkMenuCard extends StatelessWidget {
   const _GtkMenuCard({required this.title, required this.entries});
 
   final String? title;
-  final List<({String label, VoidCallback onPressed})> entries;
+  final List<GtkMenuEntry> entries;
 
   @override
   Widget build(BuildContext context) {
@@ -799,7 +845,9 @@ class _GtkMenuCard extends StatelessWidget {
                   GtkMenuRow(
                     label: entry.label,
                     selected: false,
-                    foreground: colors.onSurface,
+                    foreground: entry.destructive
+                        ? colors.error
+                        : colors.onSurface,
                     textStyle: text.bodyMedium,
                     highlight: colors.surfaceContainerHighest,
                     onTap: () {
@@ -873,6 +921,7 @@ class _GtkMenuButtonState<T> extends State<_GtkMenuButton<T>> {
                           ? '✓  ${item.label}'
                           : item.label,
                       onPressed: () => widget.onSelected(item.value),
+                      destructive: false,
                     ),
                 ],
               ),
