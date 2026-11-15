@@ -10,17 +10,12 @@ void main() {
   Future<void> pump(WidgetTester tester, Widget child) {
     return tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: Center(child: child),
-        ),
+        home: Scaffold(body: Center(child: child)),
       ),
     );
   }
 
-  Future<void> focus(
-    WidgetTester tester,
-    Finder within,
-  ) async {
+  Future<void> focus(WidgetTester tester, Finder within) async {
     final focusFinder = find.descendant(
       of: within,
       matching: find.byType(Focus),
@@ -34,11 +29,7 @@ void main() {
     var taps = 0;
     await pump(
       tester,
-      GtkPill(
-        selected: false,
-        onTap: () => taps++,
-        child: const Text('Pill'),
-      ),
+      GtkPill(selected: false, onTap: () => taps++, child: const Text('Pill')),
     );
     await tester.tap(find.byType(GtkPill));
     expect(taps, 1);
@@ -178,10 +169,7 @@ void main() {
   testWidgets('a disabled GtkIconButton does not take focus or activate', (
     tester,
   ) async {
-    await pump(
-      tester,
-      const GtkIconButton(icon: Icons.close, onPressed: null),
-    );
+    await pump(tester, const GtkIconButton(icon: Icons.close, onPressed: null));
     final focusFinder = find.descendant(
       of: find.byType(GtkIconButton),
       matching: find.byType(Focus),

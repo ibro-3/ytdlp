@@ -149,9 +149,7 @@ class GtkSwitch extends StatelessWidget {
                   : Border.all(color: colors.outline),
             ),
             child: Align(
-              alignment: value
-                  ? Alignment.centerRight
-                  : Alignment.centerLeft,
+              alignment: value ? Alignment.centerRight : Alignment.centerLeft,
               child: Container(
                 width: size.height - 10,
                 height: size.height - 10,
@@ -497,29 +495,29 @@ class _GtkDropdownState<T> extends State<GtkDropdown<T>> {
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxHeight: 320),
                     child: ListView(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    shrinkWrap: true,
-                    children: [
-                      for (final item in widget.items)
-                        GtkMenuRow(
-                          label: item.label,
-                          selected: item.value == widget.value,
-                          foreground: colors.onSurface,
-                          textStyle: text.bodyMedium,
-                          highlight: colors.surfaceContainerHighest,
-                          onTap: () {
-                            _close();
-                            widget.onChanged(item.value);
-                          },
-                        ),
-                    ],
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      shrinkWrap: true,
+                      children: [
+                        for (final item in widget.items)
+                          GtkMenuRow(
+                            label: item.label,
+                            selected: item.value == widget.value,
+                            foreground: colors.onSurface,
+                            textStyle: text.bodyMedium,
+                            highlight: colors.surfaceContainerHighest,
+                            onTap: () {
+                              _close();
+                              widget.onChanged(item.value);
+                            },
+                          ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
         ),
-      ),
       ),
     );
     Overlay.of(context).insert(_entry!);
@@ -555,7 +553,9 @@ class _GtkDropdownState<T> extends State<GtkDropdown<T>> {
                 decoration: BoxDecoration(
                   color: colors.surfaceContainerLow,
                   borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
-                  border: focused ? _gtkFocusRing(context) : Border.all(color: colors.outline),
+                  border: focused
+                      ? _gtkFocusRing(context)
+                      : Border.all(color: colors.outline),
                 ),
                 child: Opacity(
                   opacity: widget.enabled ? 1 : 0.38,

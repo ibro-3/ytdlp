@@ -143,7 +143,7 @@ void main() {
     if (platform == TargetPlatform.linux) continue;
     testWidgets('$platform frames the screen the way that OS does', (
       tester,
-      ) async {
+    ) async {
       await pumpPage(tester, platform, const SettingsPage());
       expect(
         _frameFor[platformStyleOf(platform)],

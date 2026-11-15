@@ -415,20 +415,23 @@ void main() {
     expect(c.read(batchQueueControllerProvider).total, 1);
   });
 
-  test('clearFinished drops settled rows and keeps pending and loading', () async {
-    service = _FakeService({'https://a.example.com/1': 'a1'});
-    final c = await container();
-    final notifier = controller(c);
-    await notifier.resolveAll([
-      'https://a.example.com/1',
-      'https://bad.example.com/2',
-    ]);
+  test(
+    'clearFinished drops settled rows and keeps pending and loading',
+    () async {
+      service = _FakeService({'https://a.example.com/1': 'a1'});
+      final c = await container();
+      final notifier = controller(c);
+      await notifier.resolveAll([
+        'https://a.example.com/1',
+        'https://bad.example.com/2',
+      ]);
 
-    notifier.clearFinished();
-    final state = c.read(batchQueueControllerProvider);
-    expect(state.total, 0, reason: 'both had settled, so both are dropped');
-    expect(state.isResolving, isFalse);
-  });
+      notifier.clearFinished();
+      final state = c.read(batchQueueControllerProvider);
+      expect(state.total, 0, reason: 'both had settled, so both are dropped');
+      expect(state.isResolving, isFalse);
+    },
+  );
 
   test('clear empties the batch', () async {
     service = _FakeService({'https://a.example.com/1': 'a1'});

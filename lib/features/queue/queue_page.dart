@@ -268,10 +268,7 @@ class _EmptyQueue extends StatelessWidget {
               color: scheme.onSurfaceVariant,
             ),
             const SizedBox(height: 12),
-            Text(
-              'Nothing downloading',
-              style: text.titleSmall,
-            ),
+            Text('Nothing downloading', style: text.titleSmall),
             const SizedBox(height: 6),
             Text(
               'Add a video from the Download tab.',

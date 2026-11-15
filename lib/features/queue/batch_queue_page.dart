@@ -85,8 +85,9 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
         // collateral: this can be pressed mid-batch without losing work.
         AppIconButton(
           onPressed: state.ready + state.failed > 0
-              ? () =>
-                    ref.read(batchQueueControllerProvider.notifier).clearFinished()
+              ? () => ref
+                    .read(batchQueueControllerProvider.notifier)
+                    .clearFinished()
               : null,
           icon: Icons.clear_all,
           tooltip: 'Clear finished',

@@ -82,9 +82,7 @@ Future<bool> showAppConfirm(
               // families' destructive actions — neutral would read as safe.
               style: destructive
                   ? fui.ButtonStyle(
-                      backgroundColor: fui.WidgetStatePropertyAll(
-                        colors.error,
-                      ),
+                      backgroundColor: fui.WidgetStatePropertyAll(colors.error),
                       foregroundColor: fui.WidgetStatePropertyAll(
                         colors.onError,
                       ),

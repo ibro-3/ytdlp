@@ -847,9 +847,7 @@ class _ScanPendingBanner extends StatelessWidget {
           Expanded(
             child: Text(
               'Scanning the download folder…',
-              style: theme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
+              style: theme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ),
         ],
