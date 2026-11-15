@@ -79,11 +79,7 @@ class PlatformApp extends ConsumerWidget {
       // one inside the Navigator is not an ancestor of what is built here —
       // the start-up banner sits above it. One Overlay wraps everything,
       // so both work from the banner too.
-      return Overlay(
-        initialEntries: [
-          OverlayEntry(builder: (_) => content),
-        ],
-      );
+      return Overlay(initialEntries: [OverlayEntry(builder: (_) => content)]);
     }
 
     switch (style) {

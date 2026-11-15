@@ -931,16 +931,16 @@ class _DiscoveredBanner extends StatelessWidget {
                   child: const Text('Add'),
                 ),
               ),
-              if (files.length > 5)
-                Text(
-                  'and ${files.length - 5} more',
-                  style: text.labelSmall?.copyWith(
-                    color: scheme.onSecondaryContainer,
-                  ),
+            if (files.length > 5)
+              Text(
+                'and ${files.length - 5} more',
+                style: text.labelSmall?.copyWith(
+                  color: scheme.onSecondaryContainer,
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
+      ),
     );
   }
 }

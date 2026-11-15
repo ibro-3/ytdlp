@@ -53,7 +53,9 @@ void main() {
     // isolate, so reusing one name makes a later test's box point at an
     // earlier test's — deleted — temp root, and its close fails deleting the
     // lock file asynchronously.
-    settingsBox = await Hive.openBox<dynamic>('settings-page-test-${testCounter++}');
+    settingsBox = await Hive.openBox<dynamic>(
+      'settings-page-test-${testCounter++}',
+    );
     service = SettingsService(settingsBox);
     await service.update(const AppSettings());
     closeOwnsCleanup = false;

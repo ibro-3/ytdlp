@@ -39,8 +39,9 @@ class PluginForegroundTaskDriver implements ForegroundTaskDriver {
         // The manifest's `ic_notification` meta-data resolves to the
         // monochrome drawable; null would fall back to the full-colour
         // launcher icon, a white blob on the shade.
-        notificationIcon:
-            const NotificationIcon(metaDataName: 'ic_notification'),
+        notificationIcon: const NotificationIcon(
+          metaDataName: 'ic_notification',
+        ),
         callback: _foregroundTaskCallback,
       );
 

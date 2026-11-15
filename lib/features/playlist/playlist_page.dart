@@ -325,9 +325,7 @@ class _PlaylistPageState extends ConsumerState<PlaylistPage> {
         ),
       ),
       bottomBar: AppSelectionBar(
-        label: chosenCount == 0
-            ? 'Nothing selected'
-            : '$chosenCount selected',
+        label: chosenCount == 0 ? 'Nothing selected' : '$chosenCount selected',
         actionLabel: chosenCount == 1 ? 'Download 1' : 'Download $chosenCount',
         onAction: chosenCount == 0 ? null : _download,
       ),

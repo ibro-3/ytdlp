@@ -284,7 +284,9 @@ class AppSelectionBar extends StatelessWidget {
         decoration: BoxDecoration(
           color: colors.surfaceContainer.withValues(alpha: 0.92),
           border: Border(
-            top: BorderSide(color: colors.outlineVariant.withValues(alpha: 0.6)),
+            top: BorderSide(
+              color: colors.outlineVariant.withValues(alpha: 0.6),
+            ),
           ),
         ),
         child: child,
@@ -353,7 +355,11 @@ class AppFab extends StatelessWidget {
           ),
         ),
       ),
-      PlatformStyle.fluent => _fluentFab(onPressed: onPressed, icon: icon, tooltip: tooltip),
+      PlatformStyle.fluent => _fluentFab(
+        onPressed: onPressed,
+        icon: icon,
+        tooltip: tooltip,
+      ),
       PlatformStyle.gtk => GtkFab(
         onPressed: onPressed,
         icon: icon,

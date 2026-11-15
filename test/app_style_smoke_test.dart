@@ -70,8 +70,9 @@ void main() {
   Future<void> pumpPage(
     WidgetTester tester,
     TargetPlatform platform,
-    Widget page,
-  ) async {
+    Widget page, {
+    Brightness brightness = Brightness.light,
+  }) async {
     debugDefaultTargetPlatformOverride = platform;
     await tester.pumpWidget(
       ProviderScope(
@@ -84,7 +85,11 @@ void main() {
           ytdlpServiceProvider.overrideWithValue(YtdlpService(BinaryManager())),
           downloadsDirProvider.overrideWithValue(() async => tempRoot),
         ],
-        child: _RootForStyle(style: platformStyleOf(platform), child: page),
+        child: _RootForStyle(
+          style: platformStyleOf(platform),
+          brightness: brightness,
+          child: page,
+        ),
       ),
     );
     await settleIo(tester);
@@ -104,24 +109,33 @@ void main() {
     TargetPlatform.linux,
     TargetPlatform.android,
   ]) {
-    testWidgets('$platform: every screen renders without throwing', (
-      tester,
-    ) async {
-      for (final entry in pages.entries) {
-        await pumpPage(tester, platform, entry.value);
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: 'the ${entry.key} screen threw under $platform',
-        );
-        // Unmounted between screens: some of them animate a progress bar, and
-        // a repeating timer still pending when the binding checks would fail
-        // the test on the *next* screen's assert.
-        await tester.pumpWidget(const SizedBox.shrink());
-        await settleIo(tester);
-      }
-      debugDefaultTargetPlatformOverride = null;
-    });
+    for (final brightness in [Brightness.light, Brightness.dark]) {
+      testWidgets(
+        '$platform ($brightness): every screen renders without throwing',
+        (tester) async {
+          for (final entry in pages.entries) {
+            await pumpPage(
+              tester,
+              platform,
+              entry.value,
+              brightness: brightness,
+            );
+            expect(
+              tester.takeException(),
+              isNull,
+              reason:
+                  'the ${entry.key} screen threw under $platform ($brightness)',
+            );
+            // Unmounted between screens: some of them animate a progress bar,
+            // and a repeating timer still pending when the binding checks would
+            // fail the test on the *next* screen's assert.
+            await tester.pumpWidget(const SizedBox.shrink());
+            await settleIo(tester);
+          }
+          debugDefaultTargetPlatformOverride = null;
+        },
+      );
+    }
 
     testWidgets('$platform frames the screen the way that OS does', (
       tester,
@@ -177,10 +191,15 @@ class _IdleManager extends DownloadManager {
 /// theme underneath — so a screen under test sees exactly what the real app
 /// gives it, and a widget that needs one of the localization delegates gets it.
 class _RootForStyle extends StatelessWidget {
-  const _RootForStyle({required this.style, required this.child});
+  const _RootForStyle({
+    required this.style,
+    required this.child,
+    this.brightness = Brightness.light,
+  });
 
   final PlatformStyle style;
   final Widget child;
+  final Brightness brightness;
 
   @override
   Widget build(BuildContext context) {
@@ -191,22 +210,28 @@ class _RootForStyle extends StatelessWidget {
     ];
     return switch (style) {
       PlatformStyle.cupertino => CupertinoApp(
-        theme: AppTheme.cupertino(brightness: Brightness.light),
+        theme: AppTheme.cupertino(brightness: brightness),
         localizationsDelegates: delegates,
         home: Scaffold(body: child),
       ),
       PlatformStyle.fluent => fui.FluentApp(
         // Without the FluentApp the Fluent widgets have no theme to read, so
         // this root must be the real thing rather than a Material stand-in.
-        theme: AppTheme.fluent(brightness: Brightness.light),
+        theme: AppTheme.fluent(brightness: brightness),
         localizationsDelegates: delegates,
         home: child,
       ),
       // GTK is a Material tree: what makes it GTK is the theme, so this is
       // `AppTheme.gtk` rather than a fourth kind of root.
-      PlatformStyle.material || PlatformStyle.gtk => MaterialApp(
-        theme: AppTheme.light(),
-        darkTheme: AppTheme.dark(),
+      PlatformStyle.material => MaterialApp(
+        theme: brightness == Brightness.dark
+            ? AppTheme.dark()
+            : AppTheme.light(),
+        localizationsDelegates: delegates,
+        home: Scaffold(body: child),
+      ),
+      PlatformStyle.gtk => MaterialApp(
+        theme: AppTheme.gtk(brightness: brightness),
         localizationsDelegates: delegates,
         home: Scaffold(body: child),
       ),
