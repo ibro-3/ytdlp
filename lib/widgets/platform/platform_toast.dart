@@ -17,7 +17,9 @@ import '../../core/theme/app_theme_context.dart';
 /// An overlay entry rather than a `ScaffoldMessenger` call, because the
 /// start-up banner is built in the root's `builder` — above the `Navigator`,
 /// where no `ScaffoldMessenger` exists — and its dismiss button is exactly what
-/// needs to say something. An overlay entry lives above anything.
+/// needs to say something. The nearest overlay is used: that is the one
+/// installed above the Navigator for anything built before it (platform_app's
+/// root Overlay), and the Navigator's own everywhere else.
 /// The toast currently on screen.
 ///
 /// One at a time, the way Material's `SnackBar` queue is one at a time: the
@@ -33,7 +35,7 @@ void showAppToast(
   VoidCallback? action,
   String actionLabel = '',
 }) {
-  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  final overlay = Overlay.maybeOf(context);
   if (overlay == null) return;
   // The next toast replaces the one still on screen. Its timer is still
   // pending, and cancels itself when the entry is disposed — so an abandoned
@@ -103,10 +105,15 @@ class _ToastState extends State<_Toast> with SingleTickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final atBottom = context.style != PlatformStyle.fluent;
+    // Bottom bars live at the bottom edge (the playlist and batch selection
+    // bars), so a toast stacked at zero would cover them — anchored above.
+    final bottomInset = atBottom
+        ? 80.0 + MediaQuery.viewPaddingOf(context).bottom
+        : 0.0;
     return Positioned(
       left: 0,
       right: 0,
-      bottom: atBottom ? 0 : null,
+      bottom: atBottom ? bottomInset : null,
       top: atBottom ? null : MediaQuery.paddingOf(context).top,
       child: SafeArea(
         child: Align(
@@ -119,6 +126,7 @@ class _ToastState extends State<_Toast> with SingleTickerProviderStateMixin {
                 message: widget.message,
                 action: widget.action,
                 actionLabel: widget.actionLabel,
+                onDismiss: widget.onDismiss,
               ),
             ),
           ),
@@ -134,11 +142,13 @@ class _StyledToast extends StatelessWidget {
     required this.message,
     required this.action,
     required this.actionLabel,
+    required this.onDismiss,
   });
 
   final String message;
   final VoidCallback? action;
   final String actionLabel;
+  final VoidCallback onDismiss;
 
   @override
   Widget build(BuildContext context) {
@@ -180,32 +190,44 @@ class _StyledToast extends StatelessWidget {
         ),
       ),
     };
-    return Material(
-      color: style.background,
-      shape: style.shape,
-      elevation: 0,
-      clipBehavior: Clip.antiAlias,
-      // GTK's banner is bordered rather than floating over a scrim, and the
-      // shadow a Material snackbar has is the wrong depth for it.
-      shadowColor: Colors.transparent,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 12, action == null ? 16 : 8, 12),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                message,
-                style: text?.copyWith(color: style.foreground),
+    return Semantics(
+      // Announced by assistive technology as soon as it appears, without
+      // focus moving.
+      liveRegion: true,
+      child: Material(
+        color: style.background,
+        shape: style.shape,
+        elevation: 0,
+        clipBehavior: Clip.antiAlias,
+        // GTK's banner is bordered rather than floating over a scrim, and the
+        // shadow a Material snackbar has is the wrong depth for it.
+        shadowColor: Colors.transparent,
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(16, 12, action == null ? 16 : 8, 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  message,
+                  style: text?.copyWith(color: style.foreground),
+                ),
               ),
-            ),
-            if (action != null)
-              TextButton(
-                onPressed: action,
-                style: TextButton.styleFrom(foregroundColor: style.foreground),
-                child: Text(actionLabel),
-              ),
-          ],
+              if (action != null)
+                TextButton(
+                  onPressed: () {
+                    // The action lives on the banner; tapping it consumes the
+                    // message it sits on.
+                    action!();
+                    onDismiss();
+                  },
+                  style: TextButton.styleFrom(
+                    foregroundColor: style.foreground,
+                  ),
+                  child: Text(actionLabel),
+                ),
+            ],
+          ),
         ),
       ),
     );
