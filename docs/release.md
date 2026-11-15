@@ -102,7 +102,8 @@ macOS) → `release` (merges checksums, creates the GitHub release).
 Verify before announcing anything:
 
 - [ ] The release is marked **pre-release** for a `-` tag and carries the
-      auto-generated notes.
+      upgrade notes (0.1 → rc: clean reinstall; history is lost; back up
+      settings first) plus the auto-generated changelog.
 - [ ] Assets attached: `app-arm64-v8a-release.apk`, `app-x86_64-release.apk`,
       `linux-release.tar.gz`, `windows-release.zip`, `macos-release.tar.gz`,
       `SHA256SUMS.txt`.

@@ -71,6 +71,10 @@ flutter build apk --release --split-per-abi --target-platform=android-arm64,andr
 
 Each ABI adds ~16 MB (CPython) + ~2 MB ffmpeg + ~1.7 MB ffprobe — but `flutter.assets` has no per-ABI scoping, so **every split APK carries both ABIs' assets** and can't be shrunk below ~58 MB that way: an `arm64-v8a` APK measured 58.2 MB with ~40 MB it will never execute. `--split-per-abi --target-platform=android-arm64,android-x64` still earns its keep on the native engine (`libflutter.so`/`libapp.so` are per-ABI) but a "~25 MB per APK" figure is not achievable with this asset layout. The real fix is per-ABI flavors with AGP resource excludes — a build-system change, deliberately not folded into the rc. Only `arm64-v8a` and `x86_64` are built — the bundled runtime exists for exactly those two, and anything else would be an APK that installs but can never download. (`x86_64` covers Studio emulators; everything else is `arm64-v8a`.)
 
+## Distribution & upgrading
+
+Sideload/F-Droid/GitHub only; the Play Store both requires a recent target SDK and forbids YouTube downloading. Builds before `v1.0.0-rc.1` (including the `0.1` GitHub release) were debug-signed; `v1.0.0-rc.1` onwards are signed with the project's release key. Android cannot update across that boundary — uninstall 0.1 (history is lost; back up settings first) and install the new APK. Later releases signed with the same key update in place.
+
 ## Metadata fetch limits
 
 `fetchVideoInfo` runs yt-dlp with a 90s timeout and bounded output capture. The streams get separate budgets: 16 MB for the JSON payload on stdout (a real single video is ~100 KB) and 64 KB for stderr, whose *tail* is kept for diagnostics. The stdout payload is retained **in full** up to its budget — it is what gets parsed, so it is never window-truncated. When stdout exceeds its budget the process is killed immediately rather than buffering a runaway response, and the app says what happened: a **playlist link** (yt-dlp returns the whole collection and still exits 0) is reported as such, anything else as a response too large to read with the actual size.

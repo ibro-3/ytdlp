@@ -15,6 +15,16 @@ The first release candidate, and the first release since `0.1` (tagged
 install-tested and download-tested on emulators and one API 37 release build,
 but it has not yet met the bar for a final 1.0.0 tag.
 
+**Upgrading from 0.1 requires a clean reinstall.** The 0.1 APK was built with
+the Android debug key (`CN=Android Debug`) and 1.0.0-rc.1 is signed with the
+project's release key, so Android refuses the in-place update
+(`INSTALL_FAILED_UPDATE_INCOMPATIBLE`). Back up your settings first
+(**Settings → Save a backup**), uninstall 0.1, then install 1.0.0-rc.1. The
+history and queue live in Hive inside the app's data and are **lost** on
+uninstall; your settings survive if you restored the backup. The APKs
+published before this one are therefore not update-compatible with any
+future release.
+
 This section also folds in the work that earlier revisions of this file recorded
 under a `## [1.0.0] — 2026-09-30` heading. No `v1.0.0` tag or GitHub release was
 ever cut under that name; rather than rewrite history, the content is kept here,

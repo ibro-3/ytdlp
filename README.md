@@ -45,6 +45,16 @@ On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled bina
 | **macOS** | Supported. Sandboxed — entitlements matter — and **Cupertino** UI, with a `CupertinoTabScaffold` tab bar. **Unsigned build** — Gatekeeper quarantines the app; right-click → Open (or `xattr -d com.apple.quarantine ytdlp.app`) on first launch. Notarization is deferred. See [docs/architecture.md](docs/architecture.md). |
 | **iOS** / **Web** | Dropped. `dart:io` is used throughout; no engine was ever implemented for either. |
 
+## Updating from 0.1
+
+Release 0.1 was built with the Android debug key; `v1.0.0-rc.1` is signed with the project's release key. Android refuses that combination, so an in-place upgrade fails with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`. To move from 0.1 to a signed build:
+
+1. **Settings → Save a backup** (your theme, download folder, engine preferences).
+2. Uninstall YTDL 0.1. The download history and queue live inside the app's data and are **lost** with the uninstall — the backup does not include them.
+3. Install `v1.0.0-rc.1`, then **Settings → Restore a backup**.
+
+All future releases are signed with the same release key, so this is a one-time cost.
+
 ## Reporting a bug
 
 Paste the output of **Settings → Copy diagnostics** into the issue. It reports versions, paths, settings and whether ffmpeg/ffprobe and the JavaScript runtime were found — never cookies or any credential. See [CONTRIBUTING.md](CONTRIBUTING.md).
