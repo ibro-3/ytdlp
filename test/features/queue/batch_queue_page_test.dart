@@ -13,6 +13,7 @@ import 'package:ytdlp/core/models/youtube_prefs.dart';
 import 'package:ytdlp/core/models/video_info.dart';
 import 'package:ytdlp/core/providers.dart';
 import 'package:ytdlp/features/queue/batch_queue_controller.dart';
+import 'package:ytdlp/widgets/platform/platform.dart';
 import 'package:ytdlp/features/queue/batch_queue_page.dart';
 import 'package:ytdlp/services/downloads/download_manager.dart';
 import 'package:ytdlp/services/downloads/history_service.dart';
@@ -591,23 +592,58 @@ void main() {
   });
 
   group('clearing', () {
-    testWidgets('clearing the list is available and empties it', (
+    testWidgets('clearing drops the settled rows and keeps the in-flight one', (
       tester,
     ) async {
       await pump(
         tester,
         BatchState(
+          isResolving: true,
           items: [
             BatchItem(
               url: 'https://example.com/watch?v=a',
               status: BatchItemStatus.ready,
               video: _video('a'),
             ),
+            const BatchItem(
+              url: 'https://example.com/loading',
+              status: BatchItemStatus.loading,
+            ),
           ],
         ),
       );
 
-      expect(find.byTooltip('Clear the list'), findsOneWidget);
+      expect(find.text('Video a'), findsOneWidget);
+      await tester.tap(find.byTooltip('Clear finished'));
+      // The in-flight row's progress bar animates forever, so settle with a
+      // fixed budget rather than pumpAndSettle.
+      await settleIo(tester);
+
+      expect(find.text('Video a'), findsNothing);
+      expect(find.text('https://example.com/loading'), findsOneWidget);
+    });
+
+    testWidgets('the clear button is disabled when nothing has settled', (
+      tester,
+    ) async {
+      await pump(
+        tester,
+        const BatchState(
+          isResolving: true,
+          items: [
+            BatchItem(
+              url: 'https://example.com/pending',
+              status: BatchItemStatus.pending,
+            ),
+          ],
+        ),
+      );
+
+      // A disabled button, not a hidden one: the affordance stays put.
+      final button = tester
+          .widgetList<AppIconButton>(find.byType(AppIconButton))
+          .firstWhere((b) => b.tooltip == 'Clear finished');
+      expect(button.onPressed, isNull);
     });
   });
 }

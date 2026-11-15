@@ -198,14 +198,12 @@ class BatchQueueController extends Notifier<BatchState> {
 
   /// Retries one failed item, leaving the rest of the batch alone.
   ///
-  /// Joins the run already in progress instead of superseding it, so a batch
-  /// that is still resolving its remaining items keeps going. Only this
-  /// item's result is guarded, by its id surviving in the state.
-  Future<void> retryOne(int index) async {
-    // Bounds-checked: an index goes stale the moment a row is removed or the
-    // finished rows are cleared, and `state.items[index]` would throw
-    // RangeError on a tap that raced that removal.
-    if (index < 0 || index >= state.items.length) return;
+  /// [id] identifies the row rather than its position: a row's index shifts
+  /// whenever anything above it is removed, which made a tap race a reorder
+  /// and hit the wrong row.
+  Future<void> retryOne(int id) async {
+    final index = state.items.indexWhere((i) => i.id == id);
+    if (index == -1) return;
     final item = state.items[index];
     if (item.status != BatchItemStatus.failed) return;
     await _resolveOne(item.id, item.url, _batchRun);
@@ -224,18 +222,19 @@ class BatchQueueController extends Notifier<BatchState> {
     _write(items: next);
   }
 
-  /// Discards resolved and failed items, keeping the ones still loading.
+  /// Discards settled rows, keeping the ones still to do.
+  ///
+  /// The header's "clear finished" is not a wipe of the batch: the run is not
+  /// aborted, a loading row keeps its fetch, and a row waiting its turn is
+  /// resolved when the run reaches it. Only settled rows go. Pressing this
+  /// mid-run therefore loses nothing the batch still intends to do.
   void clearFinished() {
-    // A run in progress is stopped outright (the batch token is bumped), and
-    // the items it had not reached yet are kept but demoted from `loading` to
-    // `pending`: nothing is fetching them any more, and leaving them `loading`
-    // would show a spinner that nothing will ever resolve.
-    _batchRun++;
     _write(
       items: [
         for (final i in state.items)
-          if (i.status == BatchItemStatus.loading)
-            BatchItem(id: i.id, url: i.url),
+          if (i.status != BatchItemStatus.ready &&
+              i.status != BatchItemStatus.failed)
+            i,
       ],
     );
   }

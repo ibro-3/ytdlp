@@ -80,11 +80,16 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
     return AppScaffold(
       title: 'Queue links',
       actions: [
+        // Clears only what has settled — ready and failed rows. The rows a
+        // run still has to reach, and the fetch in flight right now, are not
+        // collateral: this can be pressed mid-batch without losing work.
         AppIconButton(
-          onPressed: () =>
-              ref.read(batchQueueControllerProvider.notifier).clear(),
+          onPressed: state.ready + state.failed > 0
+              ? () =>
+                    ref.read(batchQueueControllerProvider.notifier).clearFinished()
+              : null,
           icon: Icons.clear_all,
-          tooltip: 'Clear the list',
+          tooltip: 'Clear finished',
         ),
       ],
       body: state.total == 0
@@ -106,7 +111,7 @@ class _BatchQueuePageState extends ConsumerState<BatchQueuePage> {
                       }),
                       onRetry: () => ref
                           .read(batchQueueControllerProvider.notifier)
-                          .retryOne(i),
+                          .retryOne(state.items[i].id),
                       onRemove: () => _removeAt(state, i),
                       onOpenPlaylist: (playlist) =>
                           context.push('/download/playlist', extra: playlist),

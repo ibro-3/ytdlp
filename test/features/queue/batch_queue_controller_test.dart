@@ -234,7 +234,7 @@ void main() {
     expect(c.read(batchQueueControllerProvider).failed, 1);
 
     flaky.succeed = true;
-    await notifier.retryOne(0);
+    await notifier.retryOne(1);
     expect(c.read(batchQueueControllerProvider).ready, 1);
     expect(flaky.calls, 2, reason: 'exactly one extra fetch');
   });
@@ -271,7 +271,7 @@ void main() {
       BatchItemStatus.failed,
       reason: 'the middle item failed on the first pass',
     );
-    await notifier.retryOne(1);
+    await notifier.retryOne(2); // the middle row's id
     await pending;
 
     final state = c.read(batchQueueControllerProvider);
@@ -292,7 +292,7 @@ void main() {
     await notifier.resolveAll(['https://a.example.com/1']);
     final before = service.requested.length;
 
-    await notifier.retryOne(0);
+    await notifier.retryOne(1);
     expect(
       service.requested.length,
       before,
@@ -399,22 +399,23 @@ void main() {
     expect(c.read(batchQueueControllerProvider).total, 0);
   });
 
-  test('retryOne ignores an out-of-range index', () async {
-    // Indexes go stale after removeAt/clearFinished; reading
-    // `state.items[index]` before the guard used to throw RangeError.
+  test('retryOne ignores an unknown id', () async {
+    // Ids outlive the rows they named: a row can be removed after the call
+    // site captured its id, and the lookup must come up empty rather than
+    // throw or hit the wrong row.
     service = _FakeService({'https://a.example.com/1': 'a1'});
     final c = await container();
     await controller(c).resolveAll(['https://a.example.com/1']);
     final before = service.requested.length;
 
-    await controller(c).retryOne(5);
+    await controller(c).retryOne(99);
     await controller(c).retryOne(-1);
 
     expect(service.requested.length, before, reason: 'no fetch was started');
     expect(c.read(batchQueueControllerProvider).total, 1);
   });
 
-  test('clearFinished keeps only the still-loading items', () async {
+  test('clearFinished drops settled rows and keeps pending and loading', () async {
     service = _FakeService({'https://a.example.com/1': 'a1'});
     final c = await container();
     final notifier = controller(c);
