@@ -1,0 +1,96 @@
+NOTICE
+======
+
+YTDL — Platform-Native Downloader
+Copyright (C) the YTDL authors
+
+YTDL's own source code is licensed under GPL-3.0-or-later; see `LICENSE`.
+This file records the licenses of the third-party components that ship in the
+release artifacts (the Android APKs and the Linux / Windows / macOS bundles)
+and of the direct Dart dependencies.
+
+The transitive Dart dependency set resolves through `pubspec.lock`; every one
+of those packages is distributed under its own license, printed in its own
+package directory (or via `flutter pub deps`). If this file and a shipped
+artifact ever disagree, the shipped artifact is authoritative — please report
+it.
+
+1. Bundled components — Android APK (`assets/bin/android/<abi>/`)
+----------------------------------------------------------------
+
+**CPython 3.14 + standard library** — PSF License (PSF-2.0).
+Assembled from official Termux `.deb` packages (packages.termux.dev) by
+`tool/fetch_android_runtime.sh`. The native closure shipped in
+`python-runtime.bin` (versions move between rebuilds — re-derive with
+`tar -tzf assets/bin/android/<abi>/python-runtime.bin`) includes, alongside
+CPython itself:
+
+| Library | License |
+| ------- | ------- |
+| OpenSSL 3 (libssl/libcrypto) | Apache-2.0 with the OpenSSL/SSLeay exception |
+| libsqlite3, libreadline, libhistory, libgdbm(_compat) | Public domain (SQLite); GPL-3.0-or-later (Readline/gdbm) |
+| ncurses family (libncurses, libtinfo, libtermcap, libpanel*, libmenu*, libform*, libcurses) | X11-style permissive |
+| zlib (libz), zstd (libzstd), brotli (python pkg) | zlib license; BSD-3-Clause; MIT |
+| liblzma, libbz2, libffi, libexpat, libcrypt (libxcrypt) | Public domain (XZ Utils); bzip2 license; MIT; MIT-style (Expat); LGPL-2.1-or-later |
+| libandroid-support, libandroid-posix-semaphore | ISC |
+
+**python-yt-dlp 2026.08.19** — The Unlicense.
+From the Termux `python-yt-dlp` package; not the PyInstaller build.
+Upstream's own note: standalone zipimport executables additionally carry
+GPLv3+ code, and the project as a whole is Unlicense.
+
+**brotli 1.2.0** — MIT.
+**pycryptodomex 3.23.0** — BSD-2-Clause / Public Domain.
+
+**ffmpeg + ffprobe (static, minimal)** — LGPL-2.1-or-later.
+Built by `tool/fetch_ffmpeg_android.sh` with `--enable-small`, no external
+codec libraries and no `--enable-gpl` / `--enable-nonfree`; only the file/pipe
+protocols, the mp4/matroska/webm demuxers and muxers, H.264/HEVC/VP9/AAC/Opus
+parsers and the matching bitstream filters. The build is byte-for-byte from
+upstream ffmpeg 8.1.3 source; rebuilding it is subject to ffmpeg's upstream
+license only, not to any copyleft obligation towards this repository.
+
+**yt-dlp-ejs** — *not bundled.* Downloaded at runtime from PyPI when the user
+enables the JavaScript-runtime integration, verified against the SHA-256 that
+PyPI publishes *before* anything is unpacked (see `lib/services/ytdlp/ejs_installer.dart`).
+The wheel carries ISC (`meriyah`) and MIT (`astring`) code.
+
+2. Bundled components — Linux / Windows / macOS bundles
+------------------------------------------------------
+
+**Flutter (framework, engine, `flutter_localizations`, Dart SDK)** —
+BSD-3-Clause.
+
+No `yt-dlp` or `ffmpeg` binary is committed to this repository. Desktop builds
+prefer a system install on `PATH` and otherwise download the official
+single-file `yt-dlp` build at first run (`tool/fetch_binaries.sh` for the
+development convenience copies, which are gitignored). Those upstream
+PyInstaller builds are GPL-3.0-or-later combined works; they are fetched,
+never vendored.
+
+3. Direct Dart dependencies
+---------------------------
+
+Resolved versions are pinned in `pubspec.lock`. Licenses as published by each
+package:
+
+| Package | License |
+| ------- | ------- |
+| `material_ui`, `cupertino_ui`, `flutter_lints`, `go_router`, `path_provider`, `share_plus`, `package_info_plus`, `url_launcher`, `path`, `connectivity_plus`, `shared_preferences`, `crypto`, `open_filex`, `flutter_local_notifications`, `fluent_ui` | BSD-3-Clause |
+| `flutter_riverpod`, `cached_network_image`, `flutter_foreground_task`, `archive`, `file_picker` | MIT |
+| `hive`, `hive_flutter`, `receive_sharing_intent` | Apache-2.0 |
+| `flutter_localizations` (Flutter SDK) | BSD-3-Clause |
+
+Copyright holders are named in each package's own LICENSE file.
+
+4. Attribution notes
+--------------------
+
+- yt-dlp is the work of the yt-dlp project (<https://github.com/yt-dlp/yt-dlp>);
+  this app is an unaffiliated, non-commercial interface to it.
+- ffmpeg is the work of the FFmpeg project (<https://ffmpeg.org/>); this app
+  shells out to it and ships a minimal static build for Android.
+- CPython is the work of the PSF and contributors; the Android runtime ships
+  unmodified upstream CPython built from Termux's packaging.
+- Termux (<https://termux.dev/>) provides the packaging and patches the
+  Android runtime derives from.
