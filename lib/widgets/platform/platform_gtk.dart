@@ -1,5 +1,7 @@
 library;
 
+import 'package:flutter/services.dart'
+    show KeyDownEvent, KeyEvent, LogicalKeyboardKey;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/theme/app_theme.dart';
@@ -49,38 +51,47 @@ class _GtkPillState extends State<GtkPill> {
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 100),
-          height: AppTheme.gtkControlHeight,
-          padding: const EdgeInsets.symmetric(horizontal: 14),
-          decoration: BoxDecoration(
-            color: widget.selected
-                ? colors.primary
-                : _hovered
-                ? colors.surfaceContainerHighest
-                : colors.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: widget.selected ? colors.primary : colors.outline,
+      child: Semantics(
+        button: true,
+        selected: widget.selected,
+        child: _GtkFocusable(
+          onActivate: widget.onTap,
+          enabled: true,
+          builder: (context, focused) => AnimatedContainer(
+            duration: const Duration(milliseconds: 100),
+            height: AppTheme.gtkControlHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            decoration: BoxDecoration(
+              color: widget.selected
+                  ? colors.primary
+                  : _hovered
+                  ? colors.surfaceContainerHighest
+                  : colors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(999),
+              border: focused
+                  ? _gtkFocusRing(context)
+                  : Border.all(
+                      color: widget.selected ? colors.primary : colors.outline,
+                    ),
             ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (widget.selected && widget.showCheck) ...[
-                Icon(Icons.check, size: 14, color: colors.onPrimary),
-                const SizedBox(width: 6),
-              ],
-              DefaultTextStyle.merge(
-                style: TextStyle(
-                  fontSize: 13,
-                  color: widget.selected ? colors.onPrimary : colors.onSurface,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.selected && widget.showCheck) ...[
+                  Icon(Icons.check, size: 14, color: colors.onPrimary),
+                  const SizedBox(width: 6),
+                ],
+                DefaultTextStyle.merge(
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: widget.selected
+                        ? colors.onPrimary
+                        : colors.onSurface,
+                  ),
+                  child: widget.child,
                 ),
-                child: widget.child,
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -94,11 +105,16 @@ class GtkSwitch extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.enabled = true,
+    this.label,
   });
 
   final bool value;
   final ValueChanged<bool>? onChanged;
   final bool enabled;
+
+  /// The accessible name, e.g. the row's title. Falls back to a generic one
+  /// where the switch stands alone.
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -110,9 +126,12 @@ class GtkSwitch extends StatelessWidget {
         : colors.surfaceContainerHigh;
     return Semantics(
       toggled: value,
-      child: GestureDetector(
-        onTap: active ? () => onChanged!(!value) : null,
-        child: Opacity(
+      button: true,
+      label: label ?? 'Switch',
+      child: _GtkFocusable(
+        onActivate: active ? () => onChanged!(!value) : null,
+        enabled: active,
+        builder: (context, focused) => Opacity(
           opacity: active ? 1 : 0.5,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
@@ -123,10 +142,16 @@ class GtkSwitch extends StatelessWidget {
             decoration: BoxDecoration(
               color: track,
               borderRadius: BorderRadius.circular(size.height / 2),
-              border: value ? null : Border.all(color: colors.outline),
+              border: focused
+                  ? _gtkFocusRing(context)
+                  : value
+                  ? null
+                  : Border.all(color: colors.outline),
             ),
             child: Align(
-              alignment: value ? Alignment.centerRight : Alignment.centerLeft,
+              alignment: value
+                  ? Alignment.centerRight
+                  : Alignment.centerLeft,
               child: Container(
                 width: size.height - 10,
                 height: size.height - 10,
@@ -178,10 +203,10 @@ class _GtkListRowState extends State<GtkListRow> {
       cursor: widget.onTap == null
           ? SystemMouseCursors.basic
           : SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: Container(
+      child: _GtkFocusable(
+        onActivate: widget.onTap,
+        enabled: widget.onTap != null,
+        builder: (context, focused) => Container(
           padding: EdgeInsets.symmetric(
             horizontal: 16,
             vertical: widget.dense ? 8 : 12,
@@ -190,6 +215,8 @@ class _GtkListRowState extends State<GtkListRow> {
             color: _hovered && widget.onTap != null
                 ? colors.surfaceContainerHighest
                 : Colors.transparent,
+            border: focused ? _gtkFocusRing(context) : null,
+            borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
           ),
           child: Row(
             children: [
@@ -302,38 +329,45 @@ class GtkSegmentedItem<T extends Object> extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final foreground = selected ? colors.onPrimary : colors.onSurface;
-    return GestureDetector(
-      onTap: segment.enabled ? onTap : null,
-      child: Container(
-        height: AppTheme.gtkControlHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        decoration: BoxDecoration(
-          color: selected ? colors.primary : Colors.transparent,
-          borderRadius: BorderRadius.horizontal(
-            left: first
-                ? const Radius.circular(AppTheme.gtkRadius)
-                : Radius.zero,
-            right: last
-                ? const Radius.circular(AppTheme.gtkRadius)
-                : Radius.zero,
+    final radius = BorderRadius.horizontal(
+      left: first ? const Radius.circular(AppTheme.gtkRadius) : Radius.zero,
+      right: last ? const Radius.circular(AppTheme.gtkRadius) : Radius.zero,
+    );
+    return Semantics(
+      button: true,
+      selected: selected,
+      enabled: segment.enabled,
+      label: segment.label,
+      child: _GtkFocusable(
+        onActivate: segment.enabled ? onTap : null,
+        enabled: segment.enabled,
+        builder: (context, focused) => Container(
+          height: AppTheme.gtkControlHeight,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          decoration: BoxDecoration(
+            color: selected ? colors.primary : Colors.transparent,
+            border: focused ? _gtkFocusRing(context) : null,
+            borderRadius: radius,
           ),
-        ),
-        child: Opacity(
-          opacity: segment.enabled ? 1 : 0.38,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(segment.icon, size: 16, color: foreground),
-              const SizedBox(width: 6),
-              Text(
-                segment.label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w600 : null,
-                  color: foreground,
+          child: Opacity(
+            opacity: segment.enabled ? 1 : 0.38,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (segment.icon != null) ...[
+                  Icon(segment.icon, size: 16, color: foreground),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  segment.label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: selected ? FontWeight.w600 : null,
+                    color: foreground,
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -455,12 +489,14 @@ class _GtkDropdownState<T> extends State<GtkDropdown<T>> {
                   ),
                   side: BorderSide(color: colors.outline),
                 ),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    minWidth: 200,
-                    maxHeight: 320,
-                  ),
-                  child: ListView(
+                // A fixed width: the rows are full-width like a GNOME
+                // popover's, and a shrink-wrapped list with unbounded width
+                // crashes the layout.
+                child: SizedBox(
+                  width: 280,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 320),
+                    child: ListView(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     shrinkWrap: true,
                     children: [
@@ -483,6 +519,7 @@ class _GtkDropdownState<T> extends State<GtkDropdown<T>> {
             ),
           ),
         ),
+      ),
       ),
     );
     Overlay.of(context).insert(_entry!);
@@ -509,15 +546,16 @@ class _GtkDropdownState<T> extends State<GtkDropdown<T>> {
             cursor: widget.enabled
                 ? SystemMouseCursors.click
                 : SystemMouseCursors.basic,
-            child: GestureDetector(
-              onTap: widget.enabled ? _open : null,
-              child: Container(
+            child: _GtkFocusable(
+              onActivate: widget.enabled ? _open : null,
+              enabled: widget.enabled,
+              builder: (context, focused) => Container(
                 height: AppTheme.gtkControlHeight,
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 decoration: BoxDecoration(
                   color: colors.surfaceContainerLow,
                   borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
-                  border: Border.all(color: colors.outline),
+                  border: focused ? _gtkFocusRing(context) : Border.all(color: colors.outline),
                 ),
                 child: Opacity(
                   opacity: widget.enabled ? 1 : 0.38,
@@ -631,9 +669,10 @@ class _GtkIconButtonState extends State<GtkIconButton> {
       cursor: widget.onPressed == null
           ? SystemMouseCursors.basic
           : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onPressed,
-        child: AnimatedContainer(
+      child: _GtkFocusable(
+        onActivate: widget.onPressed,
+        enabled: widget.onPressed != null,
+        builder: (context, focused) => AnimatedContainer(
           duration: const Duration(milliseconds: 100),
           width: AppTheme.gtkControlHeight,
           height: AppTheme.gtkControlHeight,
@@ -641,6 +680,7 @@ class _GtkIconButtonState extends State<GtkIconButton> {
             color: _hovered
                 ? colors.surfaceContainerHighest
                 : Colors.transparent,
+            border: focused ? _gtkFocusRing(context) : null,
             borderRadius: BorderRadius.circular(AppTheme.gtkRadius),
           ),
           child: Icon(
@@ -655,8 +695,14 @@ class _GtkIconButtonState extends State<GtkIconButton> {
         ),
       ),
     );
-    if (widget.tooltip == null) return button;
-    return Tooltip(message: widget.tooltip!, child: button);
+    // The tooltip itself is the wrapper's (AppIconButton adds one): this
+    // only carries the accessible name, so two nested tooltips cannot stack.
+    return Semantics(
+      button: true,
+      label: widget.tooltip,
+      enabled: widget.onPressed != null,
+      child: button,
+    );
   }
 }
 
@@ -678,13 +724,16 @@ class GtkFab extends StatelessWidget {
     return Semantics(
       button: true,
       label: tooltip,
-      child: GestureDetector(
-        onTap: onPressed,
-        child: Container(
+      enabled: onPressed != null,
+      child: _GtkFocusable(
+        onActivate: onPressed,
+        enabled: onPressed != null,
+        builder: (context, focused) => Container(
           width: 48,
           height: 48,
           decoration: BoxDecoration(
             color: colors.primary,
+            border: focused ? _gtkFocusRing(context) : null,
             borderRadius: BorderRadius.circular(AppTheme.gtkRadius * 2),
           ),
           child: Icon(icon, color: colors.onPrimary, size: 20),
@@ -701,3 +750,84 @@ String labelFor<T>(List<({T? value, String label})> items, T? value) {
   }
   return '';
 }
+
+/// Gives a GTK control keyboard activation and a visible focus ring.
+///
+/// Linux is a desktop platform: every actionable control in this file is
+/// focusable and activates on Enter or Space, and the focused one shows an
+/// accent ring — the pointer is a convenience, not a prerequisite.
+class _GtkFocusable extends StatefulWidget {
+  const _GtkFocusable({
+    required this.onActivate,
+    required this.enabled,
+    required this.builder,
+  });
+
+  /// The control's activation; null when the control is unavailable.
+  final VoidCallback? onActivate;
+
+  final bool enabled;
+
+  final Widget Function(BuildContext context, bool focused) builder;
+
+  @override
+  State<_GtkFocusable> createState() => _GtkFocusableState();
+}
+
+class _GtkFocusableState extends State<_GtkFocusable> {
+  final FocusNode _node = FocusNode();
+  bool _focused = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _node.addListener(_handleFocus);
+  }
+
+  void _handleFocus() {
+    final focused = _node.hasFocus;
+    if (focused == _focused) return;
+    if (mounted) setState(() => _focused = focused);
+  }
+
+  @override
+  void dispose() {
+    _node.removeListener(_handleFocus);
+    _node.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    final activate =
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space;
+    if (activate && widget.enabled && widget.onActivate != null) {
+      widget.onActivate!();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Pointer activation and keyboard activation run the same callback, so
+    // the two paths can never drift apart.
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.enabled ? widget.onActivate : null,
+      child: Focus(
+        focusNode: _node,
+        canRequestFocus: widget.enabled,
+        onKeyEvent: _onKeyEvent,
+        child: widget.builder(context, _focused),
+      ),
+    );
+  }
+}
+
+/// The accent focus ring drawn around a focused GTK control.
+Border _gtkFocusRing(BuildContext context) =>
+    Border.all(color: context.colors.primary, width: 2);

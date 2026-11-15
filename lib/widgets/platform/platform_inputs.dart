@@ -224,6 +224,7 @@ class AppSwitch extends StatelessWidget {
     required this.value,
     required this.onChanged,
     this.enabled = true,
+    this.label,
   });
 
   final bool value;
@@ -232,6 +233,10 @@ class AppSwitch extends StatelessWidget {
   /// as a null callback; the other two need it said.
   final ValueChanged<bool>? onChanged;
   final bool enabled;
+
+  /// The accessible name, for the families whose switch carries one
+  /// (GTK's role is "button"). Defaults to the row's title via [AppSwitchTile].
+  final String? label;
 
   @override
   Widget build(BuildContext context) {
@@ -250,6 +255,7 @@ class AppSwitch extends StatelessWidget {
         value: value,
         onChanged: onChanged,
         enabled: enabled,
+        label: label,
       ),
     };
   }
@@ -323,7 +329,17 @@ class AppSwitchTile extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 12),
-        AppSwitch(value: value, onChanged: onChanged, enabled: enabled),
+        AppSwitch(
+          value: value,
+          onChanged: onChanged,
+          enabled: enabled,
+          // The row's own title is the switch's accessible name where it is
+          // a plain text row.
+          label: switch (title) {
+            final Text t => t.data,
+            _ => null,
+          },
+        ),
       ],
     );
     final result = Padding(
