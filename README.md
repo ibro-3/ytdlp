@@ -19,6 +19,7 @@ A Flutter app that downloads videos with a **bundled `yt-dlp` binary** and `ffmp
 | [docs/features.md](docs/features.md) | What each tab does, queue behaviour, playlists and channels |
 | [docs/architecture.md](docs/architecture.md) | Stack, storage, engine resolution, release identity, the Linux GTK3/GTK4 toolkits |
 | [docs/android.md](docs/android.md) | Bundled runtime and ffmpeg, builds, signing |
+| [docs/release.md](docs/release.md) | The release checklist: toolchain gate, keystore contract, tag → workflow → verification, hotfix rule |
 | [docs/advanced-settings.md](docs/advanced-settings.md) | Extra flags, output template, backups, diagnostics |
 | [docs/youtube-support.md](docs/youtube-support.md) | The `yt-dlp-ejs` JavaScript runtime and player clients |
 | [docs/cookies.md](docs/cookies.md) | `cookies.txt` import, per-site control, `--cookies-from-browser` |
@@ -40,8 +41,8 @@ On desktop a system `yt-dlp` and `ffmpeg` on `PATH` are used, so no bundled bina
 | -------- | ------ |
 | **Android** | Primary target. Bundled CPython + yt-dlp runtime and static ffmpeg/ffprobe, `dataSync` foreground service, share-sheet intake. **Material 3** UI. |
 | **Linux** | Supported. System or bundled `yt-dlp`, GTK notifications. **GTK4/Adwaita** UI: a 42dp header bar with a view switcher in it (`AdwViewSwitcher`-style) instead of a bottom tab bar, Cantarell, Adwaita's neutral greys with the seed kept as the accent, no ink splashes, popover menus and drop-downs, and a 52×24 sliding switch. The window is the GTK3 embedder Flutter ships by default, and the shell also builds against GTK4 — see [docs/architecture.md](docs/architecture.md). |
-| **Windows** | Supported. System or bundled `yt-dlp.exe`. **Fluent UI** UI, through [`fluent_ui`](https://pub.dev/packages/fluent_ui): a `NavigationView` pane, Fluent buttons/switches/dialogs, and a `ComboBox` in place of Material's drop-down. The native frame is unchanged; a custom title bar is not used. |
-| **macOS** | Supported. Sandboxed — entitlements matter — and **Cupertino** UI, with a `CupertinoTabScaffold` tab bar. See [docs/architecture.md](docs/architecture.md). |
+| **Windows** | Supported. System or bundled `yt-dlp.exe`. **Fluent UI** UI, through [`fluent_ui`](https://pub.dev/packages/fluent_ui): a `NavigationView` pane, Fluent buttons/switches/dialogs, and a `ComboBox` in place of Material's drop-down. The native frame is unchanged; a custom title bar is not used. **Unsigned build** — SmartScreen flags the publisher as unknown; confirm via "More info" → "Run anyway". |
+| **macOS** | Supported. Sandboxed — entitlements matter — and **Cupertino** UI, with a `CupertinoTabScaffold` tab bar. **Unsigned build** — Gatekeeper quarantines the app; right-click → Open (or `xattr -d com.apple.quarantine ytdlp.app`) on first launch. Notarization is deferred. See [docs/architecture.md](docs/architecture.md). |
 | **iOS** / **Web** | Dropped. `dart:io` is used throughout; no engine was ever implemented for either. |
 
 ## Reporting a bug
@@ -54,4 +55,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). In short: `dart format`, `flutter analyz
 
 ## Licence
 
-GPL-3.0-or-later; see [LICENSE](LICENSE). The bundled binaries carry their own licences: yt-dlp is GPL-3.0-or-later, the static `ffmpeg` build is LGPL-2.1-or-later, and the CPython runtime is assembled from official Termux packages under the PSF licence.
+GPL-3.0-or-later; see [LICENSE](LICENSE). The bundled components carry their own licences: yt-dlp (as shipped, the Termux Python package) is The Unlicense, the static `ffmpeg` build is LGPL-2.1-or-later, and the CPython runtime is assembled from official Termux packages under the PSF licence. The full attribution list — including the direct Dart dependencies and what is *not* bundled — is in [NOTICE](NOTICE). The one-tap desktop yt-dlp auto-download fetches upstream's PyInstaller builds, which are GPL-3.0-or-later combined works; nothing is fetched that is not run with the licences it carries.

@@ -104,6 +104,21 @@ tool/{fetch_binaries,fetch_android_runtime,fetch_ffmpeg_android}.sh
 - **Launcher icon** — adaptive icon, red background with a white download arrow.
 - The on-disk binary/app name stays `ytdlp` on desktop (`BINARY_NAME`, `PRODUCT_NAME`) to match the `ytdlp.app` product reference in `Runner.xcodeproj`.
 
+## Desktop release signing (macOS / Windows)
+
+Neither desktop bundle is code-signed:
+
+- **macOS** — no Apple Developer Program membership, so the `.app` is not
+  notarized. Gatekeeper quarantines it on first launch: users must
+  right-click → Open (or `xattr -d com.apple.quarantine ytdlp.app`).
+  Notarization is deferred, not abandoned.
+- **Windows** — no Authenticode certificate, so SmartScreen flags the
+  publisher as unknown; the user confirms via "More info" → "Run anyway".
+
+Both are unsigned by choice of distribution (GitHub Releases, sideload), not
+by oversight, and the release workflow says so in its job names. The Linux
+bundle has no equivalent gate.
+
 ## Desktop sandbox (macOS)
 
 macOS builds are sandboxed, so `macos/Runner/*.entitlements` must grant:

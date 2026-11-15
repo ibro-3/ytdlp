@@ -50,7 +50,7 @@ The embed toggles in the format sheet and in Settings → Post-processing are ga
 
 ## Build configuration
 
-- **`targetSdk = 28` is deliberate.** Android 10+ enforces W^X for apps targeting API 29+: `exec()` on files in app-writable storage is denied (`avc: denied { execute_no_trans }`), which breaks the bundled runtime extracted into the app support dir. Termux ships targetSdk 28 for the same reason. That trips Play's `ExpiredTargetSdkVersion` lint, so that single check is disabled in `android/app/build.gradle.kts`; every other lint rule still runs. `-P ytdlpTargetSdk=33` is available for experiments, but the runtime will not execute under it.
+- **`targetSdk = 28` is the shipped decision, not a default awaiting one.** Android 10+ enforces W^X for apps targeting API 29+: `exec()` on files in app-writable storage is denied (`avc: denied { execute_no_trans }`), which breaks the bundled runtime extracted into the app support dir. Termux ships targetSdk 28 for the same reason. This was tested, not assumed: a release APK built under `targetSdk = 33` (via `-P ytdlpTargetSdk=33` and a `run-as` fallback) failed on a Google-Play API 37 emulator — release packages are non-debuggable so `run-as` refuses, and the direct exec is denied by SELinux Enforcing. The `run-as` machinery is removed and the default stays `28`. That trips Play's `ExpiredTargetSdkVersion` lint, so that single check is disabled in `android/app/build.gradle.kts`; every other lint rule still runs. The Play Store both requires a recent target SDK and forbids YouTube downloading, so the `33` experiment serves no one; `-P ytdlpTargetSdk=33` remains for archaeology but the runtime will not execute under it. Distribution is sideload/F-Droid/GitHub only.
 - **`compileSdk` is 37 while `targetSdk` stays 28** — `receive_sharing_intent` 1.9.0 and `flutter_foreground_task` 11.x compile against 37, so the build script pins it instead of following `flutter.compileSdkVersion` (36). Verified via `aapt2 dump badging`.
 - **`android.builtInKotlin=true`** in `android/gradle.properties` (template default is `false`). Both plugins migrated to Flutter's built-in Kotlin and no longer apply the Kotlin Gradle Plugin themselves, which is required under AGP 9+.
 - Distribution: Play Store forbids YouTube downloading and rejects the expired target SDK — intended for sideload/F-Droid/GitHub.
@@ -65,7 +65,7 @@ cp android/key.properties.example android/key.properties   # then fill in your d
 flutter build apk --release --split-per-abi --target-platform=android-arm64,android-x64
 ```
 
-`android/key.properties` is gitignored — never commit it. For CI, inject the keystore from GitHub secrets at build time.
+`android/key.properties` is gitignored — never commit it. For CI, inject the keystore from GitHub secrets at build time; the full secrets contract and the tag → workflow → verification flow live in [release.md](release.md).
 
 ## Per-ABI splits
 
