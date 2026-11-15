@@ -137,9 +137,13 @@ void main() {
       );
     }
 
+    // Linux is intentionally absent: the GTK frame is the shell's, and a bare
+    // pump has no shell — the single-header rule is covered by
+    // test/gtk_shell_test.dart instead.
+    if (platform == TargetPlatform.linux) continue;
     testWidgets('$platform frames the screen the way that OS does', (
       tester,
-    ) async {
+      ) async {
       await pumpPage(tester, platform, const SettingsPage());
       expect(
         _frameFor[platformStyleOf(platform)],
@@ -154,18 +158,12 @@ void main() {
 
 /// What the family's own frame looks like in the tree.
 ///
-/// GTK's is the header-bar height, which no other family uses: a 42dp bar is
-/// what makes a Linux window read as a GTK app rather than as a retinted
-/// Android one.
+/// GTK has no entry: the GTK frame is the shell's, and a bare pump has no
+/// shell (see test/gtk_shell_test.dart for the single-header rule).
 final _frameFor = <PlatformStyle, Finder>{
   PlatformStyle.material: find.byType(AppBar),
   PlatformStyle.cupertino: find.byType(CupertinoNavigationBar),
   PlatformStyle.fluent: find.byType(fui.ScaffoldPage),
-  PlatformStyle.gtk: find.byWidgetPredicate(
-    (widget) =>
-        widget is Container &&
-        widget.constraints?.maxHeight == AppTheme.gtkHeaderHeight,
-  ),
 };
 
 /// A [DownloadManager] that has nothing running and never starts anything.

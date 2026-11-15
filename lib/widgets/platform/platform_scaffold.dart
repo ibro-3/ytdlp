@@ -4,6 +4,7 @@ import 'package:fluent_ui/fluent_ui.dart' as fui;
 import 'package:material_ui/material_ui.dart';
 
 import '../../core/platform_style.dart';
+import '../gtk_header.dart';
 import 'platform_controls.dart';
 import 'platform_gtk.dart';
 import '../../core/theme/app_theme.dart';
@@ -125,77 +126,53 @@ class AppScaffold extends StatelessWidget {
           footer: bottomBar,
         );
       case PlatformStyle.gtk:
-        return _GtkFrame(
-          title: title,
-          actions: actions,
-          bottomBar: bottomBar,
-          child: content,
+        // The window's header bar belongs to the shell (it carries the view
+        // switcher and the screen's title); the screen contributes its own
+        // action buttons, in a slim right-aligned row, and publishes its
+        // title upward — one frame per window, not two.
+        final publish = GtkHeaderScope.of(context);
+        if (publish != null) {
+          WidgetsBinding.instance.addPostFrameCallback(
+            (_) => publish.update(title),
+          );
+        }
+        return SafeArea(
+          bottom: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (actions.isNotEmpty) _GtkActionRow(actions: actions),
+              Expanded(child: content),
+              ?bottomBar,
+            ],
+          ),
         );
     }
   }
 }
 
-/// The GTK4 frame: a 42px header bar, the window's title in it, and the body
-/// below.
-///
-/// GTK4 apps put their chrome in a header bar and give the window the
-/// decorations — the native runner already draws the client-side window
-/// controls for us, so this bar carries no close button and stops short of the
-/// left edge by the width of those controls. It is the one frame here built
-/// out of Material widgets, because that is what the app has: a `Container`
-/// at the header height over the body, with a bottom hairline rather than an
-/// elevation.
-class _GtkFrame extends StatelessWidget {
-  const _GtkFrame({
-    required this.title,
-    required this.actions,
-    required this.bottomBar,
-    required this.child,
-  });
+/// The GTK screen's action row: the screen's own icon buttons (scan, sort,
+/// pause…), right-aligned under the window's header bar. The title lives in
+/// the shell's header, so this row carries none — one frame per window, not
+/// two.
+class _GtkActionRow extends StatelessWidget {
+  const _GtkActionRow({required this.actions});
 
-  final String? title;
   final List<Widget> actions;
-  final Widget? bottomBar;
-  final Widget child;
 
   @override
   Widget build(BuildContext context) {
     final greys = AppTheme.gtkGreys(Theme.of(context).brightness);
-    final text = Theme.of(context).textTheme;
-    final bar = Container(
-      height: AppTheme.gtkHeaderHeight,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+    return Container(
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: greys.header,
         border: Border(bottom: BorderSide(color: greys.border)),
       ),
       child: Row(
-        children: [
-          // Room for the runner's client-side window controls, which sit
-          // outside the Flutter view.
-          const SizedBox(width: 60),
-          if (title case final titleText?)
-            Text(
-              titleText,
-              style: text.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-            ),
-          const Spacer(),
-          for (final action in actions) action,
-        ],
-      ),
-    );
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (title != null) bar,
-          Expanded(child: child),
-          ?bottomBar,
-        ],
+        mainAxisAlignment: MainAxisAlignment.end,
+        mainAxisSize: MainAxisSize.max,
+        children: actions,
       ),
     );
   }

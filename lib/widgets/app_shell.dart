@@ -10,6 +10,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/platform_style.dart';
 import '../../core/theme/app_theme.dart';
+import 'gtk_header.dart';
 
 /// The four top-level destinations, in the order the tabs appear.
 const _dests = [
@@ -205,11 +206,13 @@ class _CupertinoShellState extends State<_CupertinoShell> {
 
 /// The Linux shell: GTK4's view switcher inside a header bar.
 ///
-/// The header bar the [AppScaffold] draws is per screen, so this one is the
-/// shell's own: the app's name in place of a screen title, and the four
-/// destinations beside it as a view switcher. On a narrow window the switcher
-/// moves to its own row under the header, the way GTK collapses it.
-class _GtkShell extends StatelessWidget {
+/// One header bar, not two: it carries the window-controls spacer, the
+/// screen's own title (published by [AppScaffold] through [GtkHeaderScope] —
+/// the root destinations fall back to their branch label until it arrives),
+/// and the view switcher. The screens' action buttons live in a slim row at
+/// the top of their body, not in chrome. On a narrow window the switcher
+/// collapses to icon-only tabs.
+class _GtkShell extends StatefulWidget {
   const _GtkShell({
     required this.index,
     required this.onGo,
@@ -226,40 +229,79 @@ class _GtkShell extends StatelessWidget {
   final Widget child;
 
   @override
+  State<_GtkShell> createState() => _GtkShellState();
+}
+
+class _GtkShellState extends State<_GtkShell> {
+  /// The screen's title, published by the screen each frame; null until the
+  /// first one lands. A string, so updates compare by value and the shell
+  /// repaints only when the words change.
+  final GtkHeaderController _header = GtkHeaderController();
+
+  @override
+  void initState() {
+    super.initState();
+    _header.addListener(_titleChanged);
+  }
+
+  void _titleChanged() => setState(() {});
+
+  @override
+  void dispose() {
+    _header.removeListener(_titleChanged);
+    _header.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final greys = AppTheme.gtkGreys(Theme.of(context).brightness);
     final text = Theme.of(context).textTheme;
-    return SafeArea(
-      bottom: false,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            height: AppTheme.gtkHeaderHeight,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            decoration: BoxDecoration(
-              color: greys.header,
-              border: Border(bottom: BorderSide(color: greys.border)),
-            ),
-            child: Row(
-              children: [
-                // The runner's client-side window controls sit here, outside
-                // the Flutter view.
-                const SizedBox(width: 60),
-                Text(
-                  'YTDL',
-                  style: text.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 15,
+    final title = _header.title ?? _dests[widget.index].label;
+    return GtkHeaderScope(
+      controller: _header,
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              height: AppTheme.gtkHeaderHeight,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: greys.header,
+                border: Border(bottom: BorderSide(color: greys.border)),
+              ),
+              child: Row(
+                children: [
+                  // The runner's client-side window controls sit here, outside
+                  // the Flutter view.
+                  const SizedBox(width: 60),
+                  // The title yields before the switcher or the controls do:
+                  // it truncates with an ellipsis rather than overflowing.
+                  Flexible(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
                   ),
-                ),
-                const Spacer(),
-                _GtkViewSwitcher(index: index, onGo: onGo, showLabels: isWide),
-              ],
+                  const Spacer(),
+                  _GtkViewSwitcher(
+                    index: widget.index,
+                    onGo: widget.onGo,
+                    showLabels: widget.isWide,
+                  ),
+                ],
+              ),
             ),
-          ),
-          Expanded(child: child),
-        ],
+            Expanded(child: widget.child),
+          ],
+        ),
       ),
     );
   }
@@ -324,40 +366,54 @@ class _GtkViewSwitchTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     // The underline is the only thing that says "current", which is what GTK's
-    // view switcher does: no pill, no fill, no ripple.
-    return Semantics(
+    // view switcher does: no pill, no fill, no ripple. InkWell is used rather
+    // than GestureDetector so the tab is keyboard-reachable and activates on
+    // Enter and Space — GTK is a desktop platform.
+    final tab = Semantics(
       button: true,
       selected: selected,
       label: label,
-      child: GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: selected ? colors.primary : Colors.transparent,
-                width: 2,
+      child: Material(
+        type: MaterialType.transparency,
+        // The GTK family has no Scaffold anywhere, so ink needs its own
+        // transparent sheet to draw on.
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(4),
+          splashColor: Colors.transparent,
+          highlightColor: Colors.transparent,
+          focusColor: colors.primary.withValues(alpha: 0.16),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                  color: selected ? colors.primary : Colors.transparent,
+                  width: 2,
+                ),
               ),
             ),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, size: 18, color: foreground),
-              if (showLabel) ...[
-                const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: (labelStyle ?? const TextStyle()).copyWith(
-                    color: foreground,
-                    fontWeight: selected ? FontWeight.w600 : null,
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: foreground),
+                if (showLabel) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: (labelStyle ?? const TextStyle()).copyWith(
+                      color: foreground,
+                      fontWeight: selected ? FontWeight.w600 : null,
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     );
+    // Icons without words need a name for keyboard and screen-reader users.
+    if (showLabel) return tab;
+    return Tooltip(message: label, child: tab);
   }
 }
