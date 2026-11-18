@@ -263,7 +263,7 @@ jobs:
       # Semver tags with a pre-release identifier (v1.0.0-rc.1) publish as a
       # pre-release; everything else publishes as latest.
       - name: Create the GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body: |
             YTDL 1.0.0 — the first stable release, promoted from 1.0.0-rc.1.
