@@ -8,6 +8,17 @@ The version is defined once, in `pubspec.yaml`, and the headings below match it.
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-11-18
+
+The first stable release. It promotes `1.0.0-rc.1` to stable: the application
+code is unchanged between the two, so this is the same app restamped as stable
+with a new version and build number.
+
+Upgrading from `1.0.0-rc.1` is a normal in-place update — both APKs are signed
+with the project's release key, so no uninstall or settings backup is needed.
+The clean-reinstall note in the `1.0.0-rc.1` section below applies only when
+coming from `0.1`, which was debug-signed.
+
 ## [1.0.0-rc.1] — 2026-11-15
 
 The first release candidate, and the first release since `0.1` (tagged
@@ -471,6 +482,7 @@ and the date on it was never accurate and is gone with the heading.
 - Async library I/O, permission-aware settings, and a stale-fetch guard on the
   Download tab.
 
-[Unreleased]: https://github.com/ibro-3/ytdlp/compare/v1.0.0-rc.1...HEAD
+[Unreleased]: https://github.com/ibro-3/ytdlp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ibro-3/ytdlp/compare/v1.0.0-rc.1...v1.0.0
 [1.0.0-rc.1]: https://github.com/ibro-3/ytdlp/compare/0.1...v1.0.0-rc.1
 [0.1]: https://github.com/ibro-3/ytdlp/releases/tag/0.1

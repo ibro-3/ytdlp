@@ -266,7 +266,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           body: |
-            **Upgrading from 0.1 requires a clean reinstall.** 0.1 was built with the Android debug key; this release is signed with the project's release key, so Android refuses the in-place update (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`). Back up settings first (Settings → Save a backup), uninstall 0.1, install this APK, restore the backup. The download history and queue are lost on uninstall and are not part of any backup; they do not transfer. See the CHANGELOG for what changed in this release.
+            YTDL 1.0.0 — the first stable release, promoted from 1.0.0-rc.1.
+
+            Upgrading from 1.0.0-rc.1 is a normal in-place update: both are signed with the same release key, so no uninstall or backup is needed. If you are coming from 0.1 (debug-signed), a clean reinstall is still required — back up settings first (Settings → Save a backup), uninstall 0.1, install this APK, then restore the backup. Download history and queue are lost on uninstall and are not part of any backup. See the CHANGELOG for details.
           files: |
             *-release.apk
             *-release.tar.gz
